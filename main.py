@@ -332,6 +332,7 @@ async def birthday_command(interaction: discord.Interaction, day: int, month: ap
     await interaction.response.defer()
     table_name = 'bd_table.json'
     filename = f'{os.path.join(full_path, table_name)}'
+    print(filename)
     anton_id = client.get_user(267745993074671616)
     list_bdays = [dictionary]
     if path.isfile(filename) is False:
