@@ -318,8 +318,6 @@ async def birthday_command(interaction: discord.Interaction, day: int, month: ap
     user = interaction.user.id
     day = day
     absolute_path = os.path.dirname(__file__)
-    relative_path = "regular_bot"
-    full_path = os.path.join(absolute_path, relative_path)
     month_value = month.value
     interaction_guild = f'{interaction.guild.id}'
     dictionary = {
@@ -331,8 +329,7 @@ async def birthday_command(interaction: discord.Interaction, day: int, month: ap
     embed = discord.Embed(title=f'{interaction.user.display_name}, а теперь выбери свой часовой пояс', colour=discord.Colour.dark_gold())
     await interaction.response.defer()
     table_name = 'bd_table.json'
-    filename = f'{os.path.join(full_path, table_name)}'
-    print(filename)
+    filename = f'{os.path.join(absolute_path, table_name)}'
     anton_id = client.get_user(267745993074671616)
     list_bdays = [dictionary]
     if path.isfile(filename) is False:
