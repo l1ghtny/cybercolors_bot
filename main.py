@@ -330,6 +330,7 @@ async def birthday_command(interaction: discord.Interaction, day: int, month: ap
     }
     embed = discord.Embed(title=f'{interaction.user.display_name}, а теперь выбери свой часовой пояс', colour=discord.Colour.dark_gold())
     await interaction.response.defer()
+    print(full_path)
     filename = f'{full_path}'
     anton_id = client.get_user(267745993074671616)
     list_bdays = [dictionary]
