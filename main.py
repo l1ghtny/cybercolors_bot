@@ -318,6 +318,7 @@ async def birthday_command(interaction: discord.Interaction, day: int, month: ap
     user = interaction.user.id
     day = day
     absolute_path = os.path.abspath("bd_table.json")
+    print(absolute_path)
     month_value = month.value
     interaction_guild = f'{interaction.guild.id}'
     dictionary = {
