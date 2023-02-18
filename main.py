@@ -317,6 +317,7 @@ async def delete_channels(interaction: discord.Interaction):
 async def birthday_command(interaction: discord.Interaction, day: int, month: app_commands.Choice[str]):
     user = interaction.user.id
     day = day
+    absolute_path = os.path.abspath("bd_table.json")
     month_value = month.value
     interaction_guild = f'{interaction.guild.id}'
     dictionary = {
@@ -327,7 +328,7 @@ async def birthday_command(interaction: discord.Interaction, day: int, month: ap
     }
     embed = discord.Embed(title=f'{interaction.user.display_name}, а теперь выбери свой часовой пояс', colour=discord.Colour.dark_gold())
     await interaction.response.defer()
-    filename = f'bd_table.json'
+    filename = f'{absolute_path}'
     anton_id = client.get_user(267745993074671616)
     list_bdays = [dictionary]
     if path.isfile(filename) is False:
@@ -336,7 +337,6 @@ async def birthday_command(interaction: discord.Interaction, day: int, month: ap
         try:
             with open(filename, 'r+') as file:
                 current_data = json.load(file)
-                print(current_data)
                 if any(d == interaction_guild for d in current_data):
                     server = current_data[interaction_guild]
                     if not any(d['user_id'] == user for d in server):
@@ -350,7 +350,6 @@ async def birthday_command(interaction: discord.Interaction, day: int, month: ap
                             print(server)
                             file.seek(0)
                             json.dump(current_data, file, indent=4)
-                            print('end')
                             await interaction.followup.send(f'{interaction.user.display_name}, твой день рождения добавлен. День: {day}, месяц: {month.name}')
                             await interaction.followup.send(embed=embed, view=DropdownTimezones(), ephemeral=True)
                     else:
