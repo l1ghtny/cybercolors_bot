@@ -415,6 +415,8 @@ async def on_message(message):
     if message_content.startswith('где'):
         await message.channel.send('здесь')
     if message_content.startswith('куда'):
+        await message.channel.send('мде')
+    if message_content.startswith('вот уж МДЕ'):
         await message.channel.send('тудой')
     if message_content.startswith('бот смешной'):
         await message.channel.send('да я чисто мистер Бин, только разговаривать умею')
