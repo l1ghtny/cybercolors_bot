@@ -114,15 +114,15 @@ class Roles2(discord.ui.RoleSelect):
         new_roles = []
         forbidden = []
         selected_roles.sort()
-        for items in selected_roles:
-            if items in interaction.user.roles:
-                already_assigned.append(items.name)
+        for item in selected_roles:
+            if item.position > interaction.user.top_role.position:
+                forbidden.append(item.name)
             else:
-                try:
-                    await interaction.user.add_roles(*selected_roles, reason='Roles added by command')
-                    new_roles.append(items.name)
-                except:
-                    forbidden.append(items.name)
+                if item in interaction.user.roles:
+                    already_assigned.append(item.name)
+                if item not in interaction.user.roles:
+                    await interaction.user.add_roles(item, reason='Roles added by command')
+                    new_roles.append(item.name)
         if forbidden == []:
             if already_assigned == []:
                 await interaction.followup.send(f'Были добавлены роли:{new_roles}')
@@ -405,7 +405,7 @@ async def on_message(message):
         await message.channel.send('серьёзное заявление')
     if message_content.startswith('скотина'):
         await message.channel.send('скотина вообще-то полезна в хозяйстве')
-    if message_content.startswith('уёбок'):
+    if message_content.startswith('уёбок') or message_content.startswith('уебок'):
         await message.channel.send('тебе уебать?')
     if message_content.startswith('мудак'):
         await message.channel.send('как по мне, "мудозвон" веселее звучит')
