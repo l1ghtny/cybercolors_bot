@@ -190,8 +190,10 @@ class Timezones(discord.ui.Select):
         selected_timezone = f'{self.values}'
         add_timezone_1 = selected_timezone[1:-1]
         add_timezone = add_timezone_1[1:-1]
+        absolute_path = os.path.dirname(__file__)
         print('string:', add_timezone)
-        file_1 = f'bd_table.json'
+        table = f'bd_table.json'
+        file_1 = f'{os.path.join(absolute_path, table)}'
         print('self_values:', self.values)
         with open(file_1, 'r+') as file:
             data = json.load(file)
@@ -428,14 +430,30 @@ async def on_message(message):
     if message_content.startswith('падла'):
         await message.channel.send('синонимы: профура, девка, хипесница, шмара, погань, блядюга, курва, шалава, лярва, сволота, падло, блядь, лахудра, стервоза, блядища, поблядушка, гулящая, шлюшка, падаль, потаскуха, блядушка, сволочье, потаскунья, стерва, проститутка, шлюха, подстилка, мара, потаскушка')
 
-#BD MODULE with checking task
+BD MODULE with checking task
 
-# bd_check_time = datetime.time(hour=21, minute=35, second=0)
-# @tasks.loop(time=bd_check_time, hours=1)
-# async def Birthday():
-#     channel = client.get_channel(1040169092717486093)
-#     bd_file = os.path.abspath(bd_table.txt)
-#     open_bd =
+bd_check_time = datetime.time(hour=21, minute=0, second=0)
+@tasks.loop(time=bd_check_time, hours=1)
+async def Birthday():
+    channel = client.get_channel(1040169092717486093)
+    absolute_path = os.path.dirname(__file__)
+    table_name = 'bd_table.json'
+    absolute_path2 = os.path.dirname(__file__)
+    serverfile = 'servers.json'
+    bd_file = f'{os.path.join(absolute_path, table_name)}'
+    servers = f'{os.path.join(absolute_path2, serverfile)}'
+    if path.isfile(servers) is False:
+        print('Файл сервера не найден')
+    if path.isfile(bd_file) is False:
+        print('Файл бд не найден при выполнении task.loop')
+    else:
+        with open(bd_file, 'r+') as file:
+            with open(servers) as file2:
+                data_servers = json.load(file2)
+            data = json.load(file)
+            server = data[servers]
+
+
 
 
 
