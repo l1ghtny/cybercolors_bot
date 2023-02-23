@@ -315,7 +315,6 @@ async def delete_channels(interaction: discord.Interaction):
         app_commands.Choice(name='Декабрь', value='december'),
     ]
 )
-
 async def birthday_command(interaction: discord.Interaction, day: int, month: app_commands.Choice[str]):
     user = interaction.user.id
     day = day
