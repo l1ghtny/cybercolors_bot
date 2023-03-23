@@ -957,10 +957,13 @@ async def add_my_birthday(interaction: discord.Interaction, day: int, month: app
                 message = await interaction.channel.send(embed=embed, view=view)
                 view.message = message
             conn.close()
+        except psycopg2.errors.ForeignKeyViolation as nameerror:
+            await interaction.followup.send('Сервер ещё не настроен или что-то пошло не так. Напишите админу сервера или создателю бота')
         except psycopg2.Error as error:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f'Что-то пошло не так, напишите {anton_id.mention}. Ошибка: {error}'
             )
+
 
 
 # Settings for guild for birthdays module
