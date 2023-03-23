@@ -46,10 +46,11 @@ class Aclient(discord.Client):
             self.synced = True
         if not self.added:
             self.add_view(DropDownView2())
-            self.add_view(DropDownViewChannels())
+            # self.add_view(DropDownViewChannels())
             self.add_view(DropdownTimezones())
             self.added = True
         birthday.start()
+        update_releases.start()
         print(f"We have logged in as {self.user}.")
 
 
@@ -113,7 +114,7 @@ class Channels(discord.ui.ChannelSelect):
 
 
 class BirthdaysChannelText(discord.ui.ChannelSelect):
-    def __init__(self):
+    def __init__(self, user):
         super().__init__(custom_id='bd_channels', channel_types=[discord.ChannelType.text, discord.ChannelType.private])
 
     async def callback(self, interaction: discord.Interaction):
@@ -172,7 +173,14 @@ class NewChannelName(discord.ui.Modal, title='Вбей название ново
             await basevariables.update_channel_values(interaction, new_channel)
 
 
-class NewDayAgain(discord.ui.Modal, title='Напиши день своего рождения'):
+class NewDayAgain(discord.ui.Modal):
+    def __init__(self, month):
+        super().__init__(
+            timeout=None,
+            title='Напиши день'
+        )
+        self.month = month
+
     d_title = discord.ui.TextInput(
         label='Пиши тута',
         style=discord.TextStyle.short,
@@ -186,12 +194,81 @@ class NewDayAgain(discord.ui.Modal, title='Напиши день своего р
     async def on_submit(self, interaction: discord.Interaction):
         if self.d_title.value.isdigit():
             day = int(self.d_title.value)
-            if day < 32:
-                await interaction.response.send_message('Всё работает как надо', ephemeral=True)
+            if self.month == '02' and day > 29:
+                await interaction.response.send_message('Извини, в Феврале не бывает больше 29 дней')
+            elif self.month == '04' and day > 30:
+                await interaction.response.send_message('Извини, но в Апреле не бывает столько дней')
+            elif self.month == '06' and day > 30:
+                await interaction.response.send_message('Извини, но в Июне не бывает столько дней')
+            elif self.month == '09' and day > 30:
+                await interaction.response.send_message('Извини, но в Сентябре не бывает столько дней')
+            elif self.month == '11' and day > 30:
+                await interaction.response.send_message('Извини, но в Ноябре не бывает столько дней')
+            elif day > 31:
+                await interaction.response.send_message('Извини, ни в одном месяце не бывает столько дней')
             else:
-                await interaction.response.send_message('Это число больше 31, сорян', ephemeral=True)
+                # await interaction.response.send_message(f'Выбранный месяц = {self.month}, Выбранная дата = {day}',
+                #                                         ephemeral=True)
+                server_id = interaction.guild_id
+                user_id = interaction.user.id
+                status = await basevariables.add_new_day_month(server_id, user_id, day, self.month, interaction)
+                if status == 'ok':
+                    await interaction.response.send_message('А теперь выбери свой часовой пояс:')
+                    view = DropdownTimezones()
+                    view.user = interaction.user
+                    message = await interaction.channel.send(view=view)
+                    view.message = message
+                else:
+                    interaction.channel.send('Извини, что-то пошло не так')
         else:
-            await interaction.response.send_mesage('Извини, это не число', ephemeral=True)
+            await interaction.response.send_mesage('Извини, это не число. Попробуй добавить день рождения командой '
+                                                   '/add_my_birthday', ephemeral=True)
+
+
+class NewMonthAgain(discord.ui.View):
+    def __init__(self, user):
+        super().__init__(timeout=None)
+        select_menu = NewMonthAgainSelect()
+        select_menu.user = user
+        select_menu.info = self
+        self.add_item(select_menu)
+
+    async def disable_all_items(self):
+        for item in self.children:
+            item.disabled = True
+        await self.message.edit(view=self)
+
+
+class NewMonthAgainSelect(discord.ui.Select):
+    def __init__(self):
+        super().__init__(
+            custom_id='new_month_add',
+            placeholder='Месяц твоего рождения',
+            max_values=1,
+            disabled=False,
+            options=[
+                discord.SelectOption(label='Январь', value='01'),
+                discord.SelectOption(label='Февраль', value='02'),
+                discord.SelectOption(label='Март', value='03'),
+                discord.SelectOption(label='Апрель', value='04'),
+                discord.SelectOption(label='Май', value='05'),
+                discord.SelectOption(label='Июнь', value='06'),
+                discord.SelectOption(label='Июль', value='07'),
+                discord.SelectOption(label='Август', value='08'),
+                discord.SelectOption(label='Сентябрь', value='09'),
+                discord.SelectOption(label='Октябрь', value='10'),
+                discord.SelectOption(label='Ноябрь', value='11'),
+                discord.SelectOption(label='Декабрь', value='12'),
+            ]
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user == self.user:
+            result_list = self.values
+            await NewMonthAgain.disable_all_items(self.info)
+            await interaction.response.send_modal(NewDayAgain(month=result_list[0]))
+        else:
+            await interaction.response.send_message('Тебе нельзя')
 
 
 class BirthdayRoleSelect(discord.ui.RoleSelect):
@@ -316,10 +393,9 @@ class DropdownTimezones(discord.ui.View):
 class DropdownSelectBirthdaysChannels(discord.ui.View):
     def __init__(self, user) -> None:
         super().__init__(timeout=None)
-        select_menu = BirthdaysChannelText()
+        select_menu = BirthdaysChannelText(user)
         select_menu.info = self
         self.add_item(select_menu)
-        select_menu.user = user
 
     async def disable_all_items(self):
         for item in self.children:
@@ -385,7 +461,9 @@ class BirthdaysButtonsSelect(discord.ui.View):
             # discord.SelectOption(),
             # discord.SelectOption()
         ]
-        super().__init__(custom_id='timezones_choice', placeholder='Твой часовой пояс', options=options, max_values=1, disabled=False)
+        super().__init__(custom_id='timezones_choice', placeholder='Твой часовой пояс', options=options, max_values=1,
+                         disabled=False)
+
     async def callback(self, interaction: discord.Interaction):
         interaction_guid = f'{interaction.guild.id}'
         user = interaction.user.id
@@ -420,8 +498,9 @@ class BirthdaysButtonsSelect(discord.ui.View):
         current_user = self.user
         if current_user == interaction.user:
             await self.disable_all_items()
+            await interaction.response.send_message(f'Выбери канал для поздравлений:')
             view = DropdownSelectBirthdaysChannels(user=interaction.user)
-            message = await interaction.response.send_message(view=view)
+            message = await interaction.channel.send(view=view)
             view.message = message
         else:
             await interaction.response.send_message(f'{interaction.user}, это не твоя кнопка, уходи')
@@ -559,20 +638,21 @@ class ChangeBirthday(discord.ui.View):
         if interaction.user == self.user:
             await self.disable_all_items()
             await interaction.response.send_message(
-                'Окей, тогда не добавляем новую дату. Если хочешь, всегда можешь воспользоваться командой /add_my_birthday')
+                'Окей, тогда не добавляем новую дату. Если хочешь, всегда можешь воспользоваться командой '
+                '/add_my_birthday')
         else:
             await interaction.response.send_message(f'{interaction.user.mention}, это не твоя кнопка, уходи')
 
-    # @discord.ui.button(label='Добавить заново', custom_id='new_birthday', style=discord.ButtonStyle.green, emoji='\U0001F382')
-    # async def add_new_birthday(self, interaction, button):
-    #     if interaction.user == self.user:
-    #         await self.disable_all_items()
-    #         await interaction.response.send_message('Тогда начнём!')
-    #         view = NewDateAgain()
-    #         message = await interaction.channel.send(view=view)
-    #         view.message = message
-    #     else:
-    #         await interaction.response.send_message(f'{interaction.user.mention}, это не твоя кнопка, уходи')
+    @discord.ui.button(label='Добавить заново', custom_id='new_birthday', style=discord.ButtonStyle.green, emoji='\U0001F382')
+    async def add_new_birthday(self, interaction, button):
+        if interaction.user == self.user:
+            await self.disable_all_items()
+            await interaction.response.send_message('Тогда выбери месяц')
+            view = NewMonthAgain(user=interaction.user)
+            message = await interaction.channel.send(view=view)
+            view.message = message
+        else:
+            await interaction.response.send_message(f'{interaction.user.mention}, это не твоя кнопка, уходи')
 
 
 class NewDateAgain(discord.ui.View):
@@ -822,74 +902,63 @@ async def delete_channels(interaction: discord.Interaction):
 )
 async def add_my_birthday(interaction: discord.Interaction, day: int, month: app_commands.Choice[str]):
     await interaction.response.defer(thinking=True)
-    user_id = f'{interaction.user.id}'
-    server_id = f'{interaction.guild.id}'
-    anton_id = client.get_user(267745993074671616)
-    database = basevariables.database
-    host = basevariables.host
-    user = basevariables.user
-    password = basevariables.password
-    port = basevariables.port
-    try:
-        conn = psycopg2.connect(database=database,
-                                host=host,
-                                user=user,
-                                password=password,
-                                port=port,
-                                cursor_factory=psycopg2.extras.DictCursor
-                                )
-        cursor = conn.cursor()
-        postgres_select_query = """SELECT * from "public".users WHERE user_id = %s and server_id=%s"""
-        cursor.execute(postgres_select_query, (user_id, server_id,))
-        row = cursor.fetchone()
-        if row is None:
-            postgres_insert_query = 'INSERT INTO "public".users (user_id, server_id, day, month) VALUES (%s,%s,%s,%s)'
-            records_to_insert = (user_id, server_id, day, month.value,)
-            cursor.execute(postgres_insert_query, records_to_insert)
-            conn.commit()
-            await interaction.followup.send(f'Всё записано, спасибо. День: {day}, месяц: {month.name}')
-            embed = discord.Embed(title='А теперь выбери часовой пояс')
-            view = DropdownTimezones()
-            view.user = interaction.user
-            message = await interaction.channel.send(embed=embed, view=view)
-            view.message = message
-        else:
-            day_record = row['day']
-            month_record = row['month']
-            timezone_record = row['timezone']
-            embed = discord.Embed(title='Тебя это устраивает?')
-            view = UserAlreadyExists()
-            view.user = interaction.user
-            await interaction.followup.send(
-                f'Твой др уже записан. День: {day_record}, месяц: {month_record}, часовой пояс: {timezone_record}')
-            message = await interaction.channel.send(embed=embed, view=view)
-            view.message = message
-        conn.close()
-    except psycopg2.Error as error:
-        await interaction.response.send_message(
-            f'Что-то пошло не так, напишите {anton_id.mention}. Ошибка: {error}'
-        )
+    if month.value == '02' and day > 29:
+        await interaction.followup.send('Извини, такой даты не существует')
+    elif day > 30 and month.value == '04':
+        await interaction.followup.send('Извини, такой даты не существует')
+    else:
+        user_id = f'{interaction.user.id}'
+        server_id = f'{interaction.guild.id}'
+        anton_id = client.get_user(267745993074671616)
+        database = basevariables.database
+        host = basevariables.host
+        user = basevariables.user
+        password = basevariables.password
+        port = basevariables.port
+        try:
+            conn = psycopg2.connect(database=database,
+                                    host=host,
+                                    user=user,
+                                    password=password,
+                                    port=port,
+                                    cursor_factory=psycopg2.extras.DictCursor
+                                    )
+            cursor = conn.cursor()
+            postgres_select_query = """SELECT * from "public".users WHERE user_id = %s and server_id=%s"""
+            cursor.execute(postgres_select_query, (user_id, server_id,))
+            row = cursor.fetchone()
+            if row is None:
+                postgres_insert_query = 'INSERT INTO "public".users (user_id, server_id, day, month) VALUES (%s,%s,%s,%s)'
+                records_to_insert = (user_id, server_id, day, month.value,)
+                cursor.execute(postgres_insert_query, records_to_insert)
+                conn.commit()
+                await interaction.followup.send(f'Всё записано, спасибо. День: {day}, месяц: {month.name}')
+                embed = discord.Embed(title='А теперь выбери часовой пояс')
+                view = DropdownTimezones()
+                view.user = interaction.user
+                message = await interaction.channel.send(embed=embed, view=view)
+                view.message = message
+            else:
+                day_record = row['day']
+                month_record = row['month']
+                timezone_record = row['timezone']
+                embed = discord.Embed(title='Тебя это устраивает?')
+                view = UserAlreadyExists()
+                view.user = interaction.user
+                await interaction.followup.send(
+                    f'Твой др уже записан. День: {day_record}, месяц: {month_record}, часовой пояс: {timezone_record}')
+                message = await interaction.channel.send(embed=embed, view=view)
+                view.message = message
+            conn.close()
+        except psycopg2.Error as error:
+            await interaction.response.send_message(
+                f'Что-то пошло не так, напишите {anton_id.mention}. Ошибка: {error}'
+            )
 
 
 # Settings for guild for birthdays module
 @tree.command(name='birthdays_settings', description='Настрой дни рождения для своего сервера')
 async def birthdays_settings(interaction: discord.Interaction):
-async def birthday_command(interaction: discord.Interaction, day: int, month: app_commands.Choice[str]):
-    user = interaction.user.id
-    day = day
-    absolute_path = os.path.dirname(__file__)
-    month_value = month.value
-    interaction_guild = f'{interaction.guild.id}'
-    dictionary = {
-        'user_id': user,
-        'day': day,
-        'month': month_value,
-        'timezone': ''
-    }
-    embed = discord.Embed(title=f'{interaction.user.display_name}, а теперь выбери свой часовой пояс', colour=discord.Colour.dark_gold())
-    await interaction.response.defer()
-    table_name = 'bd_table.json'
-    filename = f'{os.path.join(absolute_path, table_name)}'
     anton_id = client.get_user(267745993074671616)
     database = basevariables.database
     host = basevariables.host
@@ -1009,66 +1078,14 @@ async def add_reply(interaction: discord.Interaction):
 
 
 @tree.command(name='check_dr', description='Проверяет, есть ли у кого-нибудь др. Для тестирования')
-async def birthday(interaction: discord.Interaction):
+async def birthday_check(interaction: discord.Interaction):
     await interaction.response.defer()
-    conn, cursor = await basevariables.access_db_regular()
-    query = 'SELECT * from "public".users as users inner join "public".servers as servers using(server_id)'
-    cursor.execute(query)
-    values = cursor.fetchall()
-    for item in values:
-        guild_id = item['server_id']
-        guild_role_id = item['role_id']
-        print('guild_role_id:', guild_role_id)
-        guild = client.get_guild(guild_id)
-        guild_role = discord.utils.get(guild.roles, id=guild_role_id)
-        print('guild_role:', guild_role.name)
-        user_id = item['user_id']
-        user = client.get_user(user_id)
-        member = guild.get_member(user_id)
-        if guild.get_member(user_id) is not None:
-            key = basevariables.t_key
-            timezone = item['timezone']
-            request = f'http://vip.timezonedb.com/v2.1/get-time-zone?key={key}&format=json&by=zone&zone={timezone}'
-            response = requests.get(request)
-            time_json = response.json()
-            not_formatted = time_json['timestamp']
-            formatted = time_json['formatted']
-            today = datetime.date.today()
-            t_year = today.year
-            table_month = item['month']
-            table_day = item['day']
-            bd_date = datetime.datetime(t_year, table_month, table_day, hour=0, minute=0)
-            json_date = datetime.datetime.fromisoformat(formatted)
-            json_date_from_timestamp = datetime.datetime.utcfromtimestamp(not_formatted)
-            channel_id = item['channel_id']
-            channel = client.get_channel(channel_id)
-            print(f'{user.name} др:', bd_date)
-            print(f'{user.name} проверено в:', json_date)
-            print(f'{user.name} дата по timestamp: {json_date_from_timestamp}')
-            if json_date.date() == bd_date.date() and json_date.hour == bd_date.hour:
-                query2 = 'SELECT * from "public".congratulations where server_id=%s'
-                values2 = (guild_id,)
-                cursor.execute(query2, values2)
-                greetings = cursor.fetchall()
-                greetings_text = []
-                for rows in greetings:
-                    greetings_text.append(rows['bot_message'])
-                message_text = random.choice(greetings_text)
-                embed_description = f'{message_text} {user.mention}'
-                embed = discord.Embed(colour=discord.Colour.dark_gold(), description=embed_description)
-                await channel.send(embed=embed)
-                await member.add_roles(guild_role)
-            else:
-                print('ne dr')
-        else:
-            print(f'{user_id} is not a member of the server "{guild.name}"')
-    conn.close()
-    print('the end')
+    await birthday()
     await interaction.followup.send('OK')
 
 
 @tree.command(name='add_birthday_message',
-                      description='Добавляет сообщение, которое бот использует, чтобы поздравлять именинников')
+              description='Добавляет сообщение, которое бот использует, чтобы поздравлять именинников')
 async def birthday_message(interaction: discord.Interaction, message: str):
     server_id = interaction.guild_id
     bot_message = message
@@ -1210,39 +1227,34 @@ check_time = [
 ]
 
 check_time_1 = [
-    datetime.time(hour=0, minute=15, tzinfo=utc),
-    datetime.time(hour=1, minute=15, tzinfo=utc),
-    datetime.time(hour=2, minute=15, tzinfo=utc),
-    datetime.time(hour=3, minute=15, tzinfo=utc),
-    datetime.time(hour=4, minute=15, tzinfo=utc),
-    datetime.time(hour=5, minute=15, tzinfo=utc),
-    datetime.time(hour=6, minute=15, tzinfo=utc),
-    datetime.time(hour=7, minute=15, tzinfo=utc),
-    datetime.time(hour=8, minute=15, tzinfo=utc),
-    datetime.time(hour=9, minute=15, tzinfo=utc),
-    datetime.time(hour=10, minute=15, tzinfo=utc),
-    datetime.time(hour=11, minute=15, tzinfo=utc),
-    datetime.time(hour=12, minute=15, tzinfo=utc),
-    datetime.time(hour=13, minute=15, tzinfo=utc),
-    datetime.time(hour=14, minute=15, tzinfo=utc),
-    datetime.time(hour=15, minute=15, tzinfo=utc),
-    datetime.time(hour=16, minute=15, tzinfo=utc),
-    datetime.time(hour=17, minute=15, tzinfo=utc),
-    datetime.time(hour=18, minute=15, tzinfo=utc),
-    datetime.time(hour=19, minute=15, tzinfo=utc),
-    datetime.time(hour=20, minute=15, tzinfo=utc),
-    datetime.time(hour=21, minute=15, tzinfo=utc),
-    datetime.time(hour=22, minute=15, tzinfo=utc),
-    datetime.time(hour=23, minute=15, tzinfo=utc)
+    datetime.time(hour=0, minute=30, tzinfo=utc),
+    datetime.time(hour=1, minute=30, tzinfo=utc),
+    datetime.time(hour=2, minute=30, tzinfo=utc),
+    datetime.time(hour=3, minute=30, tzinfo=utc),
+    datetime.time(hour=4, minute=30, tzinfo=utc),
+    datetime.time(hour=5, minute=30, tzinfo=utc),
+    datetime.time(hour=6, minute=30, tzinfo=utc),
+    datetime.time(hour=7, minute=30, tzinfo=utc),
+    datetime.time(hour=8, minute=30, tzinfo=utc),
+    datetime.time(hour=9, minute=30, tzinfo=utc),
+    datetime.time(hour=10, minute=30, tzinfo=utc),
+    datetime.time(hour=11, minute=30, tzinfo=utc),
+    datetime.time(hour=12, minute=30, tzinfo=utc),
+    datetime.time(hour=13, minute=30, tzinfo=utc),
+    datetime.time(hour=14, minute=30, tzinfo=utc),
+    datetime.time(hour=15, minute=30, tzinfo=utc),
+    datetime.time(hour=16, minute=30, tzinfo=utc),
+    datetime.time(hour=17, minute=30, tzinfo=utc),
+    datetime.time(hour=18, minute=30, tzinfo=utc),
+    datetime.time(hour=19, minute=30, tzinfo=utc),
+    datetime.time(hour=20, minute=30, tzinfo=utc),
+    datetime.time(hour=21, minute=30, tzinfo=utc),
+    datetime.time(hour=22, minute=30, tzinfo=utc),
+    datetime.time(hour=23, minute=30, tzinfo=utc)
 ]
 
 
-#BD MODULE with checking task
-
-
-
-
-
+# BD MODULE with checking task
 @tasks.loop(time=check_time)
 async def birthday():
     conn, cursor = await basevariables.access_db_regular()
@@ -1259,47 +1271,50 @@ async def birthday():
         user_id = item['user_id']
         user = client.get_user(user_id)
         member = guild.get_member(user_id)
-        if guild.get_member(user_id) is not None:
-            key = basevariables.t_key
-            timezone = item['timezone']
-            request = f'http://vip.timezonedb.com/v2.1/get-time-zone?key={key}&format=json&by=zone&zone={timezone}'
-            response = requests.get(request)
-            time_json = response.json()
-            not_formatted = time_json['timestamp']
-            formatted = time_json['formatted']
-            today = datetime.date.today()
-            t_year = today.year
-            table_month = item['month']
-            table_day = item['day']
-            bd_date = datetime.datetime(t_year, table_month, table_day, hour=0, minute=0)
-            json_date = datetime.datetime.fromisoformat(formatted)
-            json_date_from_timestamp = datetime.datetime.utcfromtimestamp(not_formatted)
-            channel_id = item['channel_id']
-            channel = client.get_channel(channel_id)
-            print(f'{user.name} др:', bd_date)
-            print(f'{user.name} проверено в:', json_date)
-            print(f'{user.name} дата по timestamp: {json_date_from_timestamp}')
-            if json_date.date() == bd_date.date() and json_date.hour == bd_date.hour:
-                query2 = 'SELECT * from "public".congratulations where server_id=%s'
-                values2 = (guild_id,)
-                cursor.execute(query2, values2)
-                greetings = cursor.fetchall()
-                greetings_text = []
-                for rows in greetings:
-                    greetings_text.append(rows['bot_message'])
-                message_text = random.choice(greetings_text)
-                embed_description = f'{message_text} {user.mention}'
-                embed = discord.Embed(colour=discord.Colour.dark_gold(), description=embed_description)
-                await channel.send(embed=embed)
-                query3 = 'UPDATE "public".users SET role_added_at=%s WHERE user_id=%s AND server_id=%s'
-                current_time = datetime.datetime.utcnow()
-                values3 = (current_time, user_id, guild_id,)
-                conn.commit()
-                conn.close()
-                cursor.execute(query3, values3)
-                await member.add_roles(guild_role)
+        if member is not None:
+            if item['timezone'] is not None:
+                key = basevariables.t_key
+                timezone = item['timezone']
+                request = f'http://vip.timezonedb.com/v2.1/get-time-zone?key={key}&format=json&by=zone&zone={timezone}'
+                response = requests.get(request)
+                time_json = response.json()
+                not_formatted = time_json['timestamp']
+                formatted = time_json['formatted']
+                today = datetime.date.today()
+                t_year = today.year
+                table_month = item['month']
+                table_day = item['day']
+                bd_date = datetime.datetime(t_year, table_month, table_day, hour=0, minute=0)
+                json_date = datetime.datetime.fromisoformat(formatted)
+                json_date_from_timestamp = datetime.datetime.utcfromtimestamp(not_formatted)
+                channel_id = item['channel_id']
+                channel = client.get_channel(channel_id)
+                print(f'{user.name} др:', bd_date)
+                print(f'{user.name} проверено в:', json_date)
+                print(f'{user.name} дата по timestamp: {json_date_from_timestamp}')
+                if json_date.date() == bd_date.date() and json_date.hour == bd_date.hour:
+                    query2 = 'SELECT * from "public".congratulations where server_id=%s'
+                    values2 = (guild_id,)
+                    cursor.execute(query2, values2)
+                    greetings = cursor.fetchall()
+                    greetings_text = []
+                    for rows in greetings:
+                        greetings_text.append(rows['bot_message'])
+                    message_text = random.choice(greetings_text)
+                    embed_description = f'{message_text} {user.mention}'
+                    embed = discord.Embed(colour=discord.Colour.dark_gold(), description=embed_description)
+                    await channel.send(embed=embed)
+                    query3 = 'UPDATE "public".users SET role_added_at=%s WHERE user_id=%s AND server_id=%s'
+                    current_time = datetime.datetime.utcnow()
+                    values3 = (current_time, user_id, guild_id,)
+                    cursor.execute(query3, values3)
+                    conn.commit()
+                    conn.close()
+                    await member.add_roles(guild_role)
+                else:
+                    print('ne dr')
             else:
-                print('ne dr')
+                print(f'{user_id} не указал свой часовой пояс, проверить невозможно')
         else:
             print(f'{user_id} is not a member of the server "{guild.name}"')
     conn.close()
@@ -1316,29 +1331,38 @@ async def birthday():
         if role_time is not None:
             current_time_now = datetime.datetime.utcnow()
             timedelta = current_time_now - role_time
-            if timedelta.days > 1:
-                current_guild = client.get_guild(role_guild_id)
-                current_member = current_guild.get_member(role_user_id)
-                current_role = current_guild.get_role(server_role_id)
-                current_member.remove_roles(current_role)
+            current_guild = client.get_guild(role_guild_id)
+            current_member = current_guild.get_member(role_user_id)
+            current_role = discord.utils.get(current_guild.roles, id=server_role_id)
+            print('timedelta in days:', timedelta.days)
+            if timedelta.days >= 1:
+                print('checked role is older than 1 day')
+                await current_member.remove_roles(current_role)
                 query_last_for_sure = 'UPDATE "public".users SET role_added_at=%s WHERE server_id=%s AND user_id=%s'
                 role_added_at = None
                 values_last = (role_added_at, role_guild_id, role_user_id,)
                 cursor.execute(query_last_for_sure, values_last)
                 conn.commit()
+                print(f'role removed from user {user.name}')
+            else:
+                print(f'role {current_role.name} on user {user.name} is not older than 1 day')
+        else:
+            print('no role is given')
     conn.close()
 
 
-@tasks.loop(time=check_time_1)
+@tasks.loop(minutes=10)
 async def update_releases():
     channel_id = 1068896806156632084
     release_date, release_title, release_text = await github_api.get_release_notes()
     if release_title is not None and release_text is not None and release_date is not None:
         channel = client.get_channel(channel_id)
         embed = discord.Embed(
-            title=f'Релиз от {release_date}. Тема: {release_title}',
-            description={release_text}
+            title=f'{release_title}',
+            colour=discord.Colour.from_rgb(3, 144, 252)
         )
+        embed.add_field(name='Описание релиза', value=f'{release_text}')
+        embed.add_field(name='Дата релиза:', value=f'{release_date}')
         await channel.send(embed=embed)
     else:
         print('No new releases')
@@ -1346,4 +1370,3 @@ async def update_releases():
 
 # EXECUTES THE BOT WITH THE SPECIFIED TOKEN.
 client.run(DISCORD_TOKEN)
-

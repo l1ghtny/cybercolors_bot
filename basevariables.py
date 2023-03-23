@@ -156,3 +156,24 @@ async def access_db_basic():
     except psycopg2.Error as error:
         await print(
             'Всё сломалось из-за ошибки "{}"'.format(error.__str__()))
+
+
+async def add_new_day_month(server_id, user_id, day, month, interaction):
+    try:
+        conn = psycopg2.connect(database=database,
+                                host=host,
+                                user=user,
+                                password=password,
+                                port=port,
+                                cursor_factory=psycopg2.extras.DictCursor)
+        cursor = conn.cursor()
+        query = 'INSERT INTO "public".users (server_id, user_id, day, month) VALUES (%s,%s,%s,%s)'
+        values = (server_id, user_id, day, month,)
+        cursor.execute(query, values)
+        conn.commit()
+        conn.close()
+        status = 'ok'
+        return status
+    except psycopg2.Error as error:
+        await interaction.response.send_message(
+            'Всё сломалось из-за ошибки "{}"'.format(error.__str__()))
