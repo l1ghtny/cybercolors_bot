@@ -143,7 +143,7 @@ class BirthdaysChannelText(discord.ui.ChannelSelect):
                     cursor.execute(postgres_insert_query, record_to_insert)
                     conn.commit()
                     conn.close()
-                    await interaction.response.send_message(f'Выбранный канал: {item.mention}')
+                    await interaction.response.send_message(f'Выбранный канал: "{item.mention}". Не забудь добавить фразы поздравления командой "/add_birthday_message')
                 except psycopg2.Error as error:
                     await interaction.response.send_message(
                         'Добавить канал не получилось из-за ошибки "{}"'.format(error.__str__()))
@@ -963,7 +963,6 @@ async def add_my_birthday(interaction: discord.Interaction, day: int, month: app
             await interaction.followup.send(
                 f'Что-то пошло не так, напишите {anton_id.mention}. Ошибка: {error}'
             )
-
 
 
 # Settings for guild for birthdays module
