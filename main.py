@@ -906,6 +906,14 @@ async def add_my_birthday(interaction: discord.Interaction, day: int, month: app
         await interaction.followup.send('Извини, такой даты не существует')
     elif day > 30 and month.value == '04':
         await interaction.followup.send('Извини, такой даты не существует')
+    elif month.value == '04' and day > 30:
+        await interaction.followup.send('Извини, такой даты не существует')
+    elif month.value == '06' and day > 30:
+        await interaction.followup.send('Извини, такой даты не существует')
+    elif month.value == '09' and day > 30:
+        await interaction.followup.send('Извини, такой даты не существует')
+    elif month.value == '11' and day > 30:
+        await interaction.followup.send('Извини, такой даты не существует')
     else:
         user_id = f'{interaction.user.id}'
         server_id = f'{interaction.guild.id}'
