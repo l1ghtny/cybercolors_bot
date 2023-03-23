@@ -4,7 +4,6 @@ import math
 import discord
 import datetime
 import discord.ui
-import self as self
 from discord import app_commands
 from discord.ext import tasks
 from discord.ext import commands

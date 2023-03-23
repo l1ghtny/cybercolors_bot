@@ -154,7 +154,7 @@ async def access_db_basic():
         cursor = conn.cursor()
         return conn, cursor
     except psycopg2.Error as error:
-        await print(
+        print(
             'Всё сломалось из-за ошибки "{}"'.format(error.__str__()))
 
 
