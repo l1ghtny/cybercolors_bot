@@ -267,7 +267,7 @@ class NewMonthAgainSelect(discord.ui.Select):
             await NewMonthAgain.disable_all_items(self.info)
             await interaction.response.send_modal(NewDayAgain(month=result_list[0]))
         else:
-            await interaction.response.send_message('Тебе нельзя')
+            await interaction.response.send_message('Тебе нельзя', ephemeral=True)
 
 
 class BirthdayRoleSelect(discord.ui.RoleSelect):
@@ -288,7 +288,7 @@ class BirthdayRoleSelect(discord.ui.RoleSelect):
                 role_name = item.name
                 await basevariables.update_server_role(interaction, server_id, role_id, role_name)
         else:
-            await interaction.response.send_message(f'{interaction.user.mention}, это не твоя менюшка, ухади')
+            await interaction.response.send_message(f'{interaction.user.mention}, это не твоя менюшка, ухади', ephemeral=True)
 
 
 # LIST OF ALL VIEWS
@@ -386,7 +386,7 @@ class DropdownTimezones(discord.ui.View):
                     'Добавить канал не получилось из-за ошибки "{}"'.format(error.__str__()))
                 print(error)
         else:
-            await interaction.response.send_message(f'{interaction.user}, это не твоя менюшка')
+            await interaction.response.send_message(f'{interaction.user}, это не твоя менюшка', ephemeral=True)
 
 
 class DropdownSelectBirthdaysChannels(discord.ui.View):
@@ -433,7 +433,7 @@ class BirthdaysButtonsSelect(discord.ui.View):
             await self.disable_all_items()
             await interaction.response.send_modal(NewChannelName())
         else:
-            await interaction.response.send_message(f'{interaction.user}, это не твоя кнопка, уходи')
+            await interaction.response.send_message(f'{interaction.user}, это не твоя кнопка, уходи', ephemeral=True)
         options = [
             discord.SelectOption(label='+0 Лондон', value='Europe/London'),
             discord.SelectOption(label='+01 Центральная европа', value='Europe/Berlin'),
@@ -502,7 +502,7 @@ class BirthdaysButtonsSelect(discord.ui.View):
             message = await interaction.channel.send(view=view)
             view.message = message
         else:
-            await interaction.response.send_message(f'{interaction.user}, это не твоя кнопка, уходи')
+            await interaction.response.send_message(f'{interaction.user}, это не твоя кнопка, уходи', ephemeral=True)
 
     @discord.ui.button(label='Создать дефолтный', custom_id='create_default', style=discord.ButtonStyle.gray,
                        emoji='\U000023CF')
@@ -521,7 +521,7 @@ class BirthdaysButtonsSelect(discord.ui.View):
             print(view.user.name)
             view.message = await interaction.channel.send(view=view)
         else:
-            await interaction.response.send_message(f'{interaction.user}, это не твоя кнопка, уходи')
+            await interaction.response.send_message(f'{interaction.user}, это не твоя кнопка, уходи', ephemeral=True)
 
 
 class GuildAlreadyExists(discord.ui.View):
@@ -539,7 +539,7 @@ class GuildAlreadyExists(discord.ui.View):
             await self.disable_all_items()
             await interaction.response.send_message('Ну вот и славненько')
         else:
-            await interaction.response.send_message(f'{interaction.user}, это не твоя кнопка, уходи')
+            await interaction.response.send_message(f'{interaction.user}, это не твоя кнопка, уходи', ephemeral=True)
 
     @discord.ui.button(label='Хочу изменить настройки', custom_id='change_channel', style=discord.ButtonStyle.danger,
                        emoji='\U0001F6E0')
@@ -577,7 +577,7 @@ class GuildAlreadyExists(discord.ui.View):
                 await interaction.response.send_message(
                     'Удалить канал не получилось из-за ошибки "{}"'.format(error.__str__()))
         else:
-            await interaction.response.send_message(f'{interaction.user}, это не твоя кнопка, уходи')
+            await interaction.response.send_message(f'{interaction.user}, это не твоя кнопка, уходи', ephemeral=True)
 
 
 class UserAlreadyExists(discord.ui.View):
@@ -597,7 +597,7 @@ class UserAlreadyExists(discord.ui.View):
             await self.disable_all_items()
             await interaction.followup.send('Ну вот и прекрасно')
         else:
-            await interaction.followup.send(f'{interaction.user.mention}, это не твоя кнопка, уходи')
+            await interaction.followup.send(f'{interaction.user.mention}, это не твоя кнопка, уходи', ephemeral=True)
 
     @discord.ui.button(label='Нет, удоли', custom_id='birthday_not_ok', style=discord.ButtonStyle.danger,
                        emoji='\U0001F47A')
@@ -619,7 +619,7 @@ class UserAlreadyExists(discord.ui.View):
             view.message = message
             view.user = interaction.user
         else:
-            await interaction.response.send_message(f'{interaction.user.mention}, это не твоя кнопка, уходи')
+            await interaction.response.send_message(f'{interaction.user.mention}, это не твоя кнопка, уходи', ephemeral=True)
 
 
 class ChangeBirthday(discord.ui.View):
@@ -640,7 +640,7 @@ class ChangeBirthday(discord.ui.View):
                 'Окей, тогда не добавляем новую дату. Если хочешь, всегда можешь воспользоваться командой '
                 '/add_my_birthday')
         else:
-            await interaction.response.send_message(f'{interaction.user.mention}, это не твоя кнопка, уходи')
+            await interaction.response.send_message(f'{interaction.user.mention}, это не твоя кнопка, уходи', ephemeral=True)
 
     @discord.ui.button(label='Добавить заново', custom_id='new_birthday', style=discord.ButtonStyle.green, emoji='\U0001F382')
     async def add_new_birthday(self, interaction, button):
@@ -651,7 +651,7 @@ class ChangeBirthday(discord.ui.View):
             message = await interaction.channel.send(view=view)
             view.message = message
         else:
-            await interaction.response.send_message(f'{interaction.user.mention}, это не твоя кнопка, уходи')
+            await interaction.response.send_message(f'{interaction.user.mention}, это не твоя кнопка, уходи', ephemeral=True)
 
 
 class NewDateAgain(discord.ui.View):
@@ -668,12 +668,13 @@ class NewDateAgain(discord.ui.View):
 
 class PaginationView(discord.ui.View):
     current_page: int = 1
-    sep: int = 3
+    sep: int = 15
 
-    def __init__(self, data):
+    def __init__(self, data, user):
         super().__init__(timeout=None)
         self.message = None
         self.roundup = math.ceil(len(data) / self.sep)
+        self.interaction_user = user
 
     async def send(self, interaction):
         self.message = await interaction.channel.send(view=self)
@@ -727,32 +728,44 @@ class PaginationView(discord.ui.View):
 
     @discord.ui.button(label="|<",
                        style=discord.ButtonStyle.green)
-    async def first_page_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
-        self.current_page = 1
+    async def first_page_button(self, interaction: discord.Interaction, button: discord.ui.Button, user: user):
+        if self.interaction_user == interaction.user:
+            await interaction.response.defer()
+            self.current_page = 1
 
-        await self.update_message(self.get_current_page_data())
+            await self.update_message(self.get_current_page_data())
+        else:
+            return
 
     @discord.ui.button(label="<",
                        style=discord.ButtonStyle.primary)
     async def prev_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
-        self.current_page -= 1
-        await self.update_message(self.get_current_page_data())
+        if self.interaction_user == interaction.user:
+            await interaction.response.defer()
+            self.current_page -= 1
+            await self.update_message(self.get_current_page_data())
+        else:
+            return
 
     @discord.ui.button(label=">",
                        style=discord.ButtonStyle.primary)
     async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
-        self.current_page += 1
-        await self.update_message(self.get_current_page_data())
+        if self.interaction_user == interaction.user:
+            await interaction.response.defer()
+            self.current_page += 1
+            await self.update_message(self.get_current_page_data())
+        else:
+            return
 
     @discord.ui.button(label=">|",
                        style=discord.ButtonStyle.green)
     async def last_page_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
-        self.current_page = int(len(self.data) / self.sep) + 1
-        await self.update_message(self.get_current_page_data())
+        if self.interaction_user == interaction.user:
+            await interaction.response.defer()
+            self.current_page = int(len(self.data) / self.sep) + 1
+            await self.update_message(self.get_current_page_data())
+        else:
+            return
 
 
 class DeleteMessages(discord.ui.View):
@@ -1163,7 +1176,7 @@ async def birthday_list(interaction: discord.Interaction):
         })
     print('data after', data)
 
-    pagination_view = PaginationView(data)
+    pagination_view = PaginationView(data, interaction.user)
     pagination_view.data = data
     pagination_view.counted = len(birthdays)
     await pagination_view.send(interaction)
@@ -1310,7 +1323,7 @@ async def birthday():
                     for rows in greetings:
                         greetings_text.append(rows['bot_message'])
                     message_text = random.choice(greetings_text)
-                    embed_description = f'{message_text} {user.mention}'
+                    embed_description = f'{message_text}'
                     embed = discord.Embed(colour=discord.Colour.dark_gold(), description=embed_description)
                     await channel.send(embed=embed)
                     query3 = 'UPDATE "public".users SET role_added_at=%s WHERE user_id=%s AND server_id=%s'
