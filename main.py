@@ -685,7 +685,7 @@ class PaginationView(discord.ui.View):
             title=f"Дни рождения:   Страница {self.current_page} / {self.roundup}")
         for item in data:
             embed.add_field(name=item['label'], value=item['value'], inline=False)
-        embed.set_footer(text=f'Всего дней рождений: {self.counted}. Дат на странице: {self.sep}')
+        embed.set_footer(text=f'Всего дней рождений: {self.counted}. Макс дат на странице: {self.sep}')
         return embed
 
     async def update_message(self, data):
