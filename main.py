@@ -728,7 +728,7 @@ class PaginationView(discord.ui.View):
 
     @discord.ui.button(label="|<",
                        style=discord.ButtonStyle.green)
-    async def first_page_button(self, interaction: discord.Interaction, button: discord.ui.Button, user: user):
+    async def first_page_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.interaction_user == interaction.user:
             await interaction.response.defer()
             self.current_page = 1
