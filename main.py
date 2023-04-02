@@ -44,7 +44,6 @@ class Aclient(discord.Client):
             await tree.sync()  # global (global registration can take 1-24 hours)
             self.synced = True
         if not self.added:
-            self.add_view(DropDownView2())
             # self.add_view(DropDownViewChannels())
             self.add_view(DropdownTimezones())
             self.added = True
@@ -55,44 +54,49 @@ class Aclient(discord.Client):
 
 # select for roles based on new thing I found
 class Roles2(discord.ui.RoleSelect):
-    def __init__(self):
+    def __init__(self, command_user):
         super().__init__(custom_id='roles_new', placeholder='Выбери роли', min_values=1, max_values=5, disabled=False)
+        self.user = command_user
 
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer(thinking=True)
-        selected_roles = self.values
-        already_assigned = []
-        new_roles = []
-        forbidden = []
-        selected_roles.sort()
-        for item in selected_roles:
-            if item.position > interaction.user.top_role.position:
-                forbidden.append(item.name)
-            else:
-                if item in interaction.user.roles:
-                    already_assigned.append(item.name)
-                if item not in interaction.user.roles:
-                    await interaction.user.add_roles(item, reason='Roles added by command')
-                    new_roles.append(item.name)
-        if not forbidden:
-            if not already_assigned:
-                await interaction.followup.send(f'Были добавлены роли:{new_roles}')
-            if already_assigned != [] and new_roles != []:
-                await interaction.followup.send(
-                    f'Были добавлены роли:{new_roles}, а эти роли у тебя уже есть:{already_assigned}')
-            if already_assigned != [] and new_roles == []:
-                await interaction.followup.send(f'У тебя уже есть {already_assigned}')
-        if forbidden:
-            if already_assigned == [] and new_roles != []:
-                await interaction.followup.send(f'Были добавлены роли:{new_roles}. Роли {forbidden} тебе не доступны.')
-            if already_assigned != [] and new_roles != []:
-                await interaction.followup.send(
-                    f'Были добавлены роли:{new_roles}, а эти роли у тебя уже есть:{already_assigned}. Роли {forbidden} тебе не доступны.')
-            if already_assigned != [] and new_roles == []:
-                await interaction.followup.send(
-                    f'У тебя уже есть {already_assigned}. Роли {forbidden} тебе не доступны.')
-            if already_assigned == [] and new_roles == []:
-                await interaction.followup.send(f'Роли {forbidden} тебе не доступны')
+        if self.user == interaction.user:
+            await DropDownView2.disable_all_items(self.info)
+            await interaction.response.defer(thinking=True)
+            selected_roles = self.values
+            already_assigned = []
+            new_roles = []
+            forbidden = []
+            selected_roles.sort()
+            for item in selected_roles:
+                if item.position > interaction.user.top_role.position:
+                    forbidden.append(item.name)
+                else:
+                    if item in interaction.user.roles:
+                        already_assigned.append(item.name)
+                    if item not in interaction.user.roles:
+                        await interaction.user.add_roles(item, reason='Roles added by command')
+                        new_roles.append(item.name)
+            if not forbidden:
+                if not already_assigned:
+                    await interaction.followup.send(f'Были добавлены роли:{new_roles}')
+                if already_assigned != [] and new_roles != []:
+                    await interaction.followup.send(
+                        f'Были добавлены роли:{new_roles}, а эти роли у тебя уже есть:{already_assigned}')
+                if already_assigned != [] and new_roles == []:
+                    await interaction.followup.send(f'У тебя уже есть {already_assigned}')
+            if forbidden:
+                if already_assigned == [] and new_roles != []:
+                    await interaction.followup.send(f'Были добавлены роли:{new_roles}. Роли {forbidden} тебе не доступны.')
+                if already_assigned != [] and new_roles != []:
+                    await interaction.followup.send(
+                        f'Были добавлены роли:{new_roles}, а эти роли у тебя уже есть:{already_assigned}. Роли {forbidden} тебе не доступны.')
+                if already_assigned != [] and new_roles == []:
+                    await interaction.followup.send(
+                        f'У тебя уже есть {already_assigned}. Роли {forbidden} тебе не доступны.')
+                if already_assigned == [] and new_roles == []:
+                    await interaction.followup.send(f'Роли {forbidden} тебе не доступны')
+        else:
+            await interaction.response.send_message('Это не твоя менюшка', ephemeral=True)
 
 
 class Channels(discord.ui.ChannelSelect):
@@ -294,9 +298,16 @@ class BirthdayRoleSelect(discord.ui.RoleSelect):
 # LIST OF ALL VIEWS
 
 class DropDownView2(discord.ui.View):
-    def __init__(self) -> None:
+    def __init__(self, user) -> None:
         super().__init__(timeout=None)
-        self.add_item(Roles2())
+        roles = Roles2(user)
+        roles.info = self
+        self.add_item(roles)
+
+    async def disable_all_items(self):
+        for item in self.children:
+            item.disabled = True
+        await self.message.edit(view=self)
 
 
 class DropDownViewChannels(discord.ui.View):
@@ -873,11 +884,13 @@ async def slash3(interaction: discord.Interaction, name: str):
 
 
 # add roles2
-@tree.command(guild=discord.Object(id=779677470156390440), name='roles',
+@tree.command(name='roles',
               description='Даёт возможность выбирать роли')
 async def roles2(interaction: discord.Interaction):
     embed = discord.Embed(title='Выбери нужные тебе роли!', colour=discord.Colour.dark_magenta())
-    await interaction.channel.send(embed=embed, view=DropDownView2())
+    view = DropDownView2(interaction.user)
+    message = await interaction.channel.send(embed=embed, view=view)
+    view.message = message
     await interaction.response.send_message(
         f'{interaction.user.display_name}, ты запустил новую систему выбора ролей. Она более красивая и вообще секс',
         ephemeral=True)
