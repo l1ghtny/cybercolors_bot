@@ -197,8 +197,8 @@ class NewDayAgain(discord.ui.Modal):
     async def on_submit(self, interaction: discord.Interaction):
         if self.d_title.value.isdigit():
             day = int(self.d_title.value)
-            if self.month == '02' and day > 29:
-                await interaction.response.send_message('Извини, в Феврале не бывает больше 29 дней')
+            if self.month == '02' and day > 28:
+                await interaction.response.send_message('Извини, в Феврале не бывает больше 28 дней (Я знаю, что бывает 29, но пока бот не умеет его корректно проверять)')
             elif self.month == '04' and day > 30:
                 await interaction.response.send_message('Извини, но в Апреле не бывает столько дней')
             elif self.month == '06' and day > 30:
@@ -927,8 +927,8 @@ async def delete_channels(interaction: discord.Interaction):
 )
 async def add_my_birthday(interaction: discord.Interaction, day: int, month: app_commands.Choice[str]):
     await interaction.response.defer(thinking=True)
-    if month.value == '02' and day > 29:
-        await interaction.followup.send('Извини, такой даты не существует')
+    if month.value == '02' and day > 28:
+        await interaction.followup.send('Извини, в Феврале не бывает больше 28 дней (Я знаю, что бывает 29, но пока бот не умеет его корректно проверять)')
     elif day > 30 and month.value == '04':
         await interaction.followup.send('Извини, такой даты не существует')
     elif month.value == '04' and day > 30:
