@@ -1119,6 +1119,14 @@ async def birthday_check(interaction: discord.Interaction):
     await interaction.followup.send('OK')
 
 
+@tree.command(name='help', description='Вызывайте, если что-то сломалось')
+async def help(interaction: discord.Interaction):
+    lightny = client.get_user(267745993074671616)
+    embed_description = f'Если с ботом что-то случилось, писать сюда: {lightny.mention}'
+    embed = discord.Embed(colour=discord.Colour.orange(), description=embed_description)
+    await interaction.response.send_message(embed=embed)
+
+
 @tree.command(name='add_birthday_message',
               description='Добавляет сообщение, которое бот использует, чтобы поздравлять именинников')
 async def birthday_message(interaction: discord.Interaction, message: str):
@@ -1336,7 +1344,7 @@ async def birthday():
                     for rows in greetings:
                         greetings_text.append(rows['bot_message'])
                     message_text = random.choice(greetings_text)
-                    embed_description = f'{message_text}'
+                    embed_description = eval(f'{message_text}')
                     embed = discord.Embed(colour=discord.Colour.dark_gold(), description=embed_description)
                     await channel.send(embed=embed)
                     query3 = 'UPDATE "public".users SET role_added_at=%s WHERE user_id=%s AND server_id=%s'
