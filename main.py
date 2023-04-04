@@ -18,6 +18,7 @@ import re
 import requests
 import random
 import calendar
+import demoji
 
 import github_api
 
@@ -1044,12 +1045,21 @@ async def birthdays_settings(interaction: discord.Interaction):
 
 @tree.command(name='add_reply', description='Добавляет ответы на определенные слова и фразы для бота')
 async def add_reply(interaction: discord.Interaction, phrase: str, response: str):
+    def em_replace(string):
+        emoji = demoji.findall(string)
+        for i in emoji:
+            unicode = i.encode('unicode-escape').decode('ASCII')
+            print('unicode:', unicode)
+            string = string.replace(i, unicode)
+        return string
+
     await interaction.response.defer(ephemeral=True)
     message_id = uuid.uuid4()
     server_id = interaction.guild_id
     user_id = interaction.user.id
     user_name = interaction.user.name
-    request_phrase = phrase.lower()
+    request_phrase_base = phrase.lower()
+    request_phrase = em_replace(request_phrase_base)
     response_phrase = response
     conn, cursor = await basevariables.access_db_on_interaction(interaction)
     query = 'INSERT INTO "public".messages (message_id, server_id, request_phrase, respond_phrase, added_by_id, ' \
@@ -1204,19 +1214,37 @@ async def birthday_list(interaction: discord.Interaction):
     await interaction.followup.send('Все дни рождения найдены')
 
 
+async def twitter_link_replace(message, from_user):
+    webhook = await message.channel.create_webhook(name=from_user.name)
+    new_message = message.content.replace('twitter', 'fxtwitter')
+    await webhook.send(str(new_message), username=from_user.name, avatar_url=from_user.avatar)
+    webhooks = await message.channel.webhooks()
+    for webhook in webhooks:
+        await webhook.delete()
+
+
 @client.event
 async def on_message(message):
     def string_found(string1, string2):
-        if re.search(r"\b" + re.escape(string1) + r"\b", string2):
+        search = re.search(r"\b" + re.escape(string1) + r"\b", string2)
+        if search:
             return True
         return False
+
+    def em_replace(string):
+        emoji = demoji.findall(string)
+        for i in emoji:
+            unicode = i.encode('unicode-escape').decode('ASCII')
+            string = string.replace(i, unicode)
+        return string
 
     user = message.author
     if user:
         if user == client.user:
             return
         else:
-            message_content = message.content.lower()
+            message_content_base = message.content.lower()
+            message_content = em_replace(message_content_base)
             server_id = message.guild.id
             conn, cursor = await basevariables.access_db_on_message(message)
             query = 'SELECT * from messages WHERE server_id=%s'
@@ -1225,9 +1253,10 @@ async def on_message(message):
             all_rows = cursor.fetchall()
             conn.close()
             for item in all_rows:
-                request = item['request_phrase']
+                request_base = item['request_phrase']
+                request = request_base
                 response = (item['respond_phrase'])
-                if request.startswith('<'):
+                if request_base.startswith('<'):
                     if request in message_content:
                         await message.reply(response)
                 else:
@@ -1239,6 +1268,9 @@ async def on_message(message):
                             await message.reply(response)
                         except NameError:
                             await message.reply(response)
+        if 'https://twitter.com/' in message_content_base:
+            await message.delete()
+            await twitter_link_replace(message, user)
 
 
 utc = datetime.timezone.utc

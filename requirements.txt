@@ -4,3 +4,4 @@ python-dotenv~=0.21.1
 discord.py~=2.1.0
 self~=2020.12.3
 PyGithub~=1.58.1
+demoji~=1.1.0
