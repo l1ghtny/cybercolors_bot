@@ -1219,7 +1219,6 @@ async def delete_reply_2_autocomplete(interaction: discord.Interaction, current:
         new_item = str(item)
         new_value = new_item[2:-2]
         result_list.append(app_commands.Choice(name=new_value, value=new_value))
-    print(result_list)
     return result_list
 
 
