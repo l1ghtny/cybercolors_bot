@@ -405,7 +405,7 @@ class DropdownTimezones(discord.ui.View):
                 embed.add_field(name=f'Выбранный день: {self.day}', value='')
                 embed.add_field(name=f'Выбранный месяц: {self.month}', value='', inline=False)
                 embed.add_field(name='Выбранный часовой пояс:', value=add_timezone, inline=False)
-                embed.add_field(name='Я всех приглашу на твой день рождения :)', value='')
+                embed.add_field(name='', value=f'**{interaction.user.mention}, я всех приглашу на твой день рождения :)**')
                 await interaction.response.send_message(embed=embed)
             except psycopg2.Error as error:
                 await interaction.response.send_message(
