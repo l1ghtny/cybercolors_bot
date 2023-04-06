@@ -230,7 +230,7 @@ class NewDayAgain(discord.ui.Modal):
                 else:
                     interaction.channel.send('Извини, что-то пошло не так')
         else:
-            await interaction.response.send_mesage('Извини, это не число. Попробуй добавить день рождения командой '
+            await interaction.followup.send('Извини, это не число. Попробуй добавить день рождения командой '
                                                    '/add_my_birthday', ephemeral=True)
 
 
@@ -401,7 +401,12 @@ class DropdownTimezones(discord.ui.View):
                 conn.commit()
                 conn.close()
                 await self.disable_all_items()
-                await interaction.response.send_message(f'Процесс добавления успешно завершён! Выбранный день: {self.day}. Выбранный месяц: {self.month}. Выбранный часовой пояс: {add_timezone}')
+                embed = discord.Embed(title='Спасибо, я всё записал. Проверяй', colour=discord.Colour.orange())
+                embed.add_field(name=f'Выбранный день: {self.day}', value='')
+                embed.add_field(name=f'Выбранный месяц: {self.month}', value='', inline=False)
+                embed.add_field(name='Выбранный часовой пояс:', value=add_timezone, inline=False)
+                embed.add_field(name='Я всех приглашу на твой день рождения :)', value='')
+                await interaction.response.send_message(embed=embed)
             except psycopg2.Error as error:
                 await interaction.response.send_message(
                     'Добавить канал не получилось из-за ошибки "{}"'.format(error.__str__()))
@@ -759,7 +764,7 @@ class PaginationView(discord.ui.View):
 
             await self.update_message(self.get_current_page_data())
         else:
-            return
+            await interaction.response.send('Это не твоё. Вызови себе своё и нажимай сколько хочешь', ephemeral=True)
 
     @discord.ui.button(label="<",
                        style=discord.ButtonStyle.primary)
@@ -769,7 +774,7 @@ class PaginationView(discord.ui.View):
             self.current_page -= 1
             await self.update_message(self.get_current_page_data())
         else:
-            return
+            await interaction.response.send('Это не твоё. Вызови себе своё и нажимай сколько хочешь', ephemeral=True)
 
     @discord.ui.button(label=">",
                        style=discord.ButtonStyle.primary)
@@ -779,7 +784,7 @@ class PaginationView(discord.ui.View):
             self.current_page += 1
             await self.update_message(self.get_current_page_data())
         else:
-            return
+            await interaction.response.send('Это не твоё. Вызови себе своё и нажимай сколько хочешь', ephemeral=True)
 
     @discord.ui.button(label=">|",
                        style=discord.ButtonStyle.green)
@@ -789,7 +794,7 @@ class PaginationView(discord.ui.View):
             self.current_page = int(len(self.data) / self.sep) + 1
             await self.update_message(self.get_current_page_data())
         else:
-            return
+            await interaction.response.send('Это не твоё. Вызови себе своё и нажимай сколько хочешь', ephemeral=True)
 
 
 class DeleteMessages(discord.ui.View):
@@ -1165,7 +1170,7 @@ async def add_reply(interaction: discord.Interaction, phrase: str, response: str
         await interaction.followup.send('Не получилось записать словосочетание из-за ошибки {}'.format(error.__str__()))
 
 
-@tree.command(name='delete_reply')
+@tree.command(name='delete_reply', description='Позволяет удалить заведенные триггеры на фразы')
 async def delete_reply_2(interaction: discord.Interaction, reply: str):
     user = interaction.user
     server_id = interaction.guild_id
@@ -1269,7 +1274,7 @@ async def delete_reply_2_autocomplete(interaction: discord.Interaction, current:
 #         await interaction.response.send_message('Тебе это низя')
 
 
-@tree.command(name='check_dr', description='Проверяет, есть ли у кого-нибудь др. Для тестирования')
+@tree.command(name='check_dr', description='Форсированно запускает проверку на дни рождения в этом часу')
 async def birthday_check(interaction: discord.Interaction):
     await interaction.response.defer()
     await birthday()
