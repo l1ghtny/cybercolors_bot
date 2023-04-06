@@ -764,7 +764,7 @@ class PaginationView(discord.ui.View):
 
             await self.update_message(self.get_current_page_data())
         else:
-            await interaction.response.send('Это не твоё. Вызови себе своё и нажимай сколько хочешь', ephemeral=True)
+            await interaction.response.send_message('Это не твоё. Вызови себе своё и нажимай сколько хочешь', ephemeral=True)
 
     @discord.ui.button(label="<",
                        style=discord.ButtonStyle.primary)
@@ -774,7 +774,7 @@ class PaginationView(discord.ui.View):
             self.current_page -= 1
             await self.update_message(self.get_current_page_data())
         else:
-            await interaction.response.send('Это не твоё. Вызови себе своё и нажимай сколько хочешь', ephemeral=True)
+            await interaction.response.send_message('Это не твоё. Вызови себе своё и нажимай сколько хочешь', ephemeral=True)
 
     @discord.ui.button(label=">",
                        style=discord.ButtonStyle.primary)
@@ -784,7 +784,7 @@ class PaginationView(discord.ui.View):
             self.current_page += 1
             await self.update_message(self.get_current_page_data())
         else:
-            await interaction.response.send('Это не твоё. Вызови себе своё и нажимай сколько хочешь', ephemeral=True)
+            await interaction.response.send_message('Это не твоё. Вызови себе своё и нажимай сколько хочешь', ephemeral=True)
 
     @discord.ui.button(label=">|",
                        style=discord.ButtonStyle.green)
@@ -794,7 +794,7 @@ class PaginationView(discord.ui.View):
             self.current_page = int(len(self.data) / self.sep) + 1
             await self.update_message(self.get_current_page_data())
         else:
-            await interaction.response.send('Это не твоё. Вызови себе своё и нажимай сколько хочешь', ephemeral=True)
+            await interaction.response.send_message('Это не твоё. Вызови себе своё и нажимай сколько хочешь', ephemeral=True)
 
 
 class DeleteMessages(discord.ui.View):
