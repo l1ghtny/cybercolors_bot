@@ -19,6 +19,7 @@ import requests
 import random
 import calendar
 import demoji
+import pytz
 
 import github_api
 
@@ -87,7 +88,8 @@ class Roles2(discord.ui.RoleSelect):
                     await interaction.followup.send(f'У тебя уже есть {already_assigned}')
             if forbidden:
                 if already_assigned == [] and new_roles != []:
-                    await interaction.followup.send(f'Были добавлены роли:{new_roles}. Роли {forbidden} тебе не доступны.')
+                    await interaction.followup.send(
+                        f'Были добавлены роли:{new_roles}. Роли {forbidden} тебе не доступны.')
                 if already_assigned != [] and new_roles != []:
                     await interaction.followup.send(
                         f'Были добавлены роли:{new_roles}, а эти роли у тебя уже есть:{already_assigned}. Роли {forbidden} тебе не доступны.')
@@ -148,7 +150,8 @@ class BirthdaysChannelText(discord.ui.ChannelSelect):
                     cursor.execute(postgres_insert_query, record_to_insert)
                     conn.commit()
                     conn.close()
-                    await interaction.response.send_message(f'Выбранный канал: "{item.mention}". Не забудь добавить фразы поздравления командой "/add_birthday_message')
+                    await interaction.response.send_message(
+                        f'Выбранный канал: "{item.mention}". Не забудь добавить фразы поздравления командой "/add_birthday_message')
                 except psycopg2.Error as error:
                     await interaction.response.send_message(
                         'Добавить канал не получилось из-за ошибки "{}"'.format(error.__str__()))
@@ -199,7 +202,8 @@ class NewDayAgain(discord.ui.Modal):
         if self.d_title.value.isdigit():
             day = int(self.d_title.value)
             if self.month == '02' and day > 28:
-                await interaction.response.send_message('Извини, в Феврале не бывает больше 28 дней (Я знаю, что бывает 29, но пока бот не умеет его корректно проверять)')
+                await interaction.response.send_message(
+                    'Извини, в Феврале не бывает больше 28 дней (Я знаю, что бывает 29, но пока бот не умеет его корректно проверять)')
             elif self.month == '04' and day > 30:
                 await interaction.response.send_message('Извини, но в Апреле не бывает столько дней')
             elif self.month == '06' and day > 30:
@@ -293,7 +297,8 @@ class BirthdayRoleSelect(discord.ui.RoleSelect):
                 role_name = item.name
                 await basevariables.update_server_role(interaction, server_id, role_id, role_name)
         else:
-            await interaction.response.send_message(f'{interaction.user.mention}, это не твоя менюшка, ухади', ephemeral=True)
+            await interaction.response.send_message(f'{interaction.user.mention}, это не твоя менюшка, ухади',
+                                                    ephemeral=True)
 
 
 # LIST OF ALL VIEWS
@@ -631,7 +636,8 @@ class UserAlreadyExists(discord.ui.View):
             view.message = message
             view.user = interaction.user
         else:
-            await interaction.response.send_message(f'{interaction.user.mention}, это не твоя кнопка, уходи', ephemeral=True)
+            await interaction.response.send_message(f'{interaction.user.mention}, это не твоя кнопка, уходи',
+                                                    ephemeral=True)
 
 
 class ChangeBirthday(discord.ui.View):
@@ -652,9 +658,11 @@ class ChangeBirthday(discord.ui.View):
                 'Окей, тогда не добавляем новую дату. Если хочешь, всегда можешь воспользоваться командой '
                 '/add_my_birthday')
         else:
-            await interaction.response.send_message(f'{interaction.user.mention}, это не твоя кнопка, уходи', ephemeral=True)
+            await interaction.response.send_message(f'{interaction.user.mention}, это не твоя кнопка, уходи',
+                                                    ephemeral=True)
 
-    @discord.ui.button(label='Добавить заново', custom_id='new_birthday', style=discord.ButtonStyle.green, emoji='\U0001F382')
+    @discord.ui.button(label='Добавить заново', custom_id='new_birthday', style=discord.ButtonStyle.green,
+                       emoji='\U0001F382')
     async def add_new_birthday(self, interaction, button):
         if interaction.user == self.user:
             await self.disable_all_items()
@@ -663,7 +671,8 @@ class ChangeBirthday(discord.ui.View):
             message = await interaction.channel.send(view=view)
             view.message = message
         else:
-            await interaction.response.send_message(f'{interaction.user.mention}, это не твоя кнопка, уходи', ephemeral=True)
+            await interaction.response.send_message(f'{interaction.user.mention}, это не твоя кнопка, уходи',
+                                                    ephemeral=True)
 
 
 class NewDateAgain(discord.ui.View):
@@ -837,6 +846,84 @@ class DeleteMessagesSelect4(discord.ui.Select):
         await interaction.response.send_message(f'Ты выбрал {self.values}')
 
 
+class DeleteOneReply(discord.ui.View):
+    def __init__(self, interaction, user, message_id) -> None:
+        super().__init__(timeout=None)
+        self.interaction = interaction
+        self.user = user
+        self.message_id = message_id
+
+    async def disable_all_items(self):
+        for item in self.children:
+            item.disabled = True
+        message = await self.interaction.original_response()
+        await message.edit(view=self)
+
+    @discord.ui.button(label='Да, хочу удалить', custom_id='delete_the_reply', style=discord.ButtonStyle.gray,
+                       emoji='\U0001F5D1')
+    async def delete_the_reply(self, interaction: discord.Interaction, button):
+        await self.disable_all_items()
+        conn, cursor = await basevariables.access_db_on_interaction(interaction)
+        query = 'DELETE from "public".messages WHERE message_id=%s'
+        values = (self.message_id,)
+        cursor.execute(query, values)
+        conn.commit()
+        conn.close()
+        await interaction.response.send_message('Ответ удалён', ephemeral=True)
+
+    @discord.ui.button(label='Не, не буду удалять', custom_id='dont_delete_the_reply', style=discord.ButtonStyle.danger,
+                       emoji='\U0001F64C')
+    async def dont_delete_the_reply(self, interaction: discord.Interaction, button):
+        await self.disable_all_items()
+        await interaction.response.send_message('Оке, тогда я ничего не меняю')
+
+
+class DeleteReplyMultiple(discord.ui.View):
+    def __init__(self, interaction) -> None:
+        super().__init__(timeout=None)
+        self.interaction = interaction
+
+    async def disable_all_items(self):
+        for item in self.children:
+            item.disabled = True
+        message = await self.interaction.original_response()
+        await message.edit(view=self)
+
+
+class DeleteReplyMultipleSelect(discord.ui.Select):
+    def __init__(self, interaction, view) -> None:
+        super().__init__(options=[],
+                         custom_id='select_replies_to_delete',
+                         placeholder='Выбери нужный ответ',
+                         max_values=1,
+                         disabled=False)
+        self.interaction = interaction
+        self.info = view
+
+    async def callback(self, interaction: discord.Interaction):
+        await DeleteReplyMultiple.disable_all_items(self.info)
+        message_id_str = self.values[0]
+        message_id = uuid.UUID(message_id_str)
+        conn, cursor = await basevariables.access_db_on_interaction(interaction)
+        query = 'SELECT request_phrase, respond_phrase, added_by_name, added_at, message_id from "public".messages WHERE message_id=%s'
+        values = (message_id,)
+        cursor.execute(query, values)
+        results = cursor.fetchall()
+        for item in results:
+            request_phrase = item['request_phrase']
+            respond_phrase = item['respond_phrase']
+            added_by_name = item['added_by_name']
+            added_at_base = item['added_at']
+            added_at = added_at_base.astimezone(pytz.timezone('EUROPE/MOSCOW')).strftime('%Y-%m-%d %H:%M:%S %Z%z')
+            view = DeleteOneReply(interaction, interaction.user, message_id)
+            embed = discord.Embed(title=f'Выбранный тобой ответ')
+            embed.add_field(name='Триггер:', value=request_phrase)
+            embed.add_field(name='Ответ:', value=respond_phrase, inline=False)
+            embed.add_field(name='Кто добавил:', value=added_by_name)
+            embed.add_field(name='Когда добавил (МСК время):', value=added_at)
+            await interaction.response.send_message(view=view, embed=embed, ephemeral=True)
+
+
 client = Aclient()
 tree = app_commands.CommandTree(client)
 intents = discord.Intents.all()
@@ -929,7 +1016,8 @@ async def delete_channels(interaction: discord.Interaction):
 async def add_my_birthday(interaction: discord.Interaction, day: int, month: app_commands.Choice[str]):
     await interaction.response.defer(thinking=True)
     if month.value == '02' and day > 28:
-        await interaction.followup.send('Извини, в Феврале не бывает больше 28 дней (Я знаю, что бывает 29, но пока бот не умеет его корректно проверять)')
+        await interaction.followup.send(
+            'Извини, в Феврале не бывает больше 28 дней (Я знаю, что бывает 29, но пока бот не умеет его корректно проверять)')
     elif day > 30 and month.value == '04':
         await interaction.followup.send('Извини, такой даты не существует')
     elif month.value == '04' and day > 30:
@@ -985,7 +1073,8 @@ async def add_my_birthday(interaction: discord.Interaction, day: int, month: app
                 view.message = message
             conn.close()
         except psycopg2.errors.ForeignKeyViolation as nameerror:
-            await interaction.followup.send('Сервер ещё не настроен или что-то пошло не так. Напишите админу сервера или создателю бота')
+            await interaction.followup.send(
+                'Сервер ещё не настроен или что-то пошло не так. Напишите админу сервера или создателю бота')
         except psycopg2.Error as error:
             await interaction.followup.send(
                 f'Что-то пошло не так, напишите {anton_id.mention}. Ошибка: {error}'
@@ -1075,51 +1164,108 @@ async def add_reply(interaction: discord.Interaction, phrase: str, response: str
         await interaction.followup.send('Не получилось записать словосочетание из-за ошибки {}'.format(error.__str__()))
 
 
-@tree.command(name='delete_replies', description='Вызывает список ответов')
-async def add_reply(interaction: discord.Interaction):
+@tree.command(name='delete_reply')
+async def delete_reply_2(interaction: discord.Interaction, reply: str):
+    user = interaction.user
     server_id = interaction.guild_id
     conn, cursor = await basevariables.access_db_on_interaction(interaction)
-    query0 = 'SELECT COUNT(*) FROM "public".messages WHERE server_id=%s'
-    value0 = (server_id,)
-    cursor.execute(query0, value0)
-    number_of_rows = cursor.fetchone()
-    print(number_of_rows)
-    print(type(number_of_rows))
-    if interaction.user.id == 267745993074671616:
-        conn, cursor = await basevariables.access_db_on_interaction(interaction)
-        query = 'SELECT * from "public".messages WHERE server_id=%s LIMIT 25'
-        values = (server_id,)
-        cursor.execute(query, values)
-        messages = cursor.fetchall()
-        query2 = 'SELECT * from "public".messages WHERE server_id=%s LIMIT 25 OFFSET 25'
-        cursor.execute(query2, values)
-        messages2 = cursor.fetchall()
-        conn.close()
-        select = DeleteMessagesSelect()
-        select2 = DeleteMessagesSelect2()
-        for item in messages:
-            request = item['request_phrase']
-            response = item['respond_phrase']
-            message_id = item['message_id']
-            label_main = f'{request}-{response}'
-            label = label_main[0:99]
-            value = f'{message_id}'
+    query = 'SELECT server_id, request_phrase, respond_phrase, added_by_name, added_at, message_id from "public".messages WHERE server_id=%s AND request_phrase=%s'
+    values = (server_id, reply,)
+    cursor.execute(query, values)
+    results = cursor.fetchall()
+    results_count = len(results)
+    conn.close()
+    if results_count > 1:
+        view = DeleteReplyMultiple(interaction)
+        select = DeleteReplyMultipleSelect(interaction, view)
+        for item in results:
+            label_base = item['respond_phrase']
+            label = label_base[0:99]
+            value = str(item['message_id'])
             select.add_option(label=label, value=value)
-        for item in messages2:
-            request = item['request_phrase']
-            response = item['respond_phrase']
-            message_id = item['message_id']
-            label_main = f'{request}-{response}'
-            label = label_main[0:99]
-            value = f'{message_id}'
-            select2.add_option(label=label, value=value)
-        view = DeleteMessages()
         view.add_item(select)
-        view.add_item(select2)
-        await interaction.response.send_message('Посчитали всё, что есть')
-        await interaction.channel.send(view=view)
+        await interaction.response.send_message(f'Варианта больше одного, их {results_count}. Выдаём выпадашку',
+                                                view=view, ephemeral=True)
     else:
-        await interaction.response.send_message('Тебе это низя')
+        for item in results:
+            message_id = item['message_id']
+            request_phrase = item['request_phrase']
+            respond_phrase = item['respond_phrase']
+            added_by_name = item['added_by_name']
+            added_at_base = item['added_at']
+            added_at = added_at_base.astimezone(pytz.timezone('EUROPE/MOSCOW')).strftime('%Y-%m-%d %H:%M:%S')
+            embed = discord.Embed(title='Выбранное сообщение', colour=discord.Colour.random())
+            embed.add_field(name='Триггер:', value=request_phrase)
+            embed.add_field(name='Ответ:', value=respond_phrase, inline=False)
+            embed.add_field(name='Кто добавил:', value=added_by_name)
+            embed.add_field(name='Когда добавил (МСК время):', value=added_at)
+            view = DeleteOneReply(interaction, user, message_id)
+            await interaction.response.send_message(view=view, embed=embed, ephemeral=True)
+
+
+@delete_reply_2.autocomplete('reply')
+async def delete_reply_2_autocomplete(interaction: discord.Interaction, current: str):
+    conn, cursor = await basevariables.access_db_on_interaction(interaction)
+    query = 'SELECT request_phrase from "public".messages WHERE request_phrase LIKE %s LIMIT 25'
+    request_string = f'{current}%'
+    values = (request_string,)
+    cursor.execute(query, values)
+    result = cursor.fetchall()
+    conn.close()
+    result_list = []
+    for item in result:
+        new_item = str(item)
+        new_value = new_item[2:-2]
+        result_list.append(app_commands.Choice(name=new_value, value=new_value))
+    print(result_list)
+    return result_list
+
+
+# @tree.command(name='delete_replies', description='Вызывает список ответов')
+# async def delete_reply(interaction: discord.Interaction):
+#     server_id = interaction.guild_id
+#     conn, cursor = await basevariables.access_db_on_interaction(interaction)
+#     query0 = 'SELECT COUNT(*) FROM "public".messages WHERE server_id=%s'
+#     value0 = (server_id,)
+#     cursor.execute(query0, value0)
+#     number_of_rows = cursor.fetchone()
+#     print(number_of_rows)
+#     print(type(number_of_rows))
+#     if interaction.user.id == 267745993074671616:
+#         conn, cursor = await basevariables.access_db_on_interaction(interaction)
+#         query = 'SELECT * from "public".messages WHERE server_id=%s LIMIT 25'
+#         values = (server_id,)
+#         cursor.execute(query, values)
+#         messages = cursor.fetchall()
+#         query2 = 'SELECT * from "public".messages WHERE server_id=%s LIMIT 25 OFFSET 25'
+#         cursor.execute(query2, values)
+#         messages2 = cursor.fetchall()
+#         conn.close()
+#         select = DeleteMessagesSelect()
+#         select2 = DeleteMessagesSelect2()
+#         for item in messages:
+#             request = item['request_phrase']
+#             response = item['respond_phrase']
+#             message_id = item['message_id']
+#             label_main = f'{request}-{response}'
+#             label = label_main[0:99]
+#             value = f'{message_id}'
+#             select.add_option(label=label, value=value)
+#         for item in messages2:
+#             request = item['request_phrase']
+#             response = item['respond_phrase']
+#             message_id = item['message_id']
+#             label_main = f'{request}-{response}'
+#             label = label_main[0:99]
+#             value = f'{message_id}'
+#             select2.add_option(label=label, value=value)
+#         view = DeleteMessages()
+#         view.add_item(select)
+#         view.add_item(select2)
+#         await interaction.response.send_message('Посчитали всё, что есть')
+#         await interaction.channel.send(view=view)
+#     else:
+#         await interaction.response.send_message('Тебе это низя')
 
 
 @tree.command(name='check_dr', description='Проверяет, есть ли у кого-нибудь др. Для тестирования')
@@ -1161,13 +1307,12 @@ async def birthday_list(interaction: discord.Interaction):
 
     ]
     conn, cursor = await basevariables.access_db_on_interaction(interaction)
-    query = 'SELECT user_id, server_id, day, month FROM "public".users WHERE server_id=%s ORDER BY month, day'
+    query = """SELECT g.user_id, g.day, g.month FROM (SELECT user_id, day, month, month - date_part('month', now()) AS diff FROM "public".users) g ORDER BY (CASE WHEN diff < 0 then 100 + diff ELSE diff END), day"""
     values = (server_id,)
     cursor.execute(query, values)
     birthdays = cursor.fetchall()
     conn.close()
     bd_list = []
-    print(birthdays)
     for item in birthdays:
         user_id = item['user_id']
         user = client.get_user(user_id)
@@ -1178,7 +1323,6 @@ async def birthday_list(interaction: discord.Interaction):
             'user': user,
             'date': f'{day} {month}'
         })
-    print(bd_list)
 
     for i in bd_list:
         list_user = i['user']
@@ -1187,7 +1331,6 @@ async def birthday_list(interaction: discord.Interaction):
             'label': list_date,
             'value': f'{list_user.mention}'
         })
-    print('data before', old_data)
     data = []
     for key, value in itertools.groupby(old_data, key=operator.itemgetter('label')):
         new_key = key
@@ -1197,15 +1340,10 @@ async def birthday_list(interaction: discord.Interaction):
                 new_value = k['value']
             else:
                 new_value += f" и {k['value']}"
-            print({
-                'label': key,
-                'value': k['value']
-            })
         data.append({
             'label': new_key,
             'value': new_value
         })
-    print('data after', data)
 
     pagination_view = PaginationView(data, interaction.user)
     pagination_view.data = data
