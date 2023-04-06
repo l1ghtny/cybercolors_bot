@@ -47,7 +47,6 @@ class Aclient(discord.Client):
             self.synced = True
         if not self.added:
             # self.add_view(DropDownViewChannels())
-            self.add_view(DropdownTimezones())
             self.added = True
         birthday.start()
         update_releases.start()
@@ -221,10 +220,12 @@ class NewDayAgain(discord.ui.Modal):
                 user_id = interaction.user.id
                 status = await basevariables.add_new_day_month(server_id, user_id, day, self.month, interaction)
                 if status == 'ok':
-                    await interaction.response.send_message('А теперь выбери свой часовой пояс:')
-                    view = DropdownTimezones()
+                    await interaction.response.defer(ephemeral=True)
+                    month_num = int(self.month)
+                    month = calendar.month_name[month_num]
+                    view = DropdownTimezones(day, month)
                     view.user = interaction.user
-                    message = await interaction.channel.send(view=view)
+                    message = await interaction.followup.send('А теперь выбери свой часовой пояс:', view=view, ephemeral=True)
                     view.message = message
                 else:
                     interaction.channel.send('Извини, что-то пошло не так')
@@ -244,7 +245,7 @@ class NewMonthAgain(discord.ui.View):
     async def disable_all_items(self):
         for item in self.children:
             item.disabled = True
-        await self.message.edit(view=self)
+        await self.message.edit_original_response(view=self)
 
 
 class NewMonthAgainSelect(discord.ui.Select):
@@ -274,7 +275,8 @@ class NewMonthAgainSelect(discord.ui.Select):
         if interaction.user == self.user:
             result_list = self.values
             await NewMonthAgain.disable_all_items(self.info)
-            await interaction.response.send_modal(NewDayAgain(month=result_list[0]))
+            modal = NewDayAgain(month=result_list[0])
+            await interaction.response.send_modal(modal)
         else:
             await interaction.response.send_message('Тебе нельзя', ephemeral=True)
 
@@ -331,9 +333,11 @@ class DropDownViewChannels(discord.ui.View):
 
 
 class DropdownTimezones(discord.ui.View):
-    def __init__(self):
+    def __init__(self, day, month):
         super().__init__(timeout=None)
         self.disabled = False
+        self.day = day
+        self.month = month
 
     async def disable_all_items(self):
         for item in self.children:
@@ -397,7 +401,7 @@ class DropdownTimezones(discord.ui.View):
                 conn.commit()
                 conn.close()
                 await self.disable_all_items()
-                await interaction.response.send_message(f'Выбранный часовой пояс: {add_timezone}')
+                await interaction.response.send_message(f'Процесс добавления успешно завершён! Выбранный день: {self.day}. Выбранный месяц: {self.month}. Выбранный часовой пояс: {add_timezone}')
             except psycopg2.Error as error:
                 await interaction.response.send_message(
                     'Добавить канал не получилось из-за ошибки "{}"'.format(error.__str__()))
@@ -612,7 +616,7 @@ class UserAlreadyExists(discord.ui.View):
         await interaction.response.defer()
         if interaction.user == self.user:
             await self.disable_all_items()
-            await interaction.followup.send('Ну вот и прекрасно')
+            await interaction.followup.send('Ну вот и прекрасно', ephemeral=True)
         else:
             await interaction.followup.send(f'{interaction.user.mention}, это не твоя кнопка, уходи', ephemeral=True)
 
@@ -629,11 +633,10 @@ class UserAlreadyExists(discord.ui.View):
             cursor.execute(query, values)
             conn.commit()
             conn.close()
-            await interaction.response.send_message(f'{interaction.user.display_name}, сделано')
             embed = discord.Embed(title='Твой день рождения удален. Что хочешь сделать дальше?')
             view = ChangeBirthday()
-            message = await interaction.channel.send(embed=embed, view=view)
-            view.message = message
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+            view.message = interaction
             view.user = interaction.user
         else:
             await interaction.response.send_message(f'{interaction.user.mention}, это не твоя кнопка, уходи',
@@ -647,7 +650,8 @@ class ChangeBirthday(discord.ui.View):
     async def disable_all_items(self):
         for item in self.children:
             item.disabled = True
-        await self.message.edit(view=self)
+        message = self.message
+        await message.edit_original_response(view=self)
 
     @discord.ui.button(label='Пойти по своим делам', custom_id='not_add_birthday', style=discord.ButtonStyle.blurple,
                        emoji='\U0001F494')
@@ -656,7 +660,7 @@ class ChangeBirthday(discord.ui.View):
             await self.disable_all_items()
             await interaction.response.send_message(
                 'Окей, тогда не добавляем новую дату. Если хочешь, всегда можешь воспользоваться командой '
-                '/add_my_birthday')
+                '/add_my_birthday', ephemeral=True)
         else:
             await interaction.response.send_message(f'{interaction.user.mention}, это не твоя кнопка, уходи',
                                                     ephemeral=True)
@@ -666,10 +670,9 @@ class ChangeBirthday(discord.ui.View):
     async def add_new_birthday(self, interaction, button):
         if interaction.user == self.user:
             await self.disable_all_items()
-            await interaction.response.send_message('Тогда выбери месяц')
             view = NewMonthAgain(user=interaction.user)
-            message = await interaction.channel.send(view=view)
-            view.message = message
+            await interaction.response.send_message('Тогда выбери месяц', view=view, ephemeral=True)
+            view.message = interaction
         else:
             await interaction.response.send_message(f'{interaction.user.mention}, это не твоя кнопка, уходи',
                                                     ephemeral=True)
@@ -875,7 +878,7 @@ class DeleteOneReply(discord.ui.View):
                        emoji='\U0001F64C')
     async def dont_delete_the_reply(self, interaction: discord.Interaction, button):
         await self.disable_all_items()
-        await interaction.response.send_message('Оке, тогда я ничего не меняю')
+        await interaction.response.send_message('Оке, тогда я ничего не меняю', ephemeral=True)
 
 
 class DeleteReplyMultiple(discord.ui.View):
@@ -972,7 +975,7 @@ async def slash3(interaction: discord.Interaction, name: str):
 
 
 # add roles2
-@tree.command(name='roles',
+@tree.command(guild=discord.Object(id=779677470156390440), name='roles',
               description='Даёт возможность выбирать роли')
 async def roles2(interaction: discord.Interaction):
     embed = discord.Embed(title='Выбери нужные тебе роли!', colour=discord.Colour.dark_magenta())
@@ -985,7 +988,7 @@ async def roles2(interaction: discord.Interaction):
 
 
 # delete_channels
-@tree.command(name='delete_channels', description='Даёт возможность выбрать каналы для удаления')
+@tree.command(guild=discord.Object(id=779677470156390440), name='delete_channels', description='Даёт возможность выбрать каналы для удаления')
 async def delete_channels(interaction: discord.Interaction):
     embed = discord.Embed(title='Выбери нужные тебе каналы!', colour=discord.Colour.dark_magenta())
     view = DropDownViewChannels()
@@ -1014,7 +1017,7 @@ async def delete_channels(interaction: discord.Interaction):
     ]
 )
 async def add_my_birthday(interaction: discord.Interaction, day: int, month: app_commands.Choice[str]):
-    await interaction.response.defer(thinking=True)
+    await interaction.response.defer(thinking=True, ephemeral=True)
     if month.value == '02' and day > 28:
         await interaction.followup.send(
             'Извини, в Феврале не бывает больше 28 дней (Я знаю, что бывает 29, но пока бот не умеет его корректно проверять)')
@@ -1054,11 +1057,10 @@ async def add_my_birthday(interaction: discord.Interaction, day: int, month: app
                 records_to_insert = (user_id, server_id, day, month.value,)
                 cursor.execute(postgres_insert_query, records_to_insert)
                 conn.commit()
-                await interaction.followup.send(f'Всё записано, спасибо. День: {day}, месяц: {month.name}')
                 embed = discord.Embed(title='А теперь выбери часовой пояс')
-                view = DropdownTimezones()
+                view = DropdownTimezones(day, month.name)
                 view.user = interaction.user
-                message = await interaction.channel.send(embed=embed, view=view)
+                message = await interaction.followup.send(f'Всё записано, спасибо. День: {day}, месяц: {month.name}', embed=embed, view=view)
                 view.message = message
             else:
                 day_record = row['day']
@@ -1067,9 +1069,8 @@ async def add_my_birthday(interaction: discord.Interaction, day: int, month: app
                 embed = discord.Embed(title='Тебя это устраивает?')
                 view = UserAlreadyExists()
                 view.user = interaction.user
-                await interaction.followup.send(
-                    f'Твой др уже записан. День: {day_record}, месяц: {month_record}, часовой пояс: {timezone_record}')
-                message = await interaction.channel.send(embed=embed, view=view)
+                message = await interaction.followup.send(
+                    f'Твой др уже записан. День: {day_record}, месяц: {month_record}, часовой пояс: {timezone_record}', embed=embed, view=view, ephemeral=True)
                 view.message = message
             conn.close()
         except psycopg2.errors.ForeignKeyViolation as nameerror:
@@ -1205,10 +1206,11 @@ async def delete_reply_2(interaction: discord.Interaction, reply: str):
 
 @delete_reply_2.autocomplete('reply')
 async def delete_reply_2_autocomplete(interaction: discord.Interaction, current: str):
+    server_id = interaction.guild_id
     conn, cursor = await basevariables.access_db_on_interaction(interaction)
-    query = 'SELECT request_phrase from "public".messages WHERE request_phrase LIKE %s LIMIT 25'
+    query = 'SELECT request_phrase from "public".messages WHERE request_phrase LIKE %s AND server_id=%s LIMIT 25 '
     request_string = f'{current}%'
-    values = (request_string,)
+    values = (request_string, server_id,)
     cursor.execute(query, values)
     result = cursor.fetchall()
     conn.close()
