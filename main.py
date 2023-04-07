@@ -1284,7 +1284,8 @@ async def birthday_check(interaction: discord.Interaction):
 @tree.command(name='help', description='Вызывайте, если что-то сломалось')
 async def help(interaction: discord.Interaction):
     lightny = client.get_user(267745993074671616)
-    embed_description = f'Если с ботом что-то случилось, писать сюда: {lightny.mention}'
+    lightny_role = interaction.guild.get_role(1093537843307102289)
+    embed_description = f'Если с ботом что-то случилось, пингуйте меня: {lightny_role.mention}'
     embed = discord.Embed(colour=discord.Colour.orange(), description=embed_description)
     await interaction.response.send_message(embed=embed)
 
