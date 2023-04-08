@@ -3,10 +3,6 @@ import github
 from dotenv import load_dotenv
 from github import Github
 import basevariables
-import requests
-import json
-import discord
-
 
 load_dotenv()
 # using an access token
