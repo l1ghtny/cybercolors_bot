@@ -20,7 +20,8 @@ import pytz
 # project files
 from misc_files import basevariables, github_api
 from views.birthday.change_date import UserAlreadyExists
-from views.birthday.delete_replies import DeleteOneReply, DeleteReplyMultiple, DeleteReplyMultipleSelect
+from views.replies.delete_multiple_replies import DeleteReplyMultiple, DeleteReplyMultipleSelect
+from views.replies.delete_one_reply import DeleteOneReply
 from views.birthday.pagination import PaginationView
 from views.birthday.settings import BirthdaysButtonsSelect, GuildAlreadyExists
 from views.birthday.timezones import DropdownTimezones
