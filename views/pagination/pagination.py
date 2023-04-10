@@ -67,8 +67,7 @@ class PaginationView(discord.ui.View):
             until_item = len(self.data)
         return self.data[from_item:until_item]
 
-    @discord.ui.button(label="|<",
-                       style=discord.ButtonStyle.green)
+    @discord.ui.button(style=discord.ButtonStyle.green, emoji='\U000023EA')
     async def first_page_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.interaction_user == interaction.user:
             await interaction.response.defer()
@@ -78,7 +77,7 @@ class PaginationView(discord.ui.View):
         else:
             await interaction.response.send_message('Это не твоё. Вызови себе своё и нажимай сколько хочешь', ephemeral=True)
 
-    @discord.ui.button(label="<",
+    @discord.ui.button(emoji='\U000025C0',
                        style=discord.ButtonStyle.primary)
     async def prev_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.interaction_user == interaction.user:
@@ -88,7 +87,7 @@ class PaginationView(discord.ui.View):
         else:
             await interaction.response.send_message('Это не твоё. Вызови себе своё и нажимай сколько хочешь', ephemeral=True)
 
-    @discord.ui.button(label=">",
+    @discord.ui.button(emoji='\U000025B6',
                        style=discord.ButtonStyle.primary)
     async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.interaction_user == interaction.user:
@@ -98,7 +97,7 @@ class PaginationView(discord.ui.View):
         else:
             await interaction.response.send_message('Это не твоё. Вызови себе своё и нажимай сколько хочешь', ephemeral=True)
 
-    @discord.ui.button(label=">|",
+    @discord.ui.button(emoji='\U000023ED',
                        style=discord.ButtonStyle.green)
     async def last_page_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.interaction_user == interaction.user:
