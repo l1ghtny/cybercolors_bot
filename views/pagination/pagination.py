@@ -8,11 +8,14 @@ class PaginationView(discord.ui.View):
     current_page: int = 1
     sep: int = 15
 
-    def __init__(self, data, user):
+    def __init__(self, data, user, title, footer, maximum):
         super().__init__(timeout=None)
         self.message = None
         self.roundup = math.ceil(len(data) / self.sep)
         self.interaction_user = user
+        self.title = title
+        self.footer = footer
+        self.max = maximum
 
     async def send(self, interaction):
         self.message = await interaction.channel.send(view=self)
@@ -20,10 +23,10 @@ class PaginationView(discord.ui.View):
 
     def create_embed(self, data):
         embed = discord.Embed(
-            title=f"Дни рождения:   Страница {self.current_page} / {self.roundup}")
+            title=f"{self.title}:   Страница {self.current_page} / {self.roundup}")
         for item in data:
             embed.add_field(name=item['label'], value=item['value'], inline=False)
-        embed.set_footer(text=f'Всего дней рождений: {self.counted}. Макс дат на странице: {self.sep}')
+        embed.set_footer(text=f'{self.footer}: {self.counted}. Макс {self.max} на странице: {self.sep}')
         return embed
 
     async def update_message(self, data):

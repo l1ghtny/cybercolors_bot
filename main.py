@@ -22,7 +22,7 @@ from misc_files import basevariables, github_api
 from views.birthday.change_date import UserAlreadyExists
 from views.replies.delete_multiple_replies import DeleteReplyMultiple, DeleteReplyMultipleSelect
 from views.replies.delete_one_reply import DeleteOneReply
-from views.birthday.pagination import PaginationView
+from views.pagination.pagination import PaginationView
 from views.birthday.settings import BirthdaysButtonsSelect, GuildAlreadyExists
 from views.birthday.timezones import DropdownTimezones
 from views.misc_commands.delete_channels import DropDownViewChannels
@@ -119,7 +119,7 @@ async def roles2(interaction: discord.Interaction):
 
 
 # delete_channels.py
-@tree.command(guild=discord.Object(id=779677470156390440), name='delete_channels.py', description='Даёт возможность выбрать каналы для удаления')
+@tree.command(guild=discord.Object(id=779677470156390440), name='delete_channels', description='Даёт возможность выбрать каналы для удаления')
 async def delete_channels(interaction: discord.Interaction):
     embed = discord.Embed(title='Выбери нужные тебе каналы!', colour=discord.Colour.dark_magenta())
     view = DropDownViewChannels()
@@ -430,11 +430,43 @@ async def birthday_list(interaction: discord.Interaction):
             'value': new_value
         })
 
-    pagination_view = PaginationView(data, interaction.user)
+    title = 'Дни рождения'
+    footer = 'Всего дней рождений'
+    maximum = 'дней'
+    pagination_view = PaginationView(data, interaction.user, title, footer, maximum)
     pagination_view.data = data
     pagination_view.counted = len(birthdays)
     await pagination_view.send(interaction)
     await interaction.followup.send('Все дни рождения найдены')
+
+
+@tree.command(name='show_replies', description='Вызывает список всех вопросов-ответов на сервере')
+async def show_replies(interaction: discord.Interaction):
+    await interaction.response.defer()
+    server_id = interaction.guild_id
+    data = []
+    conn, cursor = await basevariables.access_db_on_interaction(interaction)
+    query = 'SELECT request_phrase, respond_phrase, server_id, added_at from "public".messages WHERE server_id=%s ORDER BY added_at DESC'
+    values = (server_id,)
+    cursor.execute(query, values)
+    replies = cursor.fetchall()
+    conn.close()
+    for item in replies:
+        request = item['request_phrase']
+        response = item['respond_phrase']
+        data.append({
+            'label': f'Триггер: {request}',
+            'value': f'Ответ: {response}'
+        })
+
+    title = 'Триггеры на сервере'
+    footer = 'Всего ответов'
+    maximum = 'ответов'
+    pagination_view = PaginationView(data, interaction.user, title, footer, maximum)
+    pagination_view.data = data
+    pagination_view.counted = len(replies)
+    await pagination_view.send(interaction)
+    await interaction.followup.send('Держи, искал по всему серваку')
 
 
 async def twitter_link_replace(message, from_user):

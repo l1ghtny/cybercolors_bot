@@ -2,7 +2,7 @@ import os
 import github
 from dotenv import load_dotenv
 from github import Github
-import basevariables
+import misc_files.basevariables as basevariables
 
 load_dotenv()
 # using an access token
