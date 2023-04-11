@@ -649,7 +649,6 @@ async def birthday():
                 print(f'{user_id} не указал свой часовой пояс, проверить невозможно')
         else:
             print(f'{user_id} is not a member of the server "{guild.name}"')
-    conn.close()
     print('the end')
     conn, cursor = await basevariables.access_db_regular()
     query_last = 'SELECT * from "public".users inner join "public".servers using(server_id)'
@@ -661,6 +660,8 @@ async def birthday():
         role_user_id = i['user_id']
         server_role_id = i['role_id']
         if role_time is not None:
+            user_id = i['user_id']
+            user = client.get_user(user_id)
             current_time_now = datetime.datetime.utcnow()
             timedelta = current_time_now - role_time
             current_guild = client.get_guild(role_guild_id)
