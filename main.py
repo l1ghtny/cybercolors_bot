@@ -624,7 +624,7 @@ async def birthday():
                 print(f'{user.name} проверено в:', json_date)
                 print(f'{user.name} дата по timestamp: {json_date_from_timestamp}')
                 if json_date.date() == bd_date.date() and json_date.hour == bd_date.hour:
-                    conn, cursor = await basevariables.access_db_regular()k
+                    conn, cursor = await basevariables.access_db_regular()
                     query2 = 'SELECT * from "public".congratulations where server_id=%s'
                     values2 = (guild_id,)
                     cursor.execute(query2, values2)
