@@ -274,13 +274,17 @@ async def add_reply(interaction: discord.Interaction, phrase: str, response: str
             string = string.replace(i, unicode)
         return string
 
+    def e_replace(string):
+        string_new = string.replace('ё', 'е')
+        return string_new
+
     await interaction.response.defer(ephemeral=True)
     message_id = uuid.uuid4()
     server_id = interaction.guild_id
     user_id = interaction.user.id
     user_name = interaction.user.name
     request_phrase_base = phrase.lower()
-    request_phrase = em_replace(request_phrase_base)
+    request_phrase = em_replace(e_replace(request_phrase_base))
     response_phrase = response
     conn, cursor = await basevariables.access_db_on_interaction(interaction)
     query = 'INSERT INTO "public".messages (message_id, server_id, request_phrase, respond_phrase, added_by_id, ' \
@@ -502,13 +506,18 @@ async def on_message(message):
             string = string.replace(i, unicode)
         return string
 
+    def e_replace(string):
+        string_new = string.replace('ё', 'е')
+        return string_new
+
     user = message.author
     if user:
         if user == client.user:
             return
         else:
             message_content_base = message.content.lower()
-            message_content = em_replace(message_content_base)
+            message_content_e = em_replace(message_content_base)
+            message_content = e_replace(message_content_e)
             server_id = message.guild.id
             conn, cursor = await basevariables.access_db_on_message(message)
             query = 'SELECT * from messages WHERE server_id=%s'
