@@ -392,7 +392,7 @@ async def birthday_list(interaction: discord.Interaction):
 
     ]
     conn, cursor = await basevariables.access_db_on_interaction(interaction)
-    query = """SELECT g.server_id, g.user_id, g.day, g.month FROM (SELECT server_id, user_id, day, month, month - date_part('month', now()) AS diff FROM "public".users) g WHERE server_id=%s ORDER BY (CASE WHEN diff < 0 then 100 + diff ELSE diff END), day"""
+    query = """SELECT g.server_id, g.user_id, g.day, g.month FROM (SELECT server_id, user_id, day, day - date_part('day', now()) AS diff_1, month, month - date_part('month', now()) AS diff FROM "public".users) g WHERE server_id=%s ORDER BY (CASE WHEN diff < 0 then 100 + diff ELSE diff END), (CASE WHEN diff_1 < 0 then 100 + diff ELSE diff_1 END)"""
     values = (server_id,)
     cursor.execute(query, values)
     birthdays = cursor.fetchall()
