@@ -1,5 +1,7 @@
 import itertools
 import operator
+import string
+
 import discord
 import datetime
 import discord.ui
@@ -278,6 +280,11 @@ async def add_reply(interaction: discord.Interaction, phrase: str, response: str
         string_new = string.replace('ё', 'е')
         return string_new
 
+    def add_fstring(string):
+        add_string = (f'{string}')
+        string_new = string.replace(string, f'{add_string}')
+        return string_new
+
     await interaction.response.defer(ephemeral=True)
     message_id = uuid.uuid4()
     server_id = interaction.guild_id
@@ -285,7 +292,7 @@ async def add_reply(interaction: discord.Interaction, phrase: str, response: str
     user_name = interaction.user.name
     request_phrase_base = phrase.lower()
     request_phrase = em_replace(e_replace(request_phrase_base))
-    response_phrase = response
+    response_phrase = add_fstring(response)
     conn, cursor = await basevariables.access_db_on_interaction(interaction)
     query = 'INSERT INTO "public".messages (message_id, server_id, request_phrase, respond_phrase, added_by_id, ' \
             'added_by_name, added_at) VALUES (%s,%s,%s,%s,%s,%s,current_timestamp)'
@@ -528,19 +535,21 @@ async def on_message(message):
             for item in all_rows:
                 request_base = item['request_phrase']
                 request = request_base
-                response = (item['respond_phrase'])
+                response_base = (item['respond_phrase'])
+                response = string.Template("f'$string'").substitute(string=response_base)
                 if request_base.startswith('<'):
                     if request in message_content:
-                        await message.reply(f'{response}')
+                        await message.reply(response_base)
                 else:
                     find_phrase = string_found(request, message_content)
                     if find_phrase is True:
+                        print(response)
                         try:
-                            await message.reply(eval(f'{response}'))
+                            await message.reply(eval(response))
                         except SyntaxError:
-                            await message.reply(f'{response}')
+                            await message.reply(response)
                         except NameError:
-                            await message.reply(f'{response}')
+                            await message.reply(response)
         if 'https://twitter.com/' in message_content_base:
             files = []
             for item in message.attachments:
