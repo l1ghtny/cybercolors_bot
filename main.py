@@ -531,23 +531,23 @@ async def on_message(message):
                 response = (item['respond_phrase'])
                 if request_base.startswith('<'):
                     if request in message_content:
-                        await message.reply(response)
+                        await message.reply(f'{response}')
                 else:
                     find_phrase = string_found(request, message_content)
                     if find_phrase is True:
                         try:
-                            await message.reply(eval(response))
+                            await message.reply(eval(f'{response}'))
                         except SyntaxError:
-                            await message.reply(response)
+                            await message.reply(f'{response}')
                         except NameError:
-                            await message.reply(response)
+                            await message.reply(f'{response}')
         if 'https://twitter.com/' in message_content_base:
             files = []
             for item in message.attachments:
                 file = await item.to_file()
                 files.append(file)
+            await message.delete()
             await twitter_link_replace(message, user, attachment=files)
-            await message.detele()
 
 
 utc = datetime.timezone.utc
