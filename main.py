@@ -543,7 +543,6 @@ async def on_message(message):
                 else:
                     find_phrase = string_found(request, message_content)
                     if find_phrase is True:
-                        print(response)
                         try:
                             await message.reply(eval(response))
                         except SyntaxError:
