@@ -37,9 +37,9 @@ psycopg2.extras.register_uuid()
 
 
 # main class
-class Aclient(discord.Client):
+class Aclient(discord.AutoShardedClient):
     def __init__(self):
-        super().__init__(intents=discord.Intents.all())
+        super().__init__(intents=discord.Intents.all(), shard_count=2)
         self.added = False
         self.synced = False  # we use this so the bot doesn't sync commands more than once
 
@@ -482,10 +482,10 @@ async def show_replies(interaction: discord.Interaction):
     await interaction.followup.send('Держи, искал по всему серваку')
 
 
-async def twitter_link_replace(message, from_user):
+async def twitter_link_replace(message, from_user, attachment):
     webhook = await message.channel.create_webhook(name=from_user.name)
     new_message = message.content.replace('twitter', 'fxtwitter')
-    await webhook.send(str(new_message), username=from_user.name, avatar_url=from_user.avatar)
+    await webhook.send(str(new_message), username=from_user.name, avatar_url=from_user.avatar, files=attachment)
     webhooks = await message.channel.webhooks()
     for webhook in webhooks:
         await webhook.delete()
@@ -542,8 +542,12 @@ async def on_message(message):
                         except NameError:
                             await message.reply(response)
         if 'https://twitter.com/' in message_content_base:
-            await message.delete()
-            await twitter_link_replace(message, user)
+            files = []
+            for item in message.attachments:
+                file = await item.to_file()
+                files.append(file)
+            await twitter_link_replace(message, user, attachment=files)
+            await message.detele()
 
 
 utc = datetime.timezone.utc
