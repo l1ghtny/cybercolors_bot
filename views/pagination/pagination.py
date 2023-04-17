@@ -5,21 +5,28 @@ import discord.ui
 
 
 class PaginationView(discord.ui.View):
-    current_page: int = 1
-    sep: int = 15
-
-    def __init__(self, data, user, title, footer, maximum):
+    def __init__(self, data, user, title, footer, maximum, separator):
         super().__init__(timeout=None)
         self.message = None
-        self.roundup = math.ceil(len(data) / self.sep)
         self.interaction_user = user
         self.title = title
         self.footer = footer
         self.max = maximum
+        self.sep = separator
+        self.roundup = math.ceil(len(data) / self.sep)
+        self.current_page = int(1)
+
+    # current_page = int(1)
+    # sep: int = 15
 
     async def send(self, interaction):
-        self.message = await interaction.channel.send(view=self)
-        await self.update_message(self.data[:self.sep])
+        try:
+            self.message = await interaction.channel.send(view=self)
+            await self.update_message(self.data[:self.sep])
+        except discord.HTTPException as error:
+            await interaction.channel.send(
+                f'Что-то пошло не так, скорее всего, бот попытался отправить тебе слишком большое количество текста.'
+                f' \nВ таком случае обратись к Антону, он снизит количество штук на странице. \nНа всякий случай, вот ошибка:{error}')
 
     def create_embed(self, data):
         embed = discord.Embed(

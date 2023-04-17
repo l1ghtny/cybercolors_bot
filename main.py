@@ -453,7 +453,7 @@ async def birthday_list(interaction: discord.Interaction):
     title = 'Дни рождения'
     footer = 'Всего дней рождений'
     maximum = 'дней'
-    pagination_view = PaginationView(data, interaction.user, title, footer, maximum)
+    pagination_view = PaginationView(data, interaction.user, title, footer, maximum, separator=15)
     pagination_view.data = data
     pagination_view.counted = len(birthdays)
     await pagination_view.send(interaction)
@@ -482,11 +482,15 @@ async def show_replies(interaction: discord.Interaction):
     title = 'Триггеры на сервере'
     footer = 'Всего ответов'
     maximum = 'ответов'
-    pagination_view = PaginationView(data, interaction.user, title, footer, maximum)
+    pagination_view = PaginationView(data, interaction.user, title, footer, maximum, separator=8)
     pagination_view.data = data
     pagination_view.counted = len(replies)
-    await pagination_view.send(interaction)
-    await interaction.followup.send('Держи, искал по всему серваку')
+    try:
+        await pagination_view.send(interaction)
+        await interaction.followup.send('Держи, искал по всему серваку')
+    except discord.app_commands.CommandInvokeError as error:
+        await interaction.followup.send(f'Что-то пошло не так, скорее всего, бот попытался отправить тебе слишком большое количество текста.'
+                                        f' \nВ таком случае обратись к Антону, он снизит количество штук на странице. \nНа всякий случай, вот ошибка:{error}')
 
 
 async def twitter_link_replace(message, from_user, attachment):
