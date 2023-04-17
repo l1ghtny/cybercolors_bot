@@ -466,7 +466,7 @@ async def show_replies(interaction: discord.Interaction):
     server_id = interaction.guild_id
     data = []
     conn, cursor = await basevariables.access_db_on_interaction(interaction)
-    query = 'SELECT request_phrase, respond_phrase, server_id, added_at from "public".messages WHERE server_id=%s ORDER BY added_at DESC'
+    query = 'SELECT request_phrase, respond_phrase, server_id, added_at from "public".messages WHERE server_id=%s ORDER BY request_phrase'
     values = (server_id,)
     cursor.execute(query, values)
     replies = cursor.fetchall()
