@@ -466,7 +466,7 @@ async def show_replies(interaction: discord.Interaction):
     server_id = interaction.guild_id
     data = []
     conn, cursor = await basevariables.access_db_on_interaction(interaction)
-    query = 'SELECT request_phrase, respond_phrase, server_id, added_at from "public".messages WHERE server_id=%s ORDER BY added_at DESC'
+    query = 'SELECT request_phrase, respond_phrase, server_id, added_at from "public".messages WHERE server_id=%s ORDER BY request_phrase'
     values = (server_id,)
     cursor.execute(query, values)
     replies = cursor.fetchall()
@@ -526,9 +526,11 @@ async def on_message(message):
         if user == client.user:
             return
         else:
+            # start = timer()
             message_content_base = message.content.lower()
             message_content_e = em_replace(message_content_base)
-            message_content = e_replace(message_content_e)
+            message_content_punct = e_replace(message_content_e)
+            message_content = message_content_punct.translate(str.maketrans('', '', string.punctuation))
             server_id = message.guild.id
             conn, cursor = await basevariables.access_db_on_message(message)
             query = 'SELECT * from messages WHERE server_id=%s'
@@ -560,6 +562,12 @@ async def on_message(message):
                 files.append(file)
             await message.delete()
             await twitter_link_replace(message, user, attachment=files)
+    # end = timer()
+    # try:
+    #     if reply_message is not None:
+    #         await reply_message.reply(f'Время выполнения:{end-start}')
+    # except UnboundLocalError:
+    #     return
 
 
 utc = datetime.timezone.utc
