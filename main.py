@@ -541,7 +541,7 @@ async def on_message(message):
             conn.close()
             for item in all_rows:
                 request_base = item['request_phrase']
-                request = request_base
+                request = request_base.translate(str.maketrans('', '', string.punctuation))
                 response_base = (item['respond_phrase'])
                 response = string.Template("f'$string'").substitute(string=response_base)
                 if request_base.startswith('<'):
@@ -553,9 +553,9 @@ async def on_message(message):
                         try:
                             await message.reply(eval(response))
                         except SyntaxError:
-                            await message.reply(response)
+                            await message.reply(response_base)
                         except NameError:
-                            await message.reply(response)
+                            await message.reply(response_base)
         if 'https://twitter.com/' in message_content_base:
             files = []
             for item in message.attachments:
