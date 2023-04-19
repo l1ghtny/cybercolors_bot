@@ -741,7 +741,7 @@ async def update_releases():
             colour=discord.Colour.from_rgb(3, 144, 252)
         )
         embed.add_field(name='Описание релиза', value=f'{release_text}')
-        embed.add_field(name='Дата релиза:', value=f'{release_date}')
+        embed.add_field(name='Дата релиза (Мск):', value=f'{release_date}')
         await channel.send(embed=embed)
         await thread.send(embed=embed)
     else:

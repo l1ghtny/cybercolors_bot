@@ -3,6 +3,8 @@ import github
 from dotenv import load_dotenv
 from github import Github
 import misc_files.basevariables as basevariables
+import datetime
+import pytz
 
 load_dotenv()
 # using an access token
@@ -39,7 +41,10 @@ async def get_release_notes():
                 cursor.execute(query, values)
                 conn.commit()
                 conn.close()
-                return release_date, release_title, release_text
+                tz_info = pytz.timezone('Europe/Moscow')
+                release_date_msc = release_date.replace(tzinfo=datetime.timezone.utc).astimezone(tz=tz_info)
+                release_date_final = release_date_msc.replace(tzinfo=None)
+                return release_date_final, release_title, release_text
             else:
                 conn.close()
                 release_date = None
