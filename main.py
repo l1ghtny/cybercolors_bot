@@ -549,12 +549,21 @@ async def on_message(message):
                 else:
                     find_phrase = string_found(request, message_content)
                     if find_phrase is True:
-                        try:
-                            await message.reply(eval(response))
-                        except SyntaxError:
-                            await message.reply(response_base)
-                        except NameError:
-                            await message.reply(response_base)
+                        if not message.content.isupper():
+                            try:
+                                await message.reply(eval(response))
+                            except SyntaxError:
+                                await message.reply(response_base)
+                            except NameError:
+                                await message.reply(response_base)
+                        else:
+                            response = response.upper()
+                            try:
+                                await message.reply(eval(response))
+                            except SyntaxError:
+                                await message.reply(response_base.upper())
+                            except NameError:
+                                await message.reply(response_base.upper())
         if 'https://twitter.com/' in message_content_base:
             files = []
             for item in message.attachments:
