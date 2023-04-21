@@ -773,7 +773,7 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
 
     possible_channel_name = f"Канал имени {member.display_name}"
     if after.channel:
-        if after.channel.id == 1099061215801639073:
+        if after.channel.id == 1099044684116017222:
             temp_channel = await after.channel.clone(name=possible_channel_name)
             await member.move_to(temp_channel)
             query2 = 'INSERT into "public".voice_temp (server_id, voice_channel_id) values (%s,%s)'
@@ -781,23 +781,12 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
             cursor.execute(query2, values2)
             conn.commit()
 
-    if not after.channel:
-        if before.channel.id in temp_channels:
-            if len(before.channel.members) == 0:
-                await before.channel.delete()
-                await basevariables.delete_channel_id(before.channel.id, server_id, conn, cursor)
-
     if before.channel:
         if before.channel.id in temp_channels:
             if len(before.channel.members) == 0:
                 await before.channel.delete()
                 await basevariables.delete_channel_id(before.channel.id, server_id, conn, cursor)
     conn.close()
-    print(
-        'before:', before.channel.id,
-        'after:', after.channel.id,
-        'temp_ch:', temp_channels
-          )
 
 
 # EXECUTES THE BOT WITH THE SPECIFIED TOKEN.
