@@ -177,3 +177,10 @@ async def add_new_day_month(server_id, user_id, day, month, interaction):
     except psycopg2.Error as error:
         await interaction.response.send_message(
             'Всё сломалось из-за ошибки "{}"'.format(error.__str__()))
+
+
+async def delete_channel_id(channel_id, server_id, conn, cursor):
+    query = 'DELETE FROM "public".voice_temp WHERE server_id=%s AND voice_channel_id=%s'
+    values = (server_id, channel_id,)
+    cursor.execute(query, values)
+    conn.commit()

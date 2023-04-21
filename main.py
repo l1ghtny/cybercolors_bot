@@ -38,10 +38,15 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 psycopg2.extras.register_uuid()
 
 
+intents = discord.Intents.all()
+intents.message_content = True
+intents.voice_states = True
+
+
 # main class
 class Aclient(discord.AutoShardedClient):
     def __init__(self):
-        super().__init__(intents=discord.Intents.all(), shard_count=2)
+        super().__init__(intents=intents, shard_count=2)
         self.added = False
         self.synced = False  # we use this so the bot doesn't sync commands more than once
 
@@ -62,8 +67,6 @@ class Aclient(discord.AutoShardedClient):
 
 client = Aclient()
 tree = app_commands.CommandTree(client)
-intents = discord.Intents.all()
-intents.message_content = True
 
 
 # say hello command
@@ -754,6 +757,47 @@ async def update_releases():
         await channel_main.send(embed=embed)
     else:
         print('No new releases')
+
+
+@client.event
+async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+    conn, cursor = await basevariables.access_db_basic()
+    query = 'SELECT * from "public".voice_temp WHERE server_id=%s'
+    server_id = member.guild.id
+    values = (server_id,)
+    cursor.execute(query, values)
+    temp_channels_info = cursor.fetchall()
+    temp_channels = []
+    for i in temp_channels_info:
+        temp_channels.append(i['voice_channel_id'])
+
+    possible_channel_name = f"Канал имени {member.display_name}"
+    if after.channel:
+        if after.channel.id == 1099061215801639073:
+            temp_channel = await after.channel.clone(name=possible_channel_name)
+            await member.move_to(temp_channel)
+            query2 = 'INSERT into "public".voice_temp (server_id, voice_channel_id) values (%s,%s)'
+            values2 = (server_id, temp_channel.id,)
+            cursor.execute(query2, values2)
+            conn.commit()
+
+    if not after.channel:
+        if before.channel.id in temp_channels:
+            if len(before.channel.members) == 0:
+                await before.channel.delete()
+                await basevariables.delete_channel_id(before.channel.id, server_id, conn, cursor)
+
+    if before.channel:
+        if before.channel.id in temp_channels:
+            if len(before.channel.members) == 0:
+                await before.channel.delete()
+                await basevariables.delete_channel_id(before.channel.id, server_id, conn, cursor)
+    conn.close()
+    print(
+        'before:', before.channel.id,
+        'after:', after.channel.id,
+        'temp_ch:', temp_channels
+          )
 
 
 # EXECUTES THE BOT WITH THE SPECIFIED TOKEN.
