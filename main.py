@@ -18,6 +18,8 @@ import random
 import calendar
 import demoji
 import pytz
+import typing
+import functools
 
 # project files
 from misc_files import basevariables, github_api
@@ -36,7 +38,6 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
 # Register UUID to work with it in psycopg2
 psycopg2.extras.register_uuid()
-
 
 intents = discord.Intents.all()
 intents.message_content = True
@@ -124,7 +125,8 @@ async def roles2(interaction: discord.Interaction):
 
 
 # delete_channels.py
-@tree.command(guild=discord.Object(id=779677470156390440), name='delete_channels', description='Даёт возможность выбрать каналы для удаления')
+@tree.command(guild=discord.Object(id=779677470156390440), name='delete_channels',
+              description='Даёт возможность выбрать каналы для удаления')
 async def delete_channels(interaction: discord.Interaction):
     embed = discord.Embed(title='Выбери нужные тебе каналы!', colour=discord.Colour.dark_magenta())
     view = DropDownViewChannels()
@@ -196,7 +198,8 @@ async def add_my_birthday(interaction: discord.Interaction, day: int, month: app
                 embed = discord.Embed(title='А теперь выбери часовой пояс')
                 view = DropdownTimezones(day, month.name)
                 view.user = interaction.user
-                message = await interaction.followup.send(f'Всё записано, спасибо. День: {day}, месяц: {month.name}', embed=embed, view=view)
+                message = await interaction.followup.send(f'Всё записано, спасибо. День: {day}, месяц: {month.name}',
+                                                          embed=embed, view=view)
                 view.message = message
             else:
                 day_record = row['day']
@@ -206,7 +209,8 @@ async def add_my_birthday(interaction: discord.Interaction, day: int, month: app
                 view = UserAlreadyExists()
                 view.user = interaction.user
                 message = await interaction.followup.send(
-                    f'Твой др уже записан. День: {day_record}, месяц: {month_record}, часовой пояс: {timezone_record}', embed=embed, view=view, ephemeral=True)
+                    f'Твой др уже записан. День: {day_record}, месяц: {month_record}, часовой пояс: {timezone_record}',
+                    embed=embed, view=view, ephemeral=True)
                 view.message = message
             conn.close()
         except psycopg2.errors.ForeignKeyViolation as nameerror:
@@ -492,8 +496,9 @@ async def show_replies(interaction: discord.Interaction):
         await pagination_view.send(interaction)
         await interaction.followup.send('Держи, искал по всему серваку')
     except discord.app_commands.CommandInvokeError as error:
-        await interaction.followup.send(f'Что-то пошло не так, скорее всего, бот попытался отправить тебе слишком большое количество текста.'
-                                        f' \nВ таком случае обратись к Антону, он снизит количество штук на странице. \nНа всякий случай, вот ошибка:{error}')
+        await interaction.followup.send(
+            f'Что-то пошло не так, скорее всего, бот попытался отправить тебе слишком большое количество текста.'
+            f' \nВ таком случае обратись к Антону, он снизит количество штук на странице. \nНа всякий случай, вот ошибка:{error}')
 
 
 async def twitter_link_replace(message, from_user, attachment):
@@ -503,6 +508,12 @@ async def twitter_link_replace(message, from_user, attachment):
     webhooks = await message.channel.webhooks()
     for webhook in webhooks:
         await webhook.delete()
+
+
+async def run_blocking(blocking_func: typing.Callable, *args, **kwargs) -> typing.Any:
+    func = functools.partial(blocking_func, *args,
+                             **kwargs)  # `run_in_executor` doesn't support kwargs, `functools.partial` does
+    return await client.loop.run_in_executor(None, func)
 
 
 @client.event
@@ -638,6 +649,12 @@ check_time_1 = [
 ]
 
 
+def current_user_datetime(key, timezone):
+    request = f'http://vip.timezonedb.com/v2.1/get-time-zone?key={key}&format=json&by=zone&zone={timezone}'
+    response = requests.get(request)
+    return request
+
+
 # BD MODULE with checking task
 @tasks.loop(time=check_time)
 async def birthday():
@@ -660,8 +677,7 @@ async def birthday():
             if item['timezone'] is not None:
                 key = basevariables.t_key
                 timezone = item['timezone']
-                request = f'http://vip.timezonedb.com/v2.1/get-time-zone?key={key}&format=json&by=zone&zone={timezone}'
-                response = requests.get(request)
+                response = await run_blocking(current_user_datetime, key, timezone)
                 time_json = response.json()
                 not_formatted = time_json['timestamp']
                 formatted = time_json['formatted']
