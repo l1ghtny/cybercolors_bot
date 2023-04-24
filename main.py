@@ -652,7 +652,7 @@ check_time_1 = [
 def current_user_datetime(key, timezone):
     request = f'http://vip.timezonedb.com/v2.1/get-time-zone?key={key}&format=json&by=zone&zone={timezone}'
     response = requests.get(request)
-    return request
+    return response
 
 
 # BD MODULE with checking task
