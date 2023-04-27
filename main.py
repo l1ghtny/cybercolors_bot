@@ -510,7 +510,7 @@ async def count_tokens_by_day(interaction: discord.Interaction, day: str):
     conn, cursor = await basevariables.access_db_on_interaction(interaction)
     server_id = interaction.guild_id
     query = """select sum(g.token_amount), count(g.reply_link)
-    from (select datetime_added::TIMESTAMP::DATE as date_added, token_amount, reply_link, server_id 
+    from (select to_char(datetime_added:: DATE, 'dd-mm-yyyy') as date_added, token_amount, reply_link, server_id 
     from "public".count_tokens) as g where g.date_added = %s and g.server_id = %s"""
     values = (day, server_id)
     cursor.execute(query, values)
