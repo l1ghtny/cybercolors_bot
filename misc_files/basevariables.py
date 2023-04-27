@@ -2,6 +2,7 @@ import os
 from dotenv import load_dotenv
 import psycopg2
 from psycopg2.extras import NamedTupleCursor
+from logs_setup import logger
 
 load_dotenv()
 
@@ -12,6 +13,7 @@ password = os.getenv("password")
 port = os.getenv("port")
 t_key = os.getenv("timezonedb_key")
 
+logger = logger.logging.getLogger("bot")
 
 async def create_new_channel(interaction, new_channel):
     server_id = f'{interaction.guild.id}'
@@ -90,7 +92,7 @@ async def access_db_on_message(message):
         cursor = conn.cursor()
         return conn, cursor
     except psycopg2.Error as error:
-        print(
+        logger.info(
             'Всё сломалось из-за ошибки "{}"'.format(error.__str__()))
 
 
@@ -120,7 +122,7 @@ async def access_db_regular():
         cursor = conn.cursor()
         return conn, cursor
     except psycopg2.Error as error:
-        print('Всё сломалось из-за ошибки "{}"'.format(error.__str__()))
+        logger.info('Всё сломалось из-за ошибки "{}"'.format(error.__str__()))
 
 
 async def update_server_role(interaction, server_id, role_id, role_name):
@@ -154,7 +156,7 @@ async def access_db_basic():
         cursor = conn.cursor()
         return conn, cursor
     except psycopg2.Error as error:
-        print(
+        logger.info(
             'Всё сломалось из-за ошибки "{}"'.format(error.__str__()))
 
 

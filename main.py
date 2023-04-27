@@ -21,8 +21,10 @@ import pytz
 import typing
 import functools
 
+import chat_bot.openai_main
 # project files
 from misc_files import basevariables, github_api
+from logs_setup import logger
 from views.birthday.change_date import UserAlreadyExists
 from views.replies.delete_multiple_replies import DeleteReplyMultiple, DeleteReplyMultipleSelect
 from views.replies.delete_one_reply import DeleteOneReply
@@ -42,6 +44,8 @@ psycopg2.extras.register_uuid()
 intents = discord.Intents.all()
 intents.message_content = True
 intents.voice_states = True
+
+logger = logger.logging.getLogger("bot")
 
 
 # main class
@@ -63,7 +67,7 @@ class Aclient(discord.AutoShardedClient):
             self.added = True
         birthday.start()
         update_releases.start()
-        print(f"We have logged in as {self.user}.")
+        logger.info(f"We have logged in as {self.user}.")
 
 
 client = Aclient()
@@ -279,7 +283,7 @@ async def add_reply(interaction: discord.Interaction, phrase: str, response: str
         emoji = demoji.findall(string)
         for i in emoji:
             unicode = i.encode('unicode-escape').decode('ASCII')
-            print('unicode:', unicode)
+            logger.info(f'unicode: {unicode}')
             string = string.replace(i, unicode)
         return string
 
@@ -310,7 +314,7 @@ async def add_reply(interaction: discord.Interaction, phrase: str, response: str
         conn.close()
         await interaction.followup.send(f'Фраза "{phrase}" с ответом "{response}" записаны', ephemeral=True)
     except psycopg2.Error as error:
-        print(message_id)
+        logger.info(f'{message_id}')
         await interaction.followup.send('Не получилось записать словосочетание из-за ошибки {}'.format(error.__str__()))
 
 
@@ -422,7 +426,7 @@ async def birthday_list(interaction: discord.Interaction):
     values = (server_id,)
     cursor.execute(query, values)
     birthdays = cursor.fetchall()
-    print(birthdays)
+    logger.info(f'{birthdays}')
     conn.close()
     bd_list = []
     for item in birthdays:
@@ -501,6 +505,68 @@ async def show_replies(interaction: discord.Interaction):
             f' \nВ таком случае обратись к Антону, он снизит количество штук на странице. \nНа всякий случай, вот ошибка:{error}')
 
 
+@tree.command(name='count_tokens_by_day', description='посчитаю, сколько тебе стоил один день использования бота')
+async def count_tokens_by_day(interaction: discord.Interaction, day: str):
+    conn, cursor = await basevariables.access_db_on_interaction(interaction)
+    server_id = interaction.guild_id
+    query = """select sum(g.token_amount), count(g.reply_link)
+    from (select datetime_added::TIMESTAMP::DATE as date_added, token_amount, reply_link, server_id 
+    from "public".count_tokens) as g where g.date_added = %s and g.server_id = %s"""
+    values = (day, server_id)
+    cursor.execute(query, values)
+    tokens_sum = cursor.fetchone()
+    tokens_counted = tokens_sum['sum']
+    days_counted = tokens_sum['count']
+    conn.close()
+    cost = tokens_counted / 1000 * 0.002
+    embed = discord.Embed(colour=discord.Colour.dark_magenta())
+    embed.add_field(name='дата:', value=day)
+    embed.add_field(name='количество сообщений:', value=days_counted)
+    embed.add_field(name='количество токенов:', value=tokens_counted)
+    embed.add_field(name='стоимость в долларах:', value=cost)
+    await interaction.response.send_message(embed=embed)
+
+
+@count_tokens_by_day.autocomplete('day')
+async def count_tokens_by_day_autocomplete(interaction: discord.Interaction, current: str):
+    date_str = f'{current}%'
+    server_id = interaction.guild_id
+    conn, cursor = await basevariables.access_db_on_interaction(interaction)
+    query = """select distinct g.date_added
+    from (select to_char(datetime_added:: DATE, 'dd-mm-yyyy') as date_added, token_amount, reply_link, server_id
+    from "public".count_tokens) as g
+    where g.date_added like %s and server_id = %s LIMIT 25"""
+    values = (date_str, server_id)
+    cursor.execute(query, values)
+    result = cursor.fetchall()
+    result_list = []
+    for i in result:
+        new_value = i['date_added']
+        result_list.append(app_commands.Choice(name=new_value, value=new_value))
+    conn.close()
+    return result_list
+
+
+@tree.command(name='most_expensive_message_today', description='показываю, какое сообщение было сегодня самое дорогое')
+async def most_expensive_message_today(interaction: discord.Interaction):
+    conn, cursor = await basevariables.access_db_on_interaction(interaction)
+    today = datetime.datetime.today().date()
+    server_id = interaction.guild_id
+    query = """select g.date_added, g.token_amount, g.reply_link, g.server_id, g.today 
+    from (select datetime_added::TIMESTAMP::DATE as date_added, token_amount, reply_link, server_id, current_date as today
+    from "public".count_tokens) as g 
+    where g.date_added = %s AND g.server_id = %s order by g.token_amount desc"""
+    values = (today, server_id,)
+    cursor.execute(query, values)
+    message = cursor.fetchone()
+    token_amount = message['token_amount']
+    message_url = message['reply_link']
+    embed = discord.Embed(colour=discord.Colour.dark_gold())
+    embed.add_field(name='Количество токенов', value=token_amount)
+    embed.add_field(name='ссылка на сообщение', value=message_url)
+    await interaction.response.send_message(embed=embed)
+
+
 async def twitter_link_replace(message, from_user, attachment):
     webhook = await message.channel.create_webhook(name=from_user.name)
     new_message = message.content.replace('twitter', 'fxtwitter')
@@ -508,6 +574,12 @@ async def twitter_link_replace(message, from_user, attachment):
     webhooks = await message.channel.webhooks()
     for webhook in webhooks:
         await webhook.delete()
+
+
+def create_response(message):
+    content = message.content
+    response, token_total = chat_bot.openai_main.one_response(content)
+    return response, token_total
 
 
 async def run_blocking(blocking_func: typing.Callable, *args, **kwargs) -> typing.Any:
@@ -535,6 +607,25 @@ async def on_message(message):
         string_new = string.replace('ё', 'е')
         return string_new
 
+    def check_bot_mention(message_to_check):
+        mentions = message_to_check.mentions
+        has_bot_request = False
+        for i in mentions:
+            if i == client.user:
+                has_bot_request = not has_bot_request
+        return has_bot_request
+
+    def check_for_channel(message_to_check_for_channel):
+        bot_channel_id = int(os.getenv('chat_gpt_channel_id'))
+        bot_channel = client.get_channel(bot_channel_id)
+        if bot_channel == message_to_check_for_channel.channel:
+            allowed_channel = True
+        else:
+            allowed_channel = False
+        return allowed_channel, bot_channel
+
+    database_found = False
+
     user = message.author
     if user:
         if user == client.user:
@@ -551,7 +642,6 @@ async def on_message(message):
             values = (server_id,)
             cursor.execute(query, values)
             all_rows = cursor.fetchall()
-            conn.close()
             for item in all_rows:
                 request_base = item['request_phrase']
                 request = request_base.translate(str.maketrans('', '', string.punctuation))
@@ -559,10 +649,12 @@ async def on_message(message):
                 response = string.Template("f'$string'").substitute(string=response_base)
                 if request_base.startswith('<'):
                     if request in message_content:
+                        database_found = not database_found
                         await message.reply(response_base)
                 else:
                     find_phrase = string_found(request, message_content)
                     if find_phrase is True:
+                        database_found = not database_found
                         if not message.content.isupper():
                             try:
                                 await message.reply(eval(response))
@@ -578,19 +670,39 @@ async def on_message(message):
                                 await message.reply(response_base.upper())
                             except NameError:
                                 await message.reply(response_base.upper())
-        if 'https://twitter.com/' in message_content_base:
-            files = []
-            for item in message.attachments:
-                file = await item.to_file()
-                files.append(file)
-            await message.delete()
-            await twitter_link_replace(message, user, attachment=files)
-    # end = timer()
-    # try:
-    #     if reply_message is not None:
-    #         await reply_message.reply(f'Время выполнения:{end-start}')
-    # except UnboundLocalError:
-    #     return
+            if 'https://twitter.com/' in message_content_base:
+                files = []
+                for item in message.attachments:
+                    file = await item.to_file()
+                    files.append(file)
+                await message.delete()
+                await twitter_link_replace(message, user, attachment=files)
+        if database_found is False:
+            if check_bot_mention(message) is True:
+                chat_bot_role_id = int(os.getenv('chat_gpt_role_id'))
+                chat_bot_guild = client.get_guild(server_id)
+                chat_bot_role = chat_bot_guild.get_role(chat_bot_role_id)
+                is_approved, approved_channel = check_for_channel(message)
+                if is_approved:
+                    if chat_bot_role in user.roles:
+                        if "jailbreak" in message.content.lower():
+                            await message.reply('В боте стоит защита от jailbreak, я сейчас админа позову')
+                        else:
+                            original_reply = await message.reply('Я думаю...')
+                            logger.info('looking for reply')
+                            bot_response, token_total = await run_blocking(create_response, message)
+                            logger.info('got response')
+                            await original_reply.edit(content=bot_response)
+                            query = 'INSERT INTO "public".count_tokens (datetime_added, reply_link, token_amount, server_id) VALUES (%s,%s,%s,%s)'
+                            current_time = datetime.datetime.utcnow()
+                            values = (current_time, message.jump_url, token_total, server_id,)
+                            cursor.execute(query, values)
+                            conn.commit()
+                    else:
+                        await message.reply(f'Ты не {chat_bot_role}, тебе пока не доступен ответ ')
+                else:
+                    return
+        conn.close()
 
 
 utc = datetime.timezone.utc
@@ -666,10 +778,10 @@ async def birthday():
     for item in values:
         guild_id = item['server_id']
         guild_role_id = item['role_id']
-        print('guild_role_id:', guild_role_id)
+        logger.info(f'guild_role_id: {guild_role_id}')
         guild = client.get_guild(guild_id)
         guild_role = discord.utils.get(guild.roles, id=guild_role_id)
-        print('guild_role:', guild_role.name)
+        logger.info(f'guild_role: {guild_role.name}')
         user_id = item['user_id']
         user = client.get_user(user_id)
         member = guild.get_member(user_id)
@@ -690,9 +802,9 @@ async def birthday():
                 json_date_from_timestamp = datetime.datetime.utcfromtimestamp(not_formatted)
                 channel_id = item['channel_id']
                 channel = client.get_channel(channel_id)
-                print(f'{user.name} др:', bd_date)
-                print(f'{user.name} проверено в:', json_date)
-                print(f'{user.name} дата по timestamp: {json_date_from_timestamp}')
+                logger.info(f'{user.name} др: {bd_date}')
+                logger.info(f'{user.name} проверено в: {json_date}')
+                logger.info(f'{user.name} дата по timestamp: {json_date_from_timestamp}')
                 if json_date.date() == bd_date.date() and json_date.hour == bd_date.hour:
                     conn, cursor = await basevariables.access_db_regular()
                     query2 = 'SELECT * from "public".congratulations where server_id=%s'
@@ -714,12 +826,12 @@ async def birthday():
                     conn.close()
                     await member.add_roles(guild_role)
                 else:
-                    print('ne dr')
+                    logger.info('ne dr')
             else:
-                print(f'{user_id} не указал свой часовой пояс, проверить невозможно')
+                logger.info(f'{user_id} не указал свой часовой пояс, проверить невозможно')
         else:
-            print(f'{user_id} is not a member of the server "{guild.name}"')
-    print('the end')
+            logger.info(f'{user_id} is not a member of the server "{guild.name}"')
+    logger.info('the end')
     conn, cursor = await basevariables.access_db_regular()
     query_last = 'SELECT * from "public".users inner join "public".servers using(server_id)'
     cursor.execute(query_last)
@@ -737,20 +849,20 @@ async def birthday():
             current_guild = client.get_guild(role_guild_id)
             current_member = current_guild.get_member(role_user_id)
             current_role = discord.utils.get(current_guild.roles, id=server_role_id)
-            print('timedelta in days:', timedelta.days)
+            logger.info(f'timedelta in days: {timedelta.days}')
             if timedelta.days >= 1:
-                print('checked role is older than 1 day')
+                logger.info('checked role is older than 1 day')
                 await current_member.remove_roles(current_role)
                 query_last_for_sure = 'UPDATE "public".users SET role_added_at=%s WHERE server_id=%s AND user_id=%s'
                 role_added_at = None
                 values_last = (role_added_at, role_guild_id, role_user_id,)
                 cursor.execute(query_last_for_sure, values_last)
                 conn.commit()
-                print(f'role removed from user {user.name}')
+                logger.info(f'role removed from user {user.name}')
             else:
-                print(f'role {current_role.name} on user {user.name} is not older than 1 day')
+                logger.info(f'role {current_role.name} on user {user.name} is not older than 1 day')
         else:
-            print('no role is given')
+            logger.info('no role is given')
     conn.close()
 
 
@@ -772,7 +884,7 @@ async def update_releases():
         await channel.send(embed=embed)
         await channel_main.send(embed=embed)
     else:
-        print('No new releases')
+        logger.info('No new releases')
 
 
 @client.event
@@ -806,4 +918,4 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
 
 
 # EXECUTES THE BOT WITH THE SPECIFIED TOKEN.
-client.run(DISCORD_TOKEN)
+client.run(DISCORD_TOKEN, root_logger=True)

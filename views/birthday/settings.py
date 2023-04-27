@@ -6,6 +6,9 @@ import discord.ui
 import psycopg2
 
 from misc_files import basevariables
+from logs_setup import logger
+
+logger = logger.logging.getLogger("bot")
 
 
 class BirthdaysChannelText(discord.ui.ChannelSelect):
@@ -172,23 +175,23 @@ class BirthdaysButtonsSelect(discord.ui.View):
         add_timezone_1 = selected_timezone[1:-1]
         add_timezone = add_timezone_1[1:-1]
         absolute_path = os.path.dirname(__file__)
-        print('string:', add_timezone)
+        logger.info(f'string: {add_timezone}')
         table = f'bd_table.json'
         file_1 = f'{os.path.join(absolute_path, table)}'
-        print('self_values:', self.values)
+        logger.info(f'self_values: {self.values}')
         with open(file_1, 'r+') as file:
             data = json.load(file)
-            print(data)
+            logger.info(f'{data}')
             for user_entry in data[interaction_guid]:
-                print('user_entry:', user_entry)
-                print('my user id:', user)
+                logger.info(f'user_entry: {user_entry}')
+                logger.info(f'my user id: {user}')
                 if 'user_id' in user_entry:
                     if user_entry['user_id'] == user:
                         user_entry["timezone"] = add_timezone
                     else:
-                        print('не подходит')
+                        logger.info('не подходит')
                 else:
-                    print('не найдено entry')
+                    logger.info('не найдено entry')
             file.seek(0)
             json.dump(data, file, indent=4)
         await interaction.response.send_message(f'{interaction.user.display_name}, спасибо, я всё записал(да)')
@@ -220,7 +223,7 @@ class BirthdaysButtonsSelect(discord.ui.View):
                 await basevariables.update_channel_values(interaction, new_channel)
             view = BirthdayRoleSelectView(user=current_user)
             view.user = current_user
-            print(view.user.name)
+            logger.info(f'{view.user.name}')
             view.message = await interaction.channel.send(view=view)
         else:
             await interaction.response.send_message(f'{interaction.user}, это не твоя кнопка, уходи', ephemeral=True)
@@ -275,7 +278,7 @@ class GuildAlreadyExists(discord.ui.View):
                 view.message = message
                 view.user = interaction.user
             except psycopg2.Error as error:
-                print(error)
+                logger.info(f'{error}')
                 await interaction.response.send_message(
                     'Удалить канал не получилось из-за ошибки "{}"'.format(error.__str__()))
         else:

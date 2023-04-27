@@ -3,6 +3,9 @@ import discord.ui
 import psycopg2
 
 from misc_files import basevariables
+from logs_setup import logger
+
+logger = logger.logging.getLogger("bot")
 
 
 class DropdownTimezones(discord.ui.View):
@@ -83,6 +86,6 @@ class DropdownTimezones(discord.ui.View):
             except psycopg2.Error as error:
                 await interaction.response.send_message(
                     'Добавить канал не получилось из-за ошибки "{}"'.format(error.__str__()))
-                print(error)
+                logger.info(f'{error}')
         else:
             await interaction.response.send_message(f'{interaction.user}, это не твоя менюшка', ephemeral=True)

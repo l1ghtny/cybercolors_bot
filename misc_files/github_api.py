@@ -5,6 +5,7 @@ from github import Github
 import misc_files.basevariables as basevariables
 import datetime
 import pytz
+from logs_setup import logger
 
 load_dotenv()
 # using an access token
@@ -12,11 +13,12 @@ access_token = os.getenv('github_token')
 g = Github(access_token)
 
 regular_bot = g.get_repo(full_name_or_id='l1ghtny/regular_bot')
+logger = logger.logging.getLogger("bot")
 
 
 async def get_release_notes():
     try:
-        print('started analysis of releases')
+        logger.info('started analysis of releases')
         release = regular_bot.get_latest_release()
         release_id = release.id
         release_text = release.body
@@ -56,5 +58,5 @@ async def get_release_notes():
         release_date = None
         release_title = None
         release_text = None
-        print(error)
+        logger.info(f'{error}')
         return release_date, release_title, release_text
