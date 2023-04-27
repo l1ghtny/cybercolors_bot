@@ -1,10 +1,6 @@
 cd /home/discord-bot
-echo "Pulling"
 git pull
-echo "Pulled info"
 
-echo "Installing dependencies"
-pip install -r /home/discord-bot/requirements.txt
-echo "Dependancies installed"
+pip install -r requirements.txt
 
-python3 /home/discord-bot/main.py
+python3 main.py
