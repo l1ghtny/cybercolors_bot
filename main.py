@@ -535,7 +535,7 @@ async def count_tokens_by_day_autocomplete(interaction: discord.Interaction, cur
     query = """select distinct g.date_added
     from (select to_char(datetime_added:: DATE, 'dd-mm-yyyy') as date_added, token_amount, reply_link, server_id
     from "public".count_tokens) as g
-    where g.date_added like %s and server_id = %s LIMIT 25"""
+    where g.date_added like %s and server_id = %s ORDER BY g.date_added DESC LIMIT 25"""
     values = (date_str, server_id)
     cursor.execute(query, values)
     result = cursor.fetchall()
