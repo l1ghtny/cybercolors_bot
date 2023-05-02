@@ -18,17 +18,23 @@ logger = logger.logging.getLogger("bot")
 
 
 def one_response(message):
-    response = openai.ChatCompletion.create(
-        model=model,
-        temperature=0.4,
-        max_tokens=512,
-        messages=[
-            {'role': 'system', 'content': role},
-            {'role': 'user', 'content': message}
-        ]
-    )
-    logger.info('found response')
-    reply = response.choices[0]['message']
-    tokens_total = response["usage"]["total_tokens"]
-    prompt_tokens = response["usage"]["prompt_tokens"]
-    return reply['content'], tokens_total
+    try:
+        response = openai.ChatCompletion.create(
+            model=model,
+            temperature=0.4,
+            max_tokens=512,
+            messages=[
+                {'role': 'system', 'content': role},
+                {'role': 'user', 'content': message}
+            ]
+        )
+        logger.info('success')
+        reply = response.choices[0]['message']
+        content = reply['content']
+        tokens_total = response["usage"]["total_tokens"]
+    except openai.error.RateLimitError as rate_limited:
+        logger.info('rate limited error')
+        content = None
+        tokens_total = 0
+        logger.error(rate_limited)
+    return content, tokens_total

@@ -691,8 +691,11 @@ async def on_message(message):
                             original_reply = await message.reply('Я думаю...')
                             logger.info('looking for reply')
                             bot_response, token_total = await run_blocking(create_response, message)
-                            logger.info('got response')
-                            await original_reply.edit(content=bot_response)
+                            if bot_response is not None:
+                                logger.info('got response')
+                                await original_reply.edit(content=bot_response)
+                            else:
+                                await original_reply.edit(content='Open AI сейчас не доступен, попробуй ещё раз')
                             query = 'INSERT INTO "public".count_tokens (datetime_added, reply_link, token_amount, server_id) VALUES (%s,%s,%s,%s)'
                             current_time = datetime.datetime.utcnow()
                             values = (current_time, message.jump_url, token_total, server_id,)
