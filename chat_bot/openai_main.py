@@ -22,7 +22,7 @@ def one_response(message):
         response = openai.ChatCompletion.create(
             model=model,
             temperature=0.4,
-            max_tokens=512,
+            max_tokens=1024,
             messages=[
                 {'role': 'system', 'content': role},
                 {'role': 'user', 'content': message}

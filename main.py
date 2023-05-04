@@ -577,9 +577,16 @@ async def twitter_link_replace(message, from_user, attachment):
 
 
 def create_response(message):
-    content = message.content
+    content = remove_bot_mention(message)
     response, token_total = chat_bot.openai_main.one_response(content)
     return response, token_total
+
+
+def remove_bot_mention(message_to_remove_mention):
+    content = str(message_to_remove_mention.content)
+    bot_id = client.user.id
+    new_content = content.replace(f'<@{bot_id}>', '')
+    return new_content
 
 
 async def run_blocking(blocking_func: typing.Callable, *args, **kwargs) -> typing.Any:
@@ -679,30 +686,24 @@ async def on_message(message):
                 await twitter_link_replace(message, user, attachment=files)
         if database_found is False:
             if check_bot_mention(message) is True:
-                chat_bot_role_id = int(os.getenv('chat_gpt_role_id'))
-                chat_bot_guild = client.get_guild(server_id)
-                chat_bot_role = chat_bot_guild.get_role(chat_bot_role_id)
                 is_approved, approved_channel = check_for_channel(message)
                 if is_approved:
-                    if chat_bot_role in user.roles:
-                        if "jailbreak" in message.content.lower():
-                            await message.reply('В боте стоит защита от jailbreak, я сейчас админа позову')
-                        else:
-                            original_reply = await message.reply('Я думаю...')
-                            logger.info('looking for reply')
-                            bot_response, token_total = await run_blocking(create_response, message)
-                            if bot_response is not None:
-                                logger.info('got response')
-                                await original_reply.edit(content=bot_response)
-                            else:
-                                await original_reply.edit(content='Open AI сейчас не доступен, попробуй ещё раз')
-                            query = 'INSERT INTO "public".count_tokens (datetime_added, reply_link, token_amount, server_id) VALUES (%s,%s,%s,%s)'
-                            current_time = datetime.datetime.utcnow()
-                            values = (current_time, message.jump_url, token_total, server_id,)
-                            cursor.execute(query, values)
-                            conn.commit()
+                    if "jailbreak" in message.content.lower():
+                        await message.reply('В боте стоит защита от jailbreak, я сейчас админа позову')
                     else:
-                        await message.reply(f'Ты не {chat_bot_role}, тебе пока не доступен ответ ')
+                        original_reply = await message.reply('Я думаю...')
+                        logger.info('looking for reply')
+                        bot_response, token_total = await run_blocking(create_response, message)
+                        if bot_response is not None:
+                            logger.info('got response')
+                            await original_reply.edit(content=bot_response)
+                        else:
+                            await original_reply.edit(content='Open AI сейчас не доступен, попробуй ещё раз')
+                        query = 'INSERT INTO "public".count_tokens (datetime_added, reply_link, token_amount, server_id) VALUES (%s,%s,%s,%s)'
+                        current_time = datetime.datetime.utcnow()
+                        values = (current_time, message.jump_url, token_total, server_id,)
+                        cursor.execute(query, values)
+                        conn.commit()
                 else:
                     return
         conn.close()
