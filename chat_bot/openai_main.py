@@ -38,3 +38,29 @@ def one_response(message):
         tokens_total = 0
         logger.error(rate_limited)
     return content, tokens_total
+
+
+def multiple_responses(message_list):
+    messages = [{'role': 'system', 'content': role}]
+    for i in message_list:
+        messages.append(i)
+    print(messages)
+    try:
+        response = openai.ChatCompletion.create(
+            model=model,
+            temperature=0.4,
+            max_tokens=1024,
+            messages=messages
+        )
+        logger.info('success')
+        reply = response.choices[0]['message']
+        content = reply['content']
+        tokens_total = response["usage"]["total_tokens"]
+    except openai.error.RateLimitError as rate_limited:
+        logger.info('rate limited error')
+        content = None
+        tokens_total = 0
+        logger.error(rate_limited)
+    return content, tokens_total
+
+

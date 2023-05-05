@@ -18,13 +18,13 @@ import random
 import calendar
 import demoji
 import pytz
-import typing
-import functools
 
-import chat_bot.openai_main
+from chat_bot.message_processing import check_bot_mention, check_for_channel, decide_on_response
+from chat_bot.create_response import create_one_response
 # project files
 from misc_files import basevariables, github_api
 from logs_setup import logger
+from misc_files.blocking_script import run_blocking
 from views.birthday.change_date import UserAlreadyExists
 from views.replies.delete_multiple_replies import DeleteReplyMultiple, DeleteReplyMultipleSelect
 from views.replies.delete_one_reply import DeleteOneReply
@@ -576,25 +576,6 @@ async def twitter_link_replace(message, from_user, attachment):
         await webhook.delete()
 
 
-def create_response(message):
-    content = remove_bot_mention(message)
-    response, token_total = chat_bot.openai_main.one_response(content)
-    return response, token_total
-
-
-def remove_bot_mention(message_to_remove_mention):
-    content = str(message_to_remove_mention.content)
-    bot_id = client.user.id
-    new_content = content.replace(f'<@{bot_id}>', '')
-    return new_content
-
-
-async def run_blocking(blocking_func: typing.Callable, *args, **kwargs) -> typing.Any:
-    func = functools.partial(blocking_func, *args,
-                             **kwargs)  # `run_in_executor` doesn't support kwargs, `functools.partial` does
-    return await client.loop.run_in_executor(None, func)
-
-
 @client.event
 async def on_message(message):
     def string_found(string1, string2):
@@ -613,23 +594,6 @@ async def on_message(message):
     def e_replace(string):
         string_new = string.replace('ё', 'е')
         return string_new
-
-    def check_bot_mention(message_to_check):
-        mentions = message_to_check.mentions
-        has_bot_request = False
-        for i in mentions:
-            if i == client.user:
-                has_bot_request = not has_bot_request
-        return has_bot_request
-
-    def check_for_channel(message_to_check_for_channel):
-        bot_channel_id = int(os.getenv('chat_gpt_channel_id'))
-        bot_channel = client.get_channel(bot_channel_id)
-        if bot_channel == message_to_check_for_channel.channel:
-            allowed_channel = True
-        else:
-            allowed_channel = False
-        return allowed_channel, bot_channel
 
     database_found = False
 
@@ -685,15 +649,15 @@ async def on_message(message):
                 await message.delete()
                 await twitter_link_replace(message, user, attachment=files)
         if database_found is False:
-            if check_bot_mention(message) is True:
-                is_approved, approved_channel = check_for_channel(message)
+            if check_bot_mention(message, client) is True:
+                is_approved, approved_channel = check_for_channel(message, client)
                 if is_approved:
                     if "jailbreak" in message.content.lower():
                         await message.reply('В боте стоит защита от jailbreak, я сейчас админа позову')
                     else:
                         original_reply = await message.reply('Я думаю...')
                         logger.info('looking for reply')
-                        bot_response, token_total = await run_blocking(create_response, message)
+                        bot_response, token_total = await decide_on_response(message, client)
                         if bot_response is not None:
                             logger.info('got response')
                             await original_reply.edit(content=bot_response)
@@ -793,7 +757,7 @@ async def birthday():
             if item['timezone'] is not None:
                 key = basevariables.t_key
                 timezone = item['timezone']
-                response = await run_blocking(current_user_datetime, key, timezone)
+                response = await run_blocking(client, current_user_datetime, key, timezone)
                 time_json = response.json()
                 not_formatted = time_json['timestamp']
                 formatted = time_json['formatted']
@@ -923,3 +887,5 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
 
 # EXECUTES THE BOT WITH THE SPECIFIED TOKEN.
 client.run(DISCORD_TOKEN, root_logger=True)
+
+
