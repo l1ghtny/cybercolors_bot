@@ -660,7 +660,12 @@ async def on_message(message):
                         bot_response, token_total = await decide_on_response(message, client)
                         if bot_response is not None:
                             logger.info('got response')
-                            await original_reply.edit(content=bot_response)
+                            try:
+                                await original_reply.edit(content=bot_response)
+                            except discord.HTTPException:
+                                embed = discord.Embed(colour=discord.Colour.dark_blue(), description=bot_response, title="Длинный ответ:")
+                                logger.info('SENDING EMBED')
+                                await original_reply.edit(embed=embed, content=None)
                         else:
                             await original_reply.edit(content='Open AI сейчас не доступен, попробуй ещё раз')
                         query = 'INSERT INTO "public".count_tokens (datetime_added, reply_link, token_amount, server_id) VALUES (%s,%s,%s,%s)'
