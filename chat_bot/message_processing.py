@@ -1,9 +1,8 @@
 import os
 
-import discord
-
 from chat_bot.create_response import create_one_response, create_response_to_dialog
 from misc_files.blocking_script import run_blocking
+from misc_files.check_if_message_has_reply import check_replies
 
 
 async def decide_on_response(message, client):
@@ -49,16 +48,6 @@ def remove_bot_mention(message_to_remove_mention, client):
     bot_id = client.user.id
     new_content = content.replace(f'<@{bot_id}>', '')
     return new_content
-
-
-def check_replies(message):
-    has_replies = False
-    try:
-        if message.reference.message_id is not None:
-            has_replies = not has_replies
-    except AttributeError as no_replies:
-        has_replies = has_replies
-    return has_replies
 
 
 async def count_replies(message):

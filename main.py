@@ -599,7 +599,7 @@ async def on_message(message):
         else:
             # start = timer()
             if 'https://twitter.com/' in message_content_base:
-                await manage_message(message, user)
+                await manage_message(message, user, client)
             message_content = message_content_punct.translate(str.maketrans('', '', string.punctuation))
             server_id = message.guild.id
             conn, cursor = await basevariables.access_db_on_message(message)
