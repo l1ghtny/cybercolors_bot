@@ -20,11 +20,12 @@ import demoji
 import pytz
 
 from chat_bot.message_processing import check_bot_mention, check_for_channel, decide_on_response
-from chat_bot.create_response import create_one_response
 # project files
 from misc_files import basevariables, github_api
 from logs_setup import logger
 from misc_files.blocking_script import run_blocking
+from twitter_link_fix.twitter_main import twitter_link_replace
+from twitter_link_fix.twitter_message_manager import manage_message
 from views.birthday.change_date import UserAlreadyExists
 from views.replies.delete_multiple_replies import DeleteReplyMultiple, DeleteReplyMultipleSelect
 from views.replies.delete_one_reply import DeleteOneReply
@@ -567,15 +568,6 @@ async def most_expensive_message_today(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 
-async def twitter_link_replace(message, from_user, attachment):
-    webhook = await message.channel.create_webhook(name=from_user.name)
-    new_message = message.content.replace('twitter', 'fxtwitter')
-    await webhook.send(str(new_message), username=from_user.name, avatar_url=from_user.avatar, files=attachment)
-    webhooks = await message.channel.webhooks()
-    for webhook in webhooks:
-        await webhook.delete()
-
-
 @client.event
 async def on_message(message):
     def string_found(string1, string2):
@@ -598,14 +590,16 @@ async def on_message(message):
     database_found = False
 
     user = message.author
+    message_content_base = message.content.lower()
+    message_content_e = em_replace(message_content_base)
+    message_content_punct = e_replace(message_content_e)
     if user:
         if user == client.user:
             return
         else:
             # start = timer()
-            message_content_base = message.content.lower()
-            message_content_e = em_replace(message_content_base)
-            message_content_punct = e_replace(message_content_e)
+            if 'https://twitter.com/' in message_content_base:
+                await manage_message(message, user)
             message_content = message_content_punct.translate(str.maketrans('', '', string.punctuation))
             server_id = message.guild.id
             conn, cursor = await basevariables.access_db_on_message(message)
@@ -641,13 +635,6 @@ async def on_message(message):
                                 await message.reply(response_base.upper())
                             except NameError:
                                 await message.reply(response_base.upper())
-            if 'https://twitter.com/' in message_content_base:
-                files = []
-                for item in message.attachments:
-                    file = await item.to_file()
-                    files.append(file)
-                await message.delete()
-                await twitter_link_replace(message, user, attachment=files)
         if database_found is False:
             if check_bot_mention(message, client) is True:
                 is_approved, approved_channel = check_for_channel(message, client)
