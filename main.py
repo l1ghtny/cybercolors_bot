@@ -15,13 +15,14 @@ import calendar
 import demoji
 import pytz
 
-from modules.birthdays_module.check_birthday import check_birthday
-from modules.birthdays_module.check_roles import check_roles
-from modules.birthdays_module.check_time import check_time
-from misc_files import basevariables, github_api
+from modules.birthdays_module.hourly_check.check_birthday import check_birthday
+from modules.birthdays_module.hourly_check.check_roles import check_roles
+from modules.birthdays_module.hourly_check.check_time import check_time
+from misc_files import basevariables
 from modules.logs_setup import logger
 from modules.on_message_processing.bot_reply import look_for_bot_reply
 from modules.on_message_processing.replies import check_for_replies
+from modules.on_voice_state_processing.create_voice_channel import create_voice_channel
 from modules.releases.releases_check import check_new_releases
 from modules.twitter_link_fix.twitter_message_manager import manage_message
 from views.birthday.change_date import UserAlreadyExists
@@ -596,32 +597,7 @@ async def update_releases():
 
 @client.event
 async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
-    conn, cursor = await basevariables.access_db_basic()
-    query = 'SELECT * from "public".voice_temp WHERE server_id=%s'
-    server_id = member.guild.id
-    values = (server_id,)
-    cursor.execute(query, values)
-    temp_channels_info = cursor.fetchall()
-    temp_channels = []
-    for i in temp_channels_info:
-        temp_channels.append(i['voice_channel_id'])
-
-    possible_channel_name = f"Канал имени {member.display_name}"
-    if after.channel:
-        if after.channel.id == 1099061215801639073:
-            temp_channel = await after.channel.clone(name=possible_channel_name)
-            await member.move_to(temp_channel)
-            query2 = 'INSERT into "public".voice_temp (server_id, voice_channel_id) values (%s,%s)'
-            values2 = (server_id, temp_channel.id,)
-            cursor.execute(query2, values2)
-            conn.commit()
-
-    if before.channel:
-        if before.channel.id in temp_channels:
-            if len(before.channel.members) == 0:
-                await before.channel.delete()
-                await basevariables.delete_channel_id(before.channel.id, server_id, conn, cursor)
-    conn.close()
+    await create_voice_channel(member, before, after)
 
 
 # EXECUTES THE BOT WITH THE SPECIFIED TOKEN.

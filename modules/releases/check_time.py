@@ -1,6 +1,6 @@
 import datetime
 
-from modules.birthdays_module.check_time import utc
+from modules.birthdays_module.hourly_check.check_time import utc
 
 check_time_1 = [
     datetime.time(hour=0, minute=30, tzinfo=utc),
