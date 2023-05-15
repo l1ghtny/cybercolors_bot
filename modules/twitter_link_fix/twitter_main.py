@@ -18,7 +18,7 @@ async def twitter_link_replace(message, from_user, reply, attachment):
             webhook_message = await webhook.send(str(new_message), username=from_user.display_name, avatar_url=from_user.avatar,
                                files=attachment, wait=True)
             reply_embed = discord.Embed(colour=discord.Colour.dark_blue(), title='Сообщение с ответом', url=webhook_message.jump_url)
-            reply_embed.set_author(name=webhook_message.author.display_name, url=webhook_message.jump_url, icon_url=webhook_message.author.avatar)
+            reply_embed.set_author(name=webhook_message.author.display_name, url=webhook_message.jump_url, icon_url=from_user.avatar)
             await reply.reply('Тебе ответили \U0001F446', embed=reply_embed)
     else:
         if reply is None:
@@ -26,11 +26,11 @@ async def twitter_link_replace(message, from_user, reply, attachment):
                                files=attachment, thread=thread)
         else:
             webhook_message = await webhook.send(str(new_message), username=from_user.display_name, avatar_url=from_user.avatar,
-                               files=attachment, thread=thread)
+                               files=attachment, thread=thread, wait=True)
             reply_embed = discord.Embed(colour=discord.Colour.dark_blue(), title='Сообщение с ответом',
                                         url=webhook_message.jump_url)
             reply_embed.set_author(name=webhook_message.author.display_name, url=webhook_message.jump_url,
-                                   icon_url=webhook_message.author.avatar)
+                                   icon_url=from_user.avatar)
             await reply.reply('Тебе ответили \U0001F446', embed=reply_embed)
     webhooks = await webhook_channel.webhooks()
     for webhook in webhooks:

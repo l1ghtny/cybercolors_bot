@@ -3,7 +3,7 @@ import discord.ui
 import psycopg2
 
 from misc_files import basevariables
-from logs_setup import logger
+from modules.logs_setup import logger
 
 logger = logger.logging.getLogger("bot")
 

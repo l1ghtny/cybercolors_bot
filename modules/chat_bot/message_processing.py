@@ -1,6 +1,6 @@
 import os
 
-from chat_bot.create_response import create_one_response, create_response_to_dialog
+from modules.chat_bot.create_response import create_one_response, create_response_to_dialog
 from misc_files.blocking_script import run_blocking
 from misc_files.check_if_message_has_reply import check_replies
 

@@ -1,6 +1,5 @@
 import itertools
 import operator
-import string
 
 import discord
 import datetime
@@ -12,20 +11,19 @@ from dotenv import load_dotenv
 import psycopg2
 import psycopg2.extras
 import uuid
-import re
-import requests
-import random
 import calendar
 import demoji
 import pytz
 
-from chat_bot.message_processing import check_bot_mention, check_for_channel, decide_on_response
-# project files
+from modules.birthdays_module.check_birthday import check_birthday
+from modules.birthdays_module.check_roles import check_roles
+from modules.birthdays_module.check_time import check_time
 from misc_files import basevariables, github_api
-from logs_setup import logger
-from misc_files.blocking_script import run_blocking
-from twitter_link_fix.twitter_main import twitter_link_replace
-from twitter_link_fix.twitter_message_manager import manage_message
+from modules.logs_setup import logger
+from modules.on_message_processing.bot_reply import look_for_bot_reply
+from modules.on_message_processing.replies import check_for_replies
+from modules.releases.releases_check import check_new_releases
+from modules.twitter_link_fix.twitter_message_manager import manage_message
 from views.birthday.change_date import UserAlreadyExists
 from views.replies.delete_multiple_replies import DeleteReplyMultiple, DeleteReplyMultipleSelect
 from views.replies.delete_one_reply import DeleteOneReply
@@ -533,10 +531,10 @@ async def count_tokens_by_day_autocomplete(interaction: discord.Interaction, cur
     date_str = f'{current}%'
     server_id = interaction.guild_id
     conn, cursor = await basevariables.access_db_on_interaction(interaction)
-    query = """select distinct g.date_added
-    from (select to_char(datetime_added:: DATE, 'dd-mm-yyyy') as date_added, token_amount, reply_link, server_id
+    query = """select distinct g.date_added, g.datetime_added
+    from (select to_char(datetime_added:: DATE, 'dd-mm-yyyy') as date_added, token_amount, reply_link, server_id, datetime_added
     from "public".count_tokens) as g
-    where g.date_added like %s and server_id = %s ORDER BY g.date_added DESC LIMIT 25"""
+    where g.date_added like %s and server_id = %s ORDER BY g.datetime_added DESC LIMIT 25"""
     values = (date_str, server_id)
     cursor.execute(query, values)
     result = cursor.fetchall()
@@ -570,281 +568,30 @@ async def most_expensive_message_today(interaction: discord.Interaction):
 
 @client.event
 async def on_message(message):
-    def string_found(string1, string2):
-        search = re.search(r"\b" + re.escape(string1) + r"\b", string2)
-        if search:
-            return True
-        return False
-
-    def em_replace(string):
-        emoji = demoji.findall(string)
-        for i in emoji:
-            unicode = i.encode('unicode-escape').decode('ASCII')
-            string = string.replace(i, unicode)
-        return string
-
-    def e_replace(string):
-        string_new = string.replace('ё', 'е')
-        return string_new
-
-    database_found = False
-
     user = message.author
     message_content_base = message.content.lower()
-    message_content_e = em_replace(message_content_base)
-    message_content_punct = e_replace(message_content_e)
     if user:
         if user == client.user:
             return
         else:
             # start = timer()
             if 'https://twitter.com/' in message_content_base:
-                await manage_message(message, user, client)
-            message_content = message_content_punct.translate(str.maketrans('', '', string.punctuation))
-            server_id = message.guild.id
-            conn, cursor = await basevariables.access_db_on_message(message)
-            query = 'SELECT * from messages WHERE server_id=%s'
-            values = (server_id,)
-            cursor.execute(query, values)
-            all_rows = cursor.fetchall()
-            for item in all_rows:
-                request_base = item['request_phrase']
-                request = request_base.translate(str.maketrans('', '', string.punctuation))
-                response_base = (item['respond_phrase'])
-                response = string.Template("f'$string'").substitute(string=response_base)
-                if request_base.startswith('<'):
-                    if request in message_content:
-                        database_found = not database_found
-                        await message.reply(response_base)
-                else:
-                    find_phrase = string_found(request, message_content)
-                    if find_phrase is True:
-                        database_found = not database_found
-                        if not message.content.isupper():
-                            try:
-                                await message.reply(eval(response))
-                            except SyntaxError:
-                                await message.reply(response_base)
-                            except NameError:
-                                await message.reply(response_base)
-                        else:
-                            response = response.upper()
-                            try:
-                                await message.reply(eval(response))
-                            except SyntaxError:
-                                await message.reply(response_base.upper())
-                            except NameError:
-                                await message.reply(response_base.upper())
+                await manage_message(message, user)
+            conn, cursor, database_found, server_id = await check_for_replies(message)
         if database_found is False:
-            if check_bot_mention(message, client) is True:
-                is_approved, approved_channel = check_for_channel(message, client)
-                if is_approved:
-                    if "jailbreak" in message.content.lower():
-                        await message.reply('В боте стоит защита от jailbreak, я сейчас админа позову')
-                    else:
-                        original_reply = await message.reply('Я думаю...')
-                        logger.info('looking for reply')
-                        bot_response, token_total = await decide_on_response(message, client)
-                        if bot_response is not None:
-                            logger.info('got response')
-                            try:
-                                await original_reply.edit(content=bot_response)
-                            except discord.HTTPException:
-                                embed = discord.Embed(colour=discord.Colour.dark_blue(), description=bot_response, title="Длинный ответ:")
-                                logger.info('SENDING EMBED')
-                                await original_reply.edit(embed=embed, content=None)
-                        else:
-                            await original_reply.edit(content='Open AI сейчас не доступен, попробуй ещё раз')
-                        query = 'INSERT INTO "public".count_tokens (datetime_added, reply_link, token_amount, server_id) VALUES (%s,%s,%s,%s)'
-                        current_time = datetime.datetime.utcnow()
-                        values = (current_time, message.jump_url, token_total, server_id,)
-                        cursor.execute(query, values)
-                        conn.commit()
-                else:
-                    return
-        conn.close()
-
-
-utc = datetime.timezone.utc
-check_time = [
-    datetime.time(hour=0, tzinfo=utc),
-    datetime.time(hour=1, tzinfo=utc),
-    datetime.time(hour=2, tzinfo=utc),
-    datetime.time(hour=3, tzinfo=utc),
-    datetime.time(hour=4, tzinfo=utc),
-    datetime.time(hour=5, tzinfo=utc),
-    datetime.time(hour=6, tzinfo=utc),
-    datetime.time(hour=7, tzinfo=utc),
-    datetime.time(hour=8, tzinfo=utc),
-    datetime.time(hour=9, tzinfo=utc),
-    datetime.time(hour=10, tzinfo=utc),
-    datetime.time(hour=11, tzinfo=utc),
-    datetime.time(hour=12, tzinfo=utc),
-    datetime.time(hour=13, tzinfo=utc),
-    datetime.time(hour=14, tzinfo=utc),
-    datetime.time(hour=15, tzinfo=utc),
-    datetime.time(hour=16, tzinfo=utc),
-    datetime.time(hour=17, tzinfo=utc),
-    datetime.time(hour=18, tzinfo=utc),
-    datetime.time(hour=19, tzinfo=utc),
-    datetime.time(hour=20, tzinfo=utc),
-    datetime.time(hour=21, tzinfo=utc),
-    datetime.time(hour=22, tzinfo=utc),
-    datetime.time(hour=23, tzinfo=utc)
-]
-
-check_time_1 = [
-    datetime.time(hour=0, minute=30, tzinfo=utc),
-    datetime.time(hour=1, minute=30, tzinfo=utc),
-    datetime.time(hour=2, minute=30, tzinfo=utc),
-    datetime.time(hour=3, minute=30, tzinfo=utc),
-    datetime.time(hour=4, minute=30, tzinfo=utc),
-    datetime.time(hour=5, minute=30, tzinfo=utc),
-    datetime.time(hour=6, minute=30, tzinfo=utc),
-    datetime.time(hour=7, minute=30, tzinfo=utc),
-    datetime.time(hour=8, minute=30, tzinfo=utc),
-    datetime.time(hour=9, minute=30, tzinfo=utc),
-    datetime.time(hour=10, minute=30, tzinfo=utc),
-    datetime.time(hour=11, minute=30, tzinfo=utc),
-    datetime.time(hour=12, minute=30, tzinfo=utc),
-    datetime.time(hour=13, minute=30, tzinfo=utc),
-    datetime.time(hour=14, minute=30, tzinfo=utc),
-    datetime.time(hour=15, minute=30, tzinfo=utc),
-    datetime.time(hour=16, minute=30, tzinfo=utc),
-    datetime.time(hour=17, minute=30, tzinfo=utc),
-    datetime.time(hour=18, minute=30, tzinfo=utc),
-    datetime.time(hour=19, minute=30, tzinfo=utc),
-    datetime.time(hour=20, minute=30, tzinfo=utc),
-    datetime.time(hour=21, minute=30, tzinfo=utc),
-    datetime.time(hour=22, minute=30, tzinfo=utc),
-    datetime.time(hour=23, minute=30, tzinfo=utc)
-]
-
-
-def current_user_datetime(key, timezone):
-    request = f'http://vip.timezonedb.com/v2.1/get-time-zone?key={key}&format=json&by=zone&zone={timezone}'
-    response = requests.get(request)
-    return response
+            await look_for_bot_reply(message, client, server_id, cursor, conn)
 
 
 # BD MODULE with checking task
 @tasks.loop(time=check_time)
 async def birthday():
-    conn, cursor = await basevariables.access_db_regular()
-    query = 'SELECT * from "public".users as users inner join "public".servers as servers using(server_id)'
-    cursor.execute(query)
-    values = cursor.fetchall()
-    conn.close()
-    for item in values:
-        guild_id = item['server_id']
-        guild_role_id = item['role_id']
-        logger.info(f'guild_role_id: {guild_role_id}')
-        guild = client.get_guild(guild_id)
-        guild_role = discord.utils.get(guild.roles, id=guild_role_id)
-        logger.info(f'guild_role: {guild_role.name}')
-        user_id = item['user_id']
-        user = client.get_user(user_id)
-        member = guild.get_member(user_id)
-        if member is not None:
-            if item['timezone'] is not None:
-                key = basevariables.t_key
-                timezone = item['timezone']
-                response = await run_blocking(client, current_user_datetime, key, timezone)
-                time_json = response.json()
-                not_formatted = time_json['timestamp']
-                formatted = time_json['formatted']
-                today = datetime.date.today()
-                t_year = today.year
-                table_month = item['month']
-                table_day = item['day']
-                bd_date = datetime.datetime(t_year, table_month, table_day, hour=0, minute=0)
-                json_date = datetime.datetime.fromisoformat(formatted)
-                json_date_from_timestamp = datetime.datetime.utcfromtimestamp(not_formatted)
-                channel_id = item['channel_id']
-                channel = client.get_channel(channel_id)
-                logger.info(f'{user.name} др: {bd_date}')
-                logger.info(f'{user.name} проверено в: {json_date}')
-                logger.info(f'{user.name} дата по timestamp: {json_date_from_timestamp}')
-                if json_date.date() == bd_date.date() and json_date.hour == bd_date.hour:
-                    conn, cursor = await basevariables.access_db_regular()
-                    query2 = 'SELECT * from "public".congratulations where server_id=%s'
-                    values2 = (guild_id,)
-                    cursor.execute(query2, values2)
-                    greetings = cursor.fetchall()
-                    greetings_text = []
-                    for rows in greetings:
-                        greetings_text.append(rows['bot_message'])
-                    message_text = random.choice(greetings_text)
-                    embed_description = eval(f'{message_text}')
-                    embed = discord.Embed(colour=discord.Colour.dark_gold(), description=embed_description)
-                    await channel.send(embed=embed)
-                    query3 = 'UPDATE "public".users SET role_added_at=%s WHERE user_id=%s AND server_id=%s'
-                    current_time = datetime.datetime.utcnow()
-                    values3 = (current_time, user_id, guild_id,)
-                    cursor.execute(query3, values3)
-                    conn.commit()
-                    conn.close()
-                    await member.add_roles(guild_role)
-                else:
-                    logger.info('ne dr')
-            else:
-                logger.info(f'{user_id} не указал свой часовой пояс, проверить невозможно')
-        else:
-            logger.info(f'{user_id} is not a member of the server "{guild.name}"')
-    logger.info('the end')
-    conn, cursor = await basevariables.access_db_regular()
-    query_last = 'SELECT * from "public".users inner join "public".servers using(server_id)'
-    cursor.execute(query_last)
-    users_check_roles = cursor.fetchall()
-    for i in users_check_roles:
-        role_time = i['role_added_at']
-        role_guild_id = i['server_id']
-        role_user_id = i['user_id']
-        server_role_id = i['role_id']
-        if role_time is not None:
-            user_id = i['user_id']
-            user = client.get_user(user_id)
-            current_time_now = datetime.datetime.utcnow()
-            timedelta = current_time_now - role_time
-            current_guild = client.get_guild(role_guild_id)
-            current_member = current_guild.get_member(role_user_id)
-            current_role = discord.utils.get(current_guild.roles, id=server_role_id)
-            logger.info(f'timedelta in days: {timedelta.days}')
-            if timedelta.days >= 1:
-                logger.info('checked role is older than 1 day')
-                await current_member.remove_roles(current_role)
-                query_last_for_sure = 'UPDATE "public".users SET role_added_at=%s WHERE server_id=%s AND user_id=%s'
-                role_added_at = None
-                values_last = (role_added_at, role_guild_id, role_user_id,)
-                cursor.execute(query_last_for_sure, values_last)
-                conn.commit()
-                logger.info(f'role removed from user {user.name}')
-            else:
-                logger.info(f'role {current_role.name} on user {user.name} is not older than 1 day')
-        else:
-            logger.info('no role is given')
-    conn.close()
+    await check_birthday(client)
+    await check_roles(client)
 
 
 @tasks.loop(minutes=10)
 async def update_releases():
-    channel_id = 1068896806156632084
-    sanya_channel_id = 1099032346507890748
-    # zds_guild_id = 478278763239702538
-    release_date, release_title, release_text = await github_api.get_release_notes()
-    if release_title is not None and release_text is not None and release_date is not None:
-        channel = client.get_channel(channel_id)
-        channel_main = client.get_channel(sanya_channel_id)
-        embed = discord.Embed(
-            title=f'{release_title}',
-            colour=discord.Colour.from_rgb(3, 144, 252)
-        )
-        embed.add_field(name='Описание релиза', value=f'{release_text}')
-        embed.add_field(name='Дата релиза (Мск):', value=f'{release_date}')
-        await channel.send(embed=embed)
-        await channel_main.send(embed=embed)
-    else:
-        logger.info('No new releases')
+    await check_new_releases(client)
 
 
 @client.event
@@ -879,5 +626,3 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
 
 # EXECUTES THE BOT WITH THE SPECIFIED TOKEN.
 client.run(DISCORD_TOKEN, root_logger=True)
-
-

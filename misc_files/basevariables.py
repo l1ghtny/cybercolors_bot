@@ -2,7 +2,7 @@ import os
 from dotenv import load_dotenv
 import psycopg2
 from psycopg2.extras import NamedTupleCursor
-from logs_setup import logger
+from modules.logs_setup import logger
 
 load_dotenv()
 

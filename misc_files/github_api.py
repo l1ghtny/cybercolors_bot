@@ -5,7 +5,7 @@ from github import Github
 import misc_files.basevariables as basevariables
 import datetime
 import pytz
-from logs_setup import logger
+from modules.logs_setup import logger
 
 load_dotenv()
 # using an access token
