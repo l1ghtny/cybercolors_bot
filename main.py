@@ -1,6 +1,3 @@
-import itertools
-import operator
-
 import discord
 import datetime
 import discord.ui
@@ -11,10 +8,11 @@ from dotenv import load_dotenv
 import psycopg2
 import psycopg2.extras
 import uuid
-import calendar
 import demoji
 import pytz
 
+from commands.birthdays.add_new_birthday import add_birthday
+from commands.birthdays.show_birthday_list import send_birthday_list
 from modules.birthdays_module.hourly_check.check_birthday import check_birthday
 from modules.birthdays_module.hourly_check.check_roles import check_roles
 from modules.birthdays_module.hourly_check.check_time import check_time
@@ -25,12 +23,10 @@ from modules.on_message_processing.replies import check_for_replies
 from modules.on_voice_state_processing.create_voice_channel import create_voice_channel
 from modules.releases.releases_check import check_new_releases
 from modules.twitter_link_fix.twitter_message_manager import manage_message
-from views.birthday.change_date import UserAlreadyExists
 from views.replies.delete_multiple_replies import DeleteReplyMultiple, DeleteReplyMultipleSelect
 from views.replies.delete_one_reply import DeleteOneReply
 from views.pagination.pagination import PaginationView
 from views.birthday.settings import BirthdaysButtonsSelect, GuildAlreadyExists
-from views.birthday.timezones import DropdownTimezones
 from views.misc_commands.delete_channels import DropDownViewChannels
 from views.misc_commands.roles import DropDownRoles
 
@@ -63,7 +59,6 @@ class Aclient(discord.AutoShardedClient):
             await tree.sync()  # global (can take 1-24 hours)
             self.synced = True
         if not self.added:
-            # self.add_view(DropDownViewChannels())
             self.added = True
         birthday.start()
         update_releases.start()
@@ -159,71 +154,7 @@ async def delete_channels(interaction: discord.Interaction):
     ]
 )
 async def add_my_birthday(interaction: discord.Interaction, day: int, month: app_commands.Choice[str]):
-    await interaction.response.defer(thinking=True, ephemeral=True)
-    if month.value == '02' and day > 28:
-        await interaction.followup.send(
-            'Извини, в Феврале не бывает больше 28 дней (Я знаю, что бывает 29, но пока бот не умеет его корректно проверять)')
-    elif day > 30 and month.value == '04':
-        await interaction.followup.send('Извини, такой даты не существует')
-    elif month.value == '04' and day > 30:
-        await interaction.followup.send('Извини, такой даты не существует')
-    elif month.value == '06' and day > 30:
-        await interaction.followup.send('Извини, такой даты не существует')
-    elif month.value == '09' and day > 30:
-        await interaction.followup.send('Извини, такой даты не существует')
-    elif month.value == '11' and day > 30:
-        await interaction.followup.send('Извини, такой даты не существует')
-    else:
-        user_id = f'{interaction.user.id}'
-        server_id = f'{interaction.guild.id}'
-        anton_id = client.get_user(267745993074671616)
-        database = basevariables.database
-        host = basevariables.host
-        user = basevariables.user
-        password = basevariables.password
-        port = basevariables.port
-        try:
-            conn = psycopg2.connect(database=database,
-                                    host=host,
-                                    user=user,
-                                    password=password,
-                                    port=port,
-                                    cursor_factory=psycopg2.extras.DictCursor
-                                    )
-            cursor = conn.cursor()
-            postgres_select_query = """SELECT * from "public".users WHERE user_id = %s and server_id=%s"""
-            cursor.execute(postgres_select_query, (user_id, server_id,))
-            row = cursor.fetchone()
-            if row is None:
-                postgres_insert_query = 'INSERT INTO "public".users (user_id, server_id, day, month) VALUES (%s,%s,%s,%s)'
-                records_to_insert = (user_id, server_id, day, month.value,)
-                cursor.execute(postgres_insert_query, records_to_insert)
-                conn.commit()
-                embed = discord.Embed(title='А теперь выбери часовой пояс')
-                view = DropdownTimezones(day, month.name)
-                view.user = interaction.user
-                message = await interaction.followup.send(f'Всё записано, спасибо. День: {day}, месяц: {month.name}',
-                                                          embed=embed, view=view)
-                view.message = message
-            else:
-                day_record = row['day']
-                month_record = row['month']
-                timezone_record = row['timezone']
-                embed = discord.Embed(title='Тебя это устраивает?')
-                view = UserAlreadyExists()
-                view.user = interaction.user
-                message = await interaction.followup.send(
-                    f'Твой др уже записан. День: {day_record}, месяц: {month_record}, часовой пояс: {timezone_record}',
-                    embed=embed, view=view, ephemeral=True)
-                view.message = message
-            conn.close()
-        except psycopg2.errors.ForeignKeyViolation as nameerror:
-            await interaction.followup.send(
-                'Сервер ещё не настроен или что-то пошло не так. Напишите админу сервера или создателю бота')
-        except psycopg2.Error as error:
-            await interaction.followup.send(
-                f'Что-то пошло не так, напишите {anton_id.mention}. Ошибка: {error}'
-            )
+    await add_birthday(client, interaction, month, day)
 
 
 # Settings for guild for birthdays module
@@ -408,67 +339,7 @@ async def birthday_message(interaction: discord.Interaction, message: str):
 
 @tree.command(name='birthday_list', description='Показывает все дни рождения на сервере')
 async def birthday_list(interaction: discord.Interaction):
-    await interaction.response.defer()
-    server_id = interaction.guild_id
-    old_data = [
-
-    ]
-    conn, cursor = await basevariables.access_db_on_interaction(interaction)
-    query = """SELECT e.server_id, e.user_id, e.day, e.month, e.close_month + e.close_day as closest
-            FROM (SELECT g.server_id, g.user_id, g.day, g.month,
-            CASE 
-            WHEN diff < 0 then 100 + diff ELSE diff END as close_month, 
-            CASE 
-            WHEN diff_1 < 0 and diff = 0 then 1000 + diff_1 ELSE 0 END as close_day
-            FROM (SELECT server_id, user_id, day, day - date_part('day', now()) AS diff_1, month, month - date_part('month', now()) AS diff FROM "public".users) as g
-            WHERE server_id=%s) as e
-            ORDER BY closest, day"""
-    values = (server_id,)
-    cursor.execute(query, values)
-    birthdays = cursor.fetchall()
-    logger.info(f'{birthdays}')
-    conn.close()
-    bd_list = []
-    for item in birthdays:
-        user_id = item['user_id']
-        user = client.get_user(user_id)
-        month_num = item['month']
-        day = item['day']
-        month = calendar.month_name[month_num]
-        bd_list.append({
-            'user': user,
-            'date': f'{day} {month}'
-        })
-
-    for i in bd_list:
-        list_user = i['user']
-        list_date = i['date']
-        old_data.append({
-            'label': list_date,
-            'value': f'{list_user.mention}'
-        })
-    data = []
-    for key, value in itertools.groupby(old_data, key=operator.itemgetter('label')):
-        new_key = key
-        new_value = ""
-        for k in value:
-            if new_value is str(""):
-                new_value = k['value']
-            else:
-                new_value += f" и {k['value']}"
-        data.append({
-            'label': new_key,
-            'value': new_value
-        })
-
-    title = 'Дни рождения'
-    footer = 'Всего дней рождений'
-    maximum = 'дней'
-    pagination_view = PaginationView(data, interaction.user, title, footer, maximum, separator=15)
-    pagination_view.data = data
-    pagination_view.counted = len(birthdays)
-    await pagination_view.send(interaction)
-    await interaction.followup.send('Все дни рождения найдены')
+    await send_birthday_list(client, interaction)
 
 
 @tree.command(name='show_replies', description='Вызывает список всех вопросов-ответов на сервере')
@@ -575,7 +446,6 @@ async def on_message(message):
         if user == client.user:
             return
         else:
-            # start = timer()
             if 'https://twitter.com/' in message_content_base:
                 await manage_message(message, user)
             conn, cursor, database_found, server_id = await check_for_replies(message)
