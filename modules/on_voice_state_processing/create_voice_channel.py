@@ -14,7 +14,7 @@ async def create_voice_channel(member, before, after):
 
     possible_channel_name = f"Канал имени {member.display_name}"
     if after.channel:
-        if after.channel.id == 1099044684116017222:
+        if after.channel.id == 1099061215801639073:
             temp_channel = await after.channel.clone(name=possible_channel_name)
             await member.move_to(temp_channel)
             query2 = 'INSERT into "public".voice_temp (server_id, voice_channel_id) values (%s,%s)'
