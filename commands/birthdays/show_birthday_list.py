@@ -28,7 +28,6 @@ async def send_birthday_list(client, interaction):
     values = (server_id,)
     cursor.execute(query, values)
     birthdays = cursor.fetchall()
-    logger.info(f'{birthdays}')
     conn.close()
     bd_list = []
     for item in birthdays:
@@ -45,10 +44,6 @@ async def send_birthday_list(client, interaction):
     for i in bd_list:
         list_user = i['user']
         list_date = i['date']
-        logger.info('list_user_id:')
-        logger.info(f'{list_user.id}')
-        logger.info('list_user_name:')
-        logger.info(f'{list_user.name}')
         old_data.append({
             'label': list_date,
             'value': f'{list_user.mention}'
