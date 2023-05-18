@@ -28,7 +28,7 @@ async def look_for_bot_reply(message, client, server_id, cursor, conn):
                         logger.info('SENDING EMBED')
                         await original_reply.edit(embed=embed, content=None)
                 else:
-                    await original_reply.edit(content='Open AI сейчас не доступен, попробуй ещё раз')
+                    await original_reply.edit(content='***Ошибка:*** Open AI сейчас не доступен, попробуй ещё раз')
                 query = 'INSERT INTO "public".count_tokens (datetime_added, reply_link, token_amount, server_id) VALUES (%s,%s,%s,%s)'
                 current_time = datetime.datetime.utcnow()
                 values = (current_time, message.jump_url, token_total, server_id,)

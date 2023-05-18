@@ -18,7 +18,7 @@ from modules.birthdays_module.hourly_check.check_roles import check_roles
 from modules.birthdays_module.hourly_check.check_time import check_time
 from misc_files import basevariables
 from modules.logs_setup import logger
-from modules.on_message_processing.bot_reply import look_for_bot_reply
+from modules.on_message_processing.gpt_bot_reply import look_for_bot_reply
 from modules.on_message_processing.replies import check_for_replies
 from modules.on_voice_state_processing.create_voice_channel import create_voice_channel
 from modules.releases.releases_check import check_new_releases
