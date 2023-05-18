@@ -1,7 +1,7 @@
 psycopg2-binary~=2.9.5
 requests~=2.28.2
 python-dotenv~=0.21.1
-discord.py~=2.1.0
+discord.py~=2.2.0
 self~=2020.12.3
 PyGithub~=1.58.1
 demoji~=1.1.0
