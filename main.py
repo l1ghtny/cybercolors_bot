@@ -11,12 +11,17 @@ import uuid
 import demoji
 import pytz
 
+from modules.birthdays_module.user_validation.flag_users_who_left import flag_users_by_server
+from modules.birthdays_module.user_validation.remove_flagged_users import check_flagged_users
+from modules.birthdays_module.user_validation.user_validate_time import users_time
 from commands.birthdays.add_new_birthday import add_birthday
 from commands.birthdays.show_birthday_list import send_birthday_list
+from misc_files.blocking_script import run_blocking
 from modules.birthdays_module.hourly_check.check_birthday import check_birthday
 from modules.birthdays_module.hourly_check.check_roles import check_roles
 from modules.birthdays_module.hourly_check.check_time import check_time
 from misc_files import basevariables
+from modules.birthdays_module.user_validation.validate_ids import manage_invalid_users
 from modules.logs_setup import logger
 from modules.on_message_processing.gpt_bot_reply import look_for_bot_reply
 from modules.on_message_processing.replies import check_for_replies
@@ -62,6 +67,7 @@ class Aclient(discord.AutoShardedClient):
             self.added = True
         birthday.start()
         update_releases.start()
+        check_users_with_birthdays.start()
         logger.info(f"We have logged in as {self.user}.")
 
 
@@ -72,7 +78,7 @@ tree = app_commands.CommandTree(client)
 # say hello command
 @tree.command(guild=discord.Object(id=779677470156390440), name='say_hello',
               description='testing_commands')
-async def slash1(interaction: discord.Interaction):
+async def basic_hello(interaction: discord.Interaction):
     await interaction.response.send_message(
         f"Привет, {interaction.user.display_name}, я работаю! Меня сделал Антон на питоне", ephemeral=False)
 
@@ -80,7 +86,7 @@ async def slash1(interaction: discord.Interaction):
 # delete messages
 @tree.command(guild=discord.Object(id=779677470156390440), name='delete_last_x_messages',
               description='для удаления последних сообщений')
-async def slash2(interaction: discord.Interaction, number: int):
+async def delete_last_messages_private(interaction: discord.Interaction, number: int):
     channel = interaction.channel
     messages = [message async for message in channel.history(limit=number)]
     last_digit = int(repr(number)[-1])
@@ -105,7 +111,7 @@ async def slash2(interaction: discord.Interaction, number: int):
 # rename channel
 @tree.command(guild=discord.Object(id=779677470156390440), name='rename_channel',
               description='переименовать канал, а вы что думали?')
-async def slash3(interaction: discord.Interaction, name: str):
+async def channel_rename(interaction: discord.Interaction, name: str):
     await interaction.channel.edit(name=name)
     await interaction.response.send_message(f'Я переименовал этот канал в "{name}"', ephemeral=False)
 
@@ -463,6 +469,13 @@ async def birthday():
 @tasks.loop(minutes=10)
 async def update_releases():
     await check_new_releases(client)
+
+
+@tasks.loop(time=users_time)
+async def check_users_with_birthdays():
+    await run_blocking(client, manage_invalid_users, client)
+    flag_users_by_server(client)
+    check_flagged_users()
 
 
 @client.event

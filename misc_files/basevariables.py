@@ -15,6 +15,7 @@ t_key = os.getenv("timezonedb_key")
 
 logger = logger.logging.getLogger("bot")
 
+
 async def create_new_channel(interaction, new_channel):
     server_id = f'{interaction.guild.id}'
     channel_id = f'{new_channel.id}'
@@ -27,7 +28,8 @@ async def create_new_channel(interaction, new_channel):
                                 password=password,
                                 port=port)
         cursor = conn.cursor()
-        postgres_insert_query = """INSERT INTO "public".servers (server_id, channel_id, server_name, channel_name) VALUES (%s,%s,%s,%s)"""
+        postgres_insert_query = """INSERT INTO "public".servers (server_id, channel_id, server_name, channel_name) 
+        VALUES (%s,%s,%s,%s)"""
         record_to_insert = (server_id, channel_id, server_name, channel_name)
         cursor.execute(postgres_insert_query, record_to_insert)
         conn.commit()
@@ -186,3 +188,17 @@ async def delete_channel_id(channel_id, server_id, conn, cursor):
     values = (server_id, channel_id,)
     cursor.execute(query, values)
     conn.commit()
+
+
+def access_db_sync():
+    try:
+        conn = psycopg2.connect(database=database,
+                                host=host,
+                                user=user,
+                                password=password,
+                                port=port,
+                                cursor_factory=psycopg2.extras.DictCursor)
+        cursor = conn.cursor()
+        return conn, cursor
+    except psycopg2.Error as error:
+        logger.info('Всё сломалось из-за ошибки "{}"'.format(error.__str__()))
