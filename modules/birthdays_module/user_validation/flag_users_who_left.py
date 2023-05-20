@@ -23,7 +23,6 @@ def flag_users_by_server(client):
             logger.info(user.display_name)
 
 
-
 def flag_user(user_id, server_id):
     conn, cursor = access_db_sync()
     utc_now = datetime.datetime.utcnow()

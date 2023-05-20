@@ -22,6 +22,7 @@ from modules.birthdays_module.hourly_check.check_roles import check_roles
 from modules.birthdays_module.hourly_check.check_time import check_time
 from misc_files import basevariables
 from modules.birthdays_module.user_validation.validate_ids import manage_invalid_users
+from modules.birthdays_module.user_validation.validation_main import main_validation_process
 from modules.logs_setup import logger
 from modules.on_message_processing.gpt_bot_reply import look_for_bot_reply
 from modules.on_message_processing.replies import check_for_replies
@@ -473,9 +474,8 @@ async def update_releases():
 
 @tasks.loop(time=users_time)
 async def check_users_with_birthdays():
-    await run_blocking(client, manage_invalid_users, client)
-    flag_users_by_server(client)
-    check_flagged_users()
+    logger.info('validation process started')
+    await run_blocking(client, main_validation_process, client)
 
 
 @client.event
