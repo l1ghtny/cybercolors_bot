@@ -49,7 +49,6 @@ def multiple_responses(message_list):
     messages = [{'role': 'system', 'content': role}]
     for i in message_list:
         messages.append(i)
-    print(messages)
     try:
         response = openai.ChatCompletion.create(
             model=model,

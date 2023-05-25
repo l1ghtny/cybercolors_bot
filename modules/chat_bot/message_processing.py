@@ -10,8 +10,8 @@ async def decide_on_response(message, client):
         bot_response, token_total = await run_blocking(client, create_one_response, message, client)
     else:
         n, messages_raw = await count_replies(message)
-        if n > 4:
-            bot_response = 'Извини, я могу запомнить только три запроса, не более. Если хочешь пообщаться, обратись ко мне заново'
+        if n > 8:
+            bot_response = 'Извини, я могу запомнить только пять запросов, не более. Если хочешь пообщаться, обратись ко мне заново'
             token_total = 0
         else:
             if verify_user(messages_raw, message, client) is True:
