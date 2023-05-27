@@ -10,6 +10,7 @@ async def decide_on_response(message, client):
         bot_response, token_total = await run_blocking(client, create_one_response, message, client)
     else:
         n, messages_raw = await count_replies(message)
+        print(messages_raw)
         if n > 8:
             bot_response = 'Извини, я могу запомнить только пять запросов, не более. Если хочешь пообщаться, обратись ко мне заново'
             token_total = 0
@@ -19,7 +20,7 @@ async def decide_on_response(message, client):
                 messages_processed.append({'role': 'user', 'content': message.content})
                 bot_response, token_total = await run_blocking(client, create_response_to_dialog, messages_processed)
             else:
-                bot_response = 'Ты не тот человек, который изначально задавал вопрос. Я поддерживаю диалог с тем, кто его начал, извини'
+                bot_response = 'В цепочке ответов более одного пользователя. Я могу поддерживать диалог только с одним пользователем, извини'
                 token_total = 0
     return bot_response, token_total
 
@@ -86,11 +87,14 @@ def organise_messages(messages, client):
 def verify_user(messages, message, client):
     user_verified = False
     messages_authors = []
+    print(messages_authors)
     for i in messages:
         messages_authors.append(i['author'])
     unique = set(messages_authors)
     unique.remove(client.user.id)
-    for item in unique:
-        if item == message.author.id:
-            user_verified = not user_verified
+    unique.add(message.author.id)
+    print(unique)
+    if len(unique) == 1:
+        print(len(unique))
+        user_verified = not user_verified
     return user_verified
