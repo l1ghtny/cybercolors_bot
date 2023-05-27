@@ -383,8 +383,8 @@ async def show_replies(interaction: discord.Interaction):
             f' \nВ таком случае обратись к Антону, он снизит количество штук на странице. \nНа всякий случай, вот ошибка:{error}')
 
 
-@tree.command(name='count_tokens_by_day', description='посчитаю, сколько тебе стоил один день использования бота')
-async def count_tokens_by_day(interaction: discord.Interaction, day: str):
+@tree.command(name='show_usage_by_day', description='посчитаю, сколько тебе стоил один день использования бота')
+async def show_usage_by_day(interaction: discord.Interaction, day: str):
     conn, cursor = await basevariables.access_db_on_interaction(interaction)
     server_id = interaction.guild_id
     query = """select sum(g.token_amount), count(g.reply_link)
@@ -405,15 +405,61 @@ async def count_tokens_by_day(interaction: discord.Interaction, day: str):
     await interaction.response.send_message(embed=embed)
 
 
-@count_tokens_by_day.autocomplete('day')
-async def count_tokens_by_day_autocomplete(interaction: discord.Interaction, current: str):
+@show_usage_by_day.autocomplete('day')
+async def show_usage_by_day_autocomplete(interaction: discord.Interaction, current: str):
     date_str = f'{current}%'
     server_id = interaction.guild_id
     conn, cursor = await basevariables.access_db_on_interaction(interaction)
-    query = """select distinct g.date_added, g.datetime_added
-    from (select to_char(datetime_added:: DATE, 'dd-mm-yyyy') as date_added, token_amount, reply_link, server_id, datetime_added
+    query = """
+    select distinct on (g.month_added, g.date_added)
+    g.date_added, g.datetime_added
+    from (select to_char(datetime_added:: DATE, 'dd-mm-yyyy') as date_added, to_char(datetime_added:: DATE, 'mm-yyyy') as month_added, token_amount, reply_link, server_id, datetime_added
     from "public".count_tokens) as g
-    where g.date_added like %s and server_id = %s ORDER BY g.datetime_added DESC LIMIT 25"""
+    where g.date_added like %s and server_id = %s ORDER BY g.month_added DESC, g.date_added DESC, g.datetime_added LIMIT 25"""
+    values = (date_str, server_id)
+    cursor.execute(query, values)
+    result = cursor.fetchall()
+    result_list = []
+    for i in result:
+        new_value = i['date_added']
+        result_list.append(app_commands.Choice(name=new_value, value=new_value))
+    conn.close()
+    return result_list
+
+
+@tree.command(name='show_usage_by_month', description='показывает расходы на использование chatgpt на определенном сервере за определенный месяц')
+async def show_usage_by_month(interaction: discord.Interaction, month: str):
+    conn, cursor = await basevariables.access_db_on_interaction(interaction)
+    server_id = interaction.guild_id
+    query = """select sum(g.token_amount), count(g.reply_link)
+        from (select to_char(datetime_added:: DATE, 'mm-yyyy') as date_added, token_amount, reply_link, server_id 
+        from "public".count_tokens) as g where g.date_added = %s and g.server_id = %s"""
+    values = (month, server_id)
+    cursor.execute(query, values)
+    tokens_sum = cursor.fetchone()
+    tokens_counted = tokens_sum['sum']
+    days_counted = tokens_sum['count']
+    conn.close()
+    cost = tokens_counted / 1000 * 0.002
+    embed = discord.Embed(colour=discord.Colour.dark_magenta())
+    embed.add_field(name='дата:', value=month)
+    embed.add_field(name='количество сообщений:', value=days_counted)
+    embed.add_field(name='количество токенов:', value=tokens_counted)
+    embed.add_field(name='стоимость в долларах:', value=cost)
+    await interaction.response.send_message(embed=embed)
+
+
+@show_usage_by_month.autocomplete('month')
+async def show_usage_by_month_autocomplete(interaction: discord.Interaction, current: str):
+    date_str = f'{current}%'
+    server_id = interaction.guild_id
+    conn, cursor = await basevariables.access_db_on_interaction(interaction)
+    query = """
+    select distinct on (g.date_added)
+    g.date_added, g.datetime_added
+        from (select to_char(datetime_added:: DATE, 'mm-yyyy') as date_added, token_amount, reply_link, server_id, datetime_added
+        from "public".count_tokens) as g
+        where g.date_added like %s and server_id = %s ORDER BY g.date_added DESC, g.datetime_added LIMIT 25"""
     values = (date_str, server_id)
     cursor.execute(query, values)
     result = cursor.fetchall()
