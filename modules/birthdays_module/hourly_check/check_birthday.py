@@ -67,6 +67,7 @@ async def check_birthday(client):
                     conn.commit()
                     conn.close()
                     await member.add_roles(guild_role)
+                    logger.info('dr')
                 else:
                     logger.info('ne dr')
             else:

@@ -62,6 +62,7 @@ def multiple_responses(message_list):
         tokens_total = response["usage"]["total_tokens"]
     except openai.error.RateLimitError as rate_limited:
         logger.info('rate limited error')
+        logger.error(rate_limited)
         content = None
         tokens_total = 0
         logger.error(rate_limited)
