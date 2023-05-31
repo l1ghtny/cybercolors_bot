@@ -3,7 +3,7 @@ import datetime
 from misc_files.basevariables import access_db_sync
 
 
-def check_flagged_users():
+def remove_old_flagged_users():
     conn, cursor = access_db_sync()
     query = 'select server_id, user_id, flagged_absent_at, is_member from "public".users where is_member = False'
     cursor.execute(query)

@@ -11,8 +11,7 @@ import uuid
 import demoji
 import pytz
 
-from modules.birthdays_module.user_validation.flag_users_who_left import flag_users_by_server
-from modules.birthdays_module.user_validation.remove_flagged_users import check_flagged_users
+
 from modules.birthdays_module.user_validation.user_validate_time import users_time
 from commands.birthdays.add_new_birthday import add_birthday
 from commands.birthdays.show_birthday_list import send_birthday_list
@@ -21,7 +20,6 @@ from modules.birthdays_module.hourly_check.check_birthday import check_birthday
 from modules.birthdays_module.hourly_check.check_roles import check_roles
 from modules.birthdays_module.hourly_check.check_time import check_time
 from misc_files import basevariables
-from modules.birthdays_module.user_validation.validate_ids import manage_invalid_users
 from modules.birthdays_module.user_validation.validation_main import main_validation_process
 from modules.logs_setup import logger
 from modules.on_message_processing.gpt_bot_reply import look_for_bot_reply
