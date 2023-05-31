@@ -34,14 +34,58 @@ def one_response(message):
         tokens_total = response["usage"]["total_tokens"]
     except openai.error.RateLimitError as rate_limited:
         logger.info('rate limited error')
-        content = None
-        tokens_total = 0
         logger.error(rate_limited)
+        try:
+            response = openai.ChatCompletion.create(
+                model=model,
+                temperature=0.4,
+                max_tokens=1024,
+                messages=[
+                    {'role': 'system', 'content': role},
+                    {'role': 'user', 'content': message}
+                ]
+            )
+            logger.info('success')
+            reply = response.choices[0]['message']
+            content = reply['content']
+            tokens_total = response["usage"]["total_tokens"]
+        except openai.error.RateLimitError as rate_limited:
+            logger.info('rate limited error')
+            content = None
+            tokens_total = 0
+            logger.error(rate_limited)
+        except openai.error.APIError as api_error:
+            logger.info('bad gateway or similar error')
+            logger.error(api_error)
+            content = 'OpenAI упал с рандомной ошибкой. Хз, что у них не так, попробуй ещё раз'
+            tokens_total = 0
     except openai.error.APIError as api_error:
         logger.info('bad gateway or similar error')
         logger.error(api_error)
-        content = 'OpenAI упал с рандомной ошибкой. Хз, что у них не так, попробуй ещё раз'
-        tokens_total = 0
+        try:
+            response = openai.ChatCompletion.create(
+                model=model,
+                temperature=0.4,
+                max_tokens=1024,
+                messages=[
+                    {'role': 'system', 'content': role},
+                    {'role': 'user', 'content': message}
+                ]
+            )
+            logger.info('success')
+            reply = response.choices[0]['message']
+            content = reply['content']
+            tokens_total = response["usage"]["total_tokens"]
+        except openai.error.RateLimitError as rate_limited:
+            logger.info('rate limited error')
+            content = None
+            tokens_total = 0
+            logger.error(rate_limited)
+        except openai.error.APIError as api_error:
+            logger.info('bad gateway or similar error')
+            logger.error(api_error)
+            content = 'OpenAI упал с рандомной ошибкой. Хз, что у них не так, попробуй ещё раз'
+            tokens_total = 0
     return content, tokens_total
 
 
@@ -65,7 +109,6 @@ def multiple_responses(message_list):
         logger.error(rate_limited)
         content = None
         tokens_total = 0
-        logger.error(rate_limited)
     except openai.error.APIError as api_error:
         logger.info('bad gateway or similar error')
         logger.error(api_error)
