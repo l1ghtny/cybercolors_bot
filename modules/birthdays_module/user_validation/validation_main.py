@@ -11,5 +11,5 @@ def main_validation_process(client):
     manage_invalid_users(client)
     flag_users_by_server(client)
     remove_old_flagged_users()
-    remove_flag_from_users_by_server()
+    remove_flag_from_users_by_server(client)
     logger.info('validation process finished')
