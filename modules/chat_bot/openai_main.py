@@ -57,7 +57,7 @@ def one_response(message):
         except openai.error.APIError as api_error:
             logger.info('bad gateway or similar error')
             logger.error(api_error)
-            content = 'OpenAI упал с рандомной ошибкой. Хз, что у них не так, попробуй ещё раз'
+            content = '***Ошибка:*** OpenAI упал с рандомной ошибкой. Хз, что у них не так, попробуй ещё раз'
             tokens_total = 0
     except openai.error.APIError as api_error:
         logger.info('bad gateway or similar error')
@@ -84,7 +84,7 @@ def one_response(message):
         except openai.error.APIError as api_error:
             logger.info('bad gateway or similar error')
             logger.error(api_error)
-            content = 'OpenAI упал с рандомной ошибкой. Хз, что у них не так, попробуй ещё раз'
+            content = '***Ошибка:*** OpenAI упал с рандомной ошибкой. Хз, что у них не так, попробуй ещё раз'
             tokens_total = 0
     return content, tokens_total
 
@@ -112,7 +112,7 @@ def multiple_responses(message_list):
     except openai.error.APIError as api_error:
         logger.info('bad gateway or similar error')
         logger.error(api_error)
-        content = 'OpenAI упал с рандомной ошибкой. Хз, что у них не так, попробуй ещё раз'
+        content = '***Ошибка:*** OpenAI упал с рандомной ошибкой. Хз, что у них не так, попробуй ещё раз'
         tokens_total = 0
     return content, tokens_total
 
