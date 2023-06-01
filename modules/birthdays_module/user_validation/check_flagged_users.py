@@ -23,7 +23,7 @@ def remove_flag_from_users_by_server(client):
 
 def remove_flag_user(user_id, server_id):
     conn, cursor = access_db_sync()
-    no_time = ""
+    no_time = None
     query = 'UPDATE "public".users SET is_member=True, flagged_absent_at=%s where user_id=%s and ' \
             'server_id=%s'
     values = (no_time, user_id, server_id,)
