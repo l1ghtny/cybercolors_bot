@@ -489,6 +489,12 @@ async def most_expensive_message_today(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 
+@tree.command(name='force_validation', description='command for testing purposes to check if validation works fine or not')
+async def force_validation(interaction: discord.Interaction):
+    await check_users_with_birthdays()
+    await interaction.response.send_message('команда выполнена')
+
+
 @client.event
 async def on_message(message):
     user = message.author
