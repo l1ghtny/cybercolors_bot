@@ -83,9 +83,9 @@ async def basic_hello(interaction: discord.Interaction):
 
 
 # delete messages
-@tree.command(guild=discord.Object(id=779677470156390440), name='delete_last_x_messages',
+@tree.command(name='delete_last_x_messages',
               description='для удаления последних сообщений')
-async def delete_last_messages_private(interaction: discord.Interaction, number: int):
+async def delete_last_messages(interaction: discord.Interaction, number: int):
     channel = interaction.channel
     messages = [message async for message in channel.history(limit=number)]
     last_digit = int(repr(number)[-1])
