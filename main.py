@@ -1,6 +1,10 @@
+from enum import Enum
+from typing import Literal
+
 import discord
 import datetime
 import discord.ui
+import requests
 from discord import app_commands
 from discord.ext import tasks
 import os
@@ -10,8 +14,9 @@ import psycopg2.extras
 import uuid
 import demoji
 import pytz
+from PIL import Image
 
-
+from commands.openai.image_generation import new_image, midjourney_settings, new_image, image_2_image
 from modules.birthdays_module.user_validation.user_validate_time import users_time
 from commands.birthdays.add_new_birthday import add_birthday
 from commands.birthdays.show_birthday_list import send_birthday_list
@@ -21,6 +26,7 @@ from modules.birthdays_module.hourly_check.check_roles import check_roles
 from modules.birthdays_module.hourly_check.check_time import check_time
 from misc_files import basevariables
 from modules.birthdays_module.user_validation.validation_main import main_validation_process
+from modules.image_generation.midjourney_main import one_variation_create
 from modules.logs_setup import logger
 from modules.on_message_processing.gpt_bot_reply import look_for_bot_reply
 from modules.on_message_processing.replies import check_for_replies
@@ -311,13 +317,6 @@ async def delete_reply_2_autocomplete(interaction: discord.Interaction, current:
     return result_list
 
 
-@tree.command(name='check_dr', description='Форсированно запускает проверку на дни рождения в этом часу')
-async def birthday_check(interaction: discord.Interaction):
-    await interaction.response.defer()
-    await birthday()
-    await interaction.followup.send('OK')
-
-
 @tree.command(name='help', description='Вызывайте, если что-то сломалось')
 async def help(interaction: discord.Interaction):
     lightny_role = interaction.guild.get_role(1093537843307102289)
@@ -493,6 +492,21 @@ async def most_expensive_message_today(interaction: discord.Interaction):
 async def force_validation(interaction: discord.Interaction):
     await check_users_with_birthdays()
     await interaction.response.send_message('команда выполнена')
+
+
+# @tree.command(name='midjourney_settings', description='настройки')
+# async def request_settings_from_midjourney(interaction: discord.Interaction):
+#     await midjourney_settings(interaction)
+
+
+@tree.command(name='imagine', description='Создаёт изображение через Midjourney по запросу')
+async def imagine2(interaction: discord.Interaction, prompt: str):
+    await new_image(interaction, prompt)
+
+
+@tree.command(name='img2img', description='Изменяет изображение, которое получает по ссылке')
+async def img2img(interaction: discord.Interaction, image_link: str, prompt: str):
+    await image_2_image(interaction, prompt, image_link)
 
 
 @client.event
