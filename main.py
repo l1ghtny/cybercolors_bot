@@ -501,19 +501,26 @@ async def force_validation(interaction: discord.Interaction):
 
 @tree.command(name='imagine', description='Создаёт изображение через Midjourney по запросу')
 async def imagine2(interaction: discord.Interaction, prompt: str):
-    await new_image(interaction, prompt)
+    if interaction.guild is not None:
+        await new_image(interaction, prompt)
+    else:
+        await interaction.response.send_message('Ты хитрый, но этим можно пользоваться только на сервере')
 
 
 @tree.command(name='img2img', description='Изменяет изображение, которое получает по ссылке')
 async def img2img(interaction: discord.Interaction, image_link: str, prompt: str):
-    await image_2_image(interaction, prompt, image_link)
+    if interaction.guild is not None:
+        await image_2_image(interaction, prompt, image_link)
+    else:
+        await interaction.response.send_message('Ты хитрый, но этим можно пользоваться только на сервере')
 
 
 @client.event
 async def on_message(message):
     user = message.author
     message_content_base = message.content.lower()
-    if user:
+    server = message.guild
+    if user and server:
         if user == client.user:
             return
         else:
