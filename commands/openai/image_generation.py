@@ -47,7 +47,7 @@ async def new_image(interaction, prompt):
     token = os.getenv("midjourney_token")
     tnl = TNL(token)
     response = tnl.imagine(prompt=prompt)
-    await asyncio.sleep(5)
+
     if response['success'] is True:
         message = await interaction.followup.send('Всё успешно отправлено, ждём ответа')
         message_id = response['messageId']
