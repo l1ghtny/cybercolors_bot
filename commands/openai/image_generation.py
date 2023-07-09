@@ -30,7 +30,7 @@ async def midjourney_settings(interaction):
         message = await interaction.followup.send('Всё успешно отправлено, ждём ответа')
         message_id = response['messageId']
         image_url, buttons, button_message_id, prompt = await get_image_new(message, message_id)
-        view = MidjourneyButtonsView(button_message_id, message, buttons)
+        view = MidjourneyButtonsView(button_message_id, message, buttons, interaction.user)
         await message.edit(content=f'Ссылка на общий план: {image_url} \n Запрос: {prompt}', embed=None, view=view)
 
     elif 'isNaughty' in response:
@@ -52,7 +52,7 @@ async def new_image(interaction, prompt):
         message = await interaction.followup.send('Всё успешно отправлено, ждём ответа')
         message_id = response['messageId']
         image_url, buttons, button_message_id, prompt, description = await get_image_new(message, message_id)
-        view = MidjourneyButtonsView(button_message_id, message, buttons)
+        view = MidjourneyButtonsView(button_message_id, message, buttons, interaction.user)
         await message.edit(content=f'Ссылка на общий план: {image_url} \n Запрос: {prompt}', embed=None, view=view)
 
     elif 'isNaughty' in response:
@@ -74,7 +74,7 @@ async def image_2_image(interaction, prompt, image_link):
         message = await interaction.followup.send('Всё успешно отправлено, ждём ответа')
         message_id = response['messageId']
         image_url, buttons, button_message_id, prompt, description = await get_image_new(message, message_id)
-        view = MidjourneyButtonsView(button_message_id, message, buttons)
+        view = MidjourneyButtonsView(button_message_id, message, buttons, interaction.user)
         if description is None:
             await message.edit(content=f'Ссылка на общий план: {image_url} \n Запрос: {prompt}', embed=None, view=view)
         else:
