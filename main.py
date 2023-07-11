@@ -16,6 +16,7 @@ import demoji
 import pytz
 from PIL import Image
 
+from commands.misc.cats import cat_command
 from commands.openai.image_generation import new_image, midjourney_settings, new_image, image_2_image
 from modules.birthdays_module.user_validation.user_validate_time import users_time
 from commands.birthdays.add_new_birthday import add_birthday
@@ -513,6 +514,11 @@ async def img2img(interaction: discord.Interaction, image_link: str, prompt: str
         await image_2_image(interaction, prompt, image_link)
     else:
         await interaction.response.send_message('Ты хитрый, но этим можно пользоваться только на сервере')
+
+
+@tree.command(name='cat', description='cat')
+async def cat(interaction: discord.Interaction):
+    await cat_command(interaction)
 
 
 @client.event
