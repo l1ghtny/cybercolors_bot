@@ -1,11 +1,8 @@
-from enum import Enum
-from typing import Literal
-
 import discord
 import datetime
 import discord.ui
-import requests
 from discord import app_commands
+from discord.app_commands import command, context_menu
 from discord.ext import tasks
 import os
 from dotenv import load_dotenv
@@ -14,10 +11,12 @@ import psycopg2.extras
 import uuid
 import demoji
 import pytz
+from typing import Optional, NamedTuple
+from enum import Enum
 from PIL import Image
 
-from commands.misc.cats import cat_command
-from commands.openai.image_generation import new_image, midjourney_settings, new_image, image_2_image
+from commands.misc.cats import cat_command, cat_command_text
+from commands.openai.image_generation import new_image, image_2_image
 from modules.birthdays_module.user_validation.user_validate_time import users_time
 from commands.birthdays.add_new_birthday import add_birthday
 from commands.birthdays.show_birthday_list import send_birthday_list
@@ -425,7 +424,8 @@ async def show_usage_by_day_autocomplete(interaction: discord.Interaction, curre
     return result_list
 
 
-@tree.command(name='show_usage_by_month', description='показывает расходы на использование chatgpt на определенном сервере за определенный месяц')
+@tree.command(name='show_usage_by_month',
+              description='показывает расходы на использование chatgpt на определенном сервере за определенный месяц')
 async def show_usage_by_month(interaction: discord.Interaction, month: str):
     conn, cursor = await basevariables.access_db_on_interaction(interaction)
     server_id = interaction.guild_id
@@ -489,7 +489,8 @@ async def most_expensive_message_today(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 
-@tree.command(name='force_validation', description='command for testing purposes to check if validation works fine or not')
+@tree.command(name='force_validation',
+              description='command for testing purposes to check if validation works fine or not')
 async def force_validation(interaction: discord.Interaction):
     await check_users_with_birthdays()
     await interaction.response.send_message('команда выполнена')
@@ -514,6 +515,11 @@ async def img2img(interaction: discord.Interaction, image_link: str, prompt: str
         await image_2_image(interaction, prompt, image_link)
     else:
         await interaction.response.send_message('Ты хитрый, но этим можно пользоваться только на сервере')
+
+
+@tree.command(name='cat_text', description='Котя с текстом')
+async def cat_text(interaction: discord.Interaction, text: str):
+    await cat_command_text(interaction, text)
 
 
 @tree.command(name='cat', description='cat')

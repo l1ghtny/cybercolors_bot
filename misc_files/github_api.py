@@ -24,7 +24,7 @@ async def get_release_notes():
         release_text = release.body
         release_title = release.title
         release_date = release.created_at
-        conn, cursor = await basevariables.access_db_basic()
+        conn, cursor = await basevariables.access_db_regular()
         first_query = 'SELECT * from "public".githubdata ORDER BY last_release_datetime DESC'
         cursor.execute(first_query)
         last_date_row = cursor.fetchone()
