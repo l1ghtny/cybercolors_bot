@@ -48,7 +48,7 @@ async def add_birthday(client, interaction, month, day):
                 cursor.execute(postgres_insert_query, records_to_insert)
                 conn.commit()
                 embed = discord.Embed(title='А теперь выбери часовой пояс')
-                view = DropdownTimezones(day, month.name)
+                view = DropdownTimezones(day, month.name, client=client)
                 view.user = interaction.user
                 message = await interaction.followup.send(f'Всё записано, спасибо. День: {day}, месяц: {month.name}',
                                                           embed=embed, view=view)
@@ -58,7 +58,7 @@ async def add_birthday(client, interaction, month, day):
                 month_record = row['month']
                 timezone_record = row['timezone']
                 embed = discord.Embed(title='Тебя это устраивает?')
-                view = UserAlreadyExists()
+                view = UserAlreadyExists(client=client)
                 view.user = interaction.user
                 message = await interaction.followup.send(
                     f'Твой др уже записан. День: {day_record}, месяц: {month_record}, часовой пояс: {timezone_record}',

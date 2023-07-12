@@ -8,12 +8,13 @@ from views.birthday.timezones import DropdownTimezones
 
 
 class NewDayAgain(discord.ui.Modal):
-    def __init__(self, month):
+    def __init__(self, month, client):
         super().__init__(
             timeout=None,
             title='Напиши день'
         )
         self.month = month
+        self.client = client
 
     d_title = discord.ui.TextInput(
         label='Пиши тута',
@@ -51,7 +52,7 @@ class NewDayAgain(discord.ui.Modal):
                     await interaction.response.defer(ephemeral=True)
                     month_num = int(self.month)
                     month = calendar.month_name[month_num]
-                    view = DropdownTimezones(day, month)
+                    view = DropdownTimezones(day, month, client=self.client)
                     view.user = interaction.user
                     message = await interaction.followup.send('А теперь выбери свой часовой пояс:', view=view, ephemeral=True)
                     view.message = message
@@ -63,9 +64,9 @@ class NewDayAgain(discord.ui.Modal):
 
 
 class NewMonthAgain(discord.ui.View):
-    def __init__(self, user):
+    def __init__(self, user, client):
         super().__init__(timeout=None)
-        select_menu = NewMonthAgainSelect()
+        select_menu = NewMonthAgainSelect(client)
         select_menu.user = user
         select_menu.info = self
         self.add_item(select_menu)
@@ -77,7 +78,7 @@ class NewMonthAgain(discord.ui.View):
 
 
 class NewMonthAgainSelect(discord.ui.Select):
-    def __init__(self):
+    def __init__(self, client):
         super().__init__(
             custom_id='new_month_add',
             placeholder='Месяц твоего рождения',
@@ -98,20 +99,22 @@ class NewMonthAgainSelect(discord.ui.Select):
                 discord.SelectOption(label='Декабрь', value='12'),
             ]
         )
+        self.client = client
 
     async def callback(self, interaction: discord.Interaction):
         if interaction.user == self.user:
             result_list = self.values
             await NewMonthAgain.disable_all_items(self.info)
-            modal = NewDayAgain(month=result_list[0])
+            modal = NewDayAgain(month=result_list[0], client=self.client)
             await interaction.response.send_modal(modal)
         else:
             await interaction.response.send_message('Тебе нельзя', ephemeral=True)
 
 
 class UserAlreadyExists(discord.ui.View):
-    def __init__(self) -> None:
+    def __init__(self, client) -> None:
         super().__init__(timeout=None)
+        self.client = client
 
     async def disable_all_items(self):
         for item in self.children:
@@ -142,7 +145,7 @@ class UserAlreadyExists(discord.ui.View):
             conn.commit()
             conn.close()
             embed = discord.Embed(title='Твой день рождения удален. Что хочешь сделать дальше?')
-            view = ChangeBirthday()
+            view = ChangeBirthday(client=self.client)
             await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
             view.message = interaction
             view.user = interaction.user
@@ -152,8 +155,9 @@ class UserAlreadyExists(discord.ui.View):
 
 
 class ChangeBirthday(discord.ui.View):
-    def __init__(self) -> None:
+    def __init__(self, client) -> None:
         super().__init__(timeout=None)
+        self.client = client
 
     async def disable_all_items(self):
         for item in self.children:
@@ -178,7 +182,7 @@ class ChangeBirthday(discord.ui.View):
     async def add_new_birthday(self, interaction, button):
         if interaction.user == self.user:
             await self.disable_all_items()
-            view = NewMonthAgain(user=interaction.user)
+            view = NewMonthAgain(user=interaction.user, client=self.client)
             await interaction.response.send_message('Тогда выбери месяц', view=view, ephemeral=True)
             view.message = interaction
         else:

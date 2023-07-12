@@ -5,11 +5,6 @@ import requests
 import random
 import string
 import discord
-from PIL import Image
-from PIL import ImageDraw
-from PIL import ImageFont
-import io
-from io import BytesIO
 
 
 async def get_a_cat():

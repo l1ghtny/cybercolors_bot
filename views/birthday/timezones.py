@@ -3,17 +3,19 @@ import discord.ui
 import psycopg2
 
 from misc_files import basevariables
+from modules.birthdays_module.new_user.check_birthday_new_user import check_birthday_new_user
 from modules.logs_setup import logger
 
 logger = logger.logging.getLogger("bot")
 
 
 class DropdownTimezones(discord.ui.View):
-    def __init__(self, day, month):
+    def __init__(self, day, month, client):
         super().__init__(timeout=None)
         self.disabled = False
         self.day = day
         self.month = month
+        self.client = client
 
     async def disable_all_items(self):
         for item in self.children:
@@ -83,9 +85,10 @@ class DropdownTimezones(discord.ui.View):
                 embed.add_field(name='Выбранный часовой пояс:', value=add_timezone, inline=False)
                 embed.add_field(name='', value=f'**{interaction.user.mention}, я всех приглашу на твой день рождения :)**')
                 await interaction.response.send_message(embed=embed)
+                await check_birthday_new_user(client=self.client, user=interaction.user, interaction=interaction)
             except psycopg2.Error as error:
                 await interaction.response.send_message(
-                    'Добавить канал не получилось из-за ошибки "{}"'.format(error.__str__()))
+                    'Добавить часовой пояс не получилось из-за ошибки "{}"'.format(error.__str__()))
                 logger.info(f'{error}')
         else:
             await interaction.response.send_message(f'{interaction.user}, это не твоя менюшка', ephemeral=True)
