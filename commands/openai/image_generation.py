@@ -48,17 +48,18 @@ async def new_image(interaction, prompt):
     tnl = TNL(token)
     response = tnl.imagine(prompt=prompt)
 
-    if response['success'] is True:
-        message = await interaction.followup.send('Всё успешно отправлено, ждём ответа')
-        message_id = response['messageId']
-        image_url, buttons, button_message_id, prompt, description = await get_image_new(message, message_id)
-        view = MidjourneyButtonsView(button_message_id, message, buttons, interaction.user)
-        await message.edit(content=f'Ссылка на общий план: {image_url} \n Запрос: {prompt}', embed=None, view=view)
+    if 'success' in response:
+        if response['success'] is True:
+            message = await interaction.followup.send('Всё успешно отправлено, ждём ответа')
+            message_id = response['messageId']
+            image_url, buttons, button_message_id, prompt, description = await get_image_new(message, message_id)
+            view = MidjourneyButtonsView(button_message_id, message, buttons, interaction.user)
+            await message.edit(content=f'Ссылка на общий план: {image_url} \n Запрос: {prompt}', embed=None, view=view)
 
     elif 'isNaughty' in response:
         phrase = response['phrase']
         await interaction.followup.send(
-            f'{interaction.user.mention}, бот считает, что ты хорни, веди себя прилично \n Ему не понравилось: "{phrase}"')
+            f'{interaction.user.mention}, бот считает, что ты хочешь чего-то нехорошего, веди себя прилично \n Ему не понравилось: "{phrase}"')
     else:
         await interaction.followup.send(
             'Чет сломалось, хер его знает, пока что обработку ошибок я не настраивал')
