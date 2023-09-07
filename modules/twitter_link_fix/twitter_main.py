@@ -10,7 +10,8 @@ async def twitter_link_replace(message, from_user, reply, attachment):
         channel_type = 'not_text'
         thread = message.channel
     webhook = await webhook_channel.create_webhook(name=from_user.name)
-    new_message = message.content.replace('twitter', 'fxtwitter')
+    new_message_2 = message.content.replace('twitter', 'vxtwitter')
+    new_message = new_message_2.replace('https://x.com/', 'https://vxtwitter.com/')
     if channel_type == 'text':
         if reply is None:
             await webhook.send(str(new_message), username=from_user.display_name, avatar_url=from_user.avatar, files=attachment)

@@ -538,6 +538,8 @@ async def on_message(message):
         else:
             if 'https://twitter.com/' in message_content_base:
                 await manage_message(message, user)
+            elif 'https://x.com/' in message_content_base:
+                await manage_message(message, user)
             conn, cursor, database_found, server_id = await check_for_replies(message)
         if database_found is False:
             await look_for_bot_reply(message, client, server_id, cursor, conn)
