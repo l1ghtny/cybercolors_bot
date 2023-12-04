@@ -17,6 +17,7 @@ from PIL import Image
 
 from commands.misc.cats import cat_command, cat_command_text
 from commands.openai.image_generation import new_image, image_2_image
+from modules.birthdays_module.hourly_check.force_check_birthday import force_check_birthday
 from modules.birthdays_module.user_validation.user_validate_time import users_time
 from commands.birthdays.add_new_birthday import add_birthday
 from commands.birthdays.show_birthday_list import send_birthday_list
@@ -322,6 +323,12 @@ async def birthday_check(interaction: discord.Interaction):
     await interaction.response.defer()
     await birthday()
     await interaction.followup.send('OK')
+
+
+@tree.command(name='check_dr_today', description='Форсированно запускает проверку др на текущий день')
+async def birthday_check_today(interaction: discord.Interaction):
+    await force_check_birthday(client)
+    await interaction.response.send_message('DONE')
 
 
 @tree.command(name='help', description='Вызывайте, если что-то сломалось')

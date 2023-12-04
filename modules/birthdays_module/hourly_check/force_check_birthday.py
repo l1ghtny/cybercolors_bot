@@ -13,7 +13,7 @@ from modules.logs_setup import logger
 logger = logger.logging.getLogger("bot")
 
 
-async def check_birthday_new(client):
+async def force_check_birthday(client):
     key = basevariables.t_key
     list_timezones = await get_all_timezones(key)
     zones = list_timezones['zones']
@@ -50,7 +50,7 @@ async def check_birthday_new(client):
                     logger.info(f'{user.name} др: {bd_date}')
                     logger.info(f'{user.name} проверено в: {json_date}')
                     logger.info(f'{user.name} дата по timestamp: {json_date_from_timestamp}')
-                    if json_date.date() == bd_date.date() and json_date.hour == bd_date.hour:
+                    if json_date.date() == bd_date.date():
                         conn, cursor = await basevariables.access_db_regular()
                         query2 = 'SELECT * from "public".congratulations where server_id=%s'
                         values2 = (guild_id,)
@@ -64,8 +64,7 @@ async def check_birthday_new(client):
                         embed = discord.Embed(colour=discord.Colour.dark_gold(), description=embed_description)
                         await channel.send(embed=embed)
                         query3 = 'UPDATE "public".users SET role_added_at=%s WHERE user_id=%s AND server_id=%s'
-                        current_time = datetime.datetime.utcnow()
-                        values3 = (current_time, user_id, guild_id,)
+                        values3 = (bd_date, user_id, guild_id,)
                         cursor.execute(query3, values3)
                         conn.commit()
                         conn.close()

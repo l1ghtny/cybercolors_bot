@@ -65,7 +65,7 @@ async def add_birthday(client, interaction, month, day):
                     embed=embed, view=view, ephemeral=True)
                 view.message = message
             conn.close()
-        except psycopg2.errors.ForeignKeyViolation as nameerror:
+        except psycopg2.errors.ForeignKeyViolation:
             await interaction.followup.send(
                 'Сервер ещё не настроен или что-то пошло не так. Напишите админу сервера или создателю бота')
         except psycopg2.Error as error:
