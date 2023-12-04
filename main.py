@@ -21,7 +21,7 @@ from modules.birthdays_module.user_validation.user_validate_time import users_ti
 from commands.birthdays.add_new_birthday import add_birthday
 from commands.birthdays.show_birthday_list import send_birthday_list
 from misc_files.blocking_script import run_blocking
-from modules.birthdays_module.hourly_check.check_birthday import check_birthday
+from modules.birthdays_module.hourly_check.check_birthday_redone import check_birthday_new
 from modules.birthdays_module.hourly_check.check_roles import check_roles
 from modules.birthdays_module.hourly_check.check_time import check_time
 from misc_files import basevariables
@@ -317,6 +317,13 @@ async def delete_reply_2_autocomplete(interaction: discord.Interaction, current:
     return result_list
 
 
+@tree.command(name='check_dr', description='Форсированно запускает проверку на дни рождения в этом часу')
+async def birthday_check(interaction: discord.Interaction):
+    await interaction.response.defer()
+    await birthday()
+    await interaction.followup.send('OK')
+
+
 @tree.command(name='help', description='Вызывайте, если что-то сломалось')
 async def help(interaction: discord.Interaction):
     lightny_role = interaction.guild.get_role(1093537843307102289)
@@ -548,7 +555,7 @@ async def on_message(message):
 # BD MODULE with checking task
 @tasks.loop(time=check_time)
 async def birthday():
-    await check_birthday(client)
+    await check_birthday_new(client)
     await check_roles(client)
 
 
