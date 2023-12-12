@@ -1,4 +1,4 @@
-# Pupose of the bot
+# Purpose of the bot
 
 It was created as a proof of concept and also a gift to one of my friends who has a Discord server with more than 1000 users. The first request was to create a bot that would notify the server about user's birthdays and allow users to add their birthdays to the bot's database.
 The bot currently has way more features as the project naturally grew and as server users asked for more little things to be added.
