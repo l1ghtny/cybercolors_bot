@@ -6,7 +6,7 @@ self~=2020.12.3
 PyGithub>=1.59.1
 demoji>=1.1.0
 pytz>=2023.3
-openai>=0.27.8
+openai==1.16.2
 Pillow==10.0.0
 numpy>=1.25.2
 Flask>=2.3.2

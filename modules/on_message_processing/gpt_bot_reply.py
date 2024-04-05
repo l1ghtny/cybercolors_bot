@@ -16,7 +16,7 @@ async def look_for_bot_reply(message, client, server_id, cursor, conn):
                 await message.reply('В боте стоит защита от jailbreak, я сейчас админа позову')
             else:
                 original_reply = await message.reply('Я думаю...')
-                logger.info('looking for reply to %', f'{message}')
+                logger.info('looking for reply to %s', f'{message.content}')
                 bot_response, token_total = await decide_on_response(message, client)
                 if bot_response is not None:
                     logger.info('got response')

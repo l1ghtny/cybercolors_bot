@@ -10,7 +10,6 @@ async def decide_on_response(message, client):
         bot_response, token_total = await run_blocking(client, create_one_response, message, client)
     else:
         n, messages_raw = await count_replies(message)
-        print(messages_raw)
         if n > 8:
             bot_response = 'Извини, я могу запомнить только пять запросов, не более. Если хочешь пообщаться, обратись ко мне заново'
             token_total = 0
@@ -89,14 +88,11 @@ def organise_messages(messages, client):
 def verify_user(messages, message, client):
     user_verified = False
     messages_authors = []
-    print(messages_authors)
     for i in messages:
         messages_authors.append(i['author'])
     unique = set(messages_authors)
     unique.remove(client.user.id)
     unique.add(message.author.id)
-    print(unique)
     if len(unique) == 1:
-        print(len(unique))
         user_verified = not user_verified
     return user_verified
