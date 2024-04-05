@@ -36,8 +36,10 @@ def check_bot_mention(message_to_check, client):
 
 def check_for_channel(message_to_check_for_channel, client):
     bot_channel_id = int(os.getenv('chat_gpt_channel_id'))
+    bot_den_channel_id = int(os.getenv('new_channel_chat_gpt_id'))
     bot_channel = client.get_channel(bot_channel_id)
-    if bot_channel == message_to_check_for_channel.channel:
+    bot_den_channel = client.get_channel(bot_den_channel_id)
+    if bot_channel == message_to_check_for_channel.channel or bot_den_channel == message_to_check_for_channel.channel:
         allowed_channel = True
     else:
         allowed_channel = False

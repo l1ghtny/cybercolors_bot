@@ -5,7 +5,6 @@ import time
 from dotenv import load_dotenv
 import requests
 import discord
-from midjourney_api import TNL
 
 from modules.logs_setup import logger
 

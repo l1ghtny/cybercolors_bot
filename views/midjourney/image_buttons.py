@@ -4,7 +4,6 @@ import discord
 import requests
 import json
 from dotenv import load_dotenv
-from midjourney_api import TNL
 
 from modules.image_generation.midjourney_misc import get_image_new
 from modules.logs_setup import logger
