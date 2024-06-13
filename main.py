@@ -29,6 +29,7 @@ from misc_files import basevariables
 from modules.birthdays_module.user_validation.validation_main import main_validation_process
 from modules.image_generation.midjourney_main import one_variation_create
 from modules.logs_setup import logger
+from modules.on_message_processing.check_for_links import delete_server_links
 from modules.on_message_processing.gpt_bot_reply import look_for_bot_reply
 from modules.on_message_processing.replies import check_for_replies
 from modules.on_voice_state_processing.create_voice_channel import create_voice_channel
@@ -546,6 +547,7 @@ async def on_message(message):
     user = message.author
     message_content_base = message.content.lower()
     server = message.guild
+    await delete_server_links(message, message_content_base)
     if user and server:
         if user == client.user:
             return
