@@ -2,7 +2,6 @@ import discord
 import datetime
 import discord.ui
 from discord import app_commands
-from discord.app_commands import command, context_menu
 from discord.ext import tasks
 import os
 from dotenv import load_dotenv
@@ -11,36 +10,32 @@ import psycopg2.extras
 import uuid
 import demoji
 import pytz
-from typing import Optional, NamedTuple
-from enum import Enum
-from PIL import Image
 
-from commands.misc.cats import cat_command, cat_command_text
-from commands.openai.image_generation import new_image, image_2_image
-from modules.birthdays_module.hourly_check.force_check_birthday import force_check_birthday
-from modules.birthdays_module.user_validation.user_validate_time import users_time
-from commands.birthdays.add_new_birthday import add_birthday
-from commands.birthdays.show_birthday_list import send_birthday_list
-from misc_files.blocking_script import run_blocking
-from modules.birthdays_module.hourly_check.check_birthday_redone import check_birthday_new
-from modules.birthdays_module.hourly_check.check_roles import check_roles
-from modules.birthdays_module.hourly_check.check_time import check_time
-from misc_files import basevariables
-from modules.birthdays_module.user_validation.validation_main import main_validation_process
-from modules.image_generation.midjourney_main import one_variation_create
-from modules.logs_setup import logger
-from modules.on_message_processing.check_for_links import delete_server_links
-from modules.on_message_processing.gpt_bot_reply import look_for_bot_reply
-from modules.on_message_processing.replies import check_for_replies
-from modules.on_voice_state_processing.create_voice_channel import create_voice_channel
-from modules.releases.releases_check import check_new_releases
-from modules.twitter_link_fix.twitter_message_manager import manage_message
-from views.replies.delete_multiple_replies import DeleteReplyMultiple, DeleteReplyMultipleSelect
-from views.replies.delete_one_reply import DeleteOneReply
-from views.pagination.pagination import PaginationView
-from views.birthday.settings import BirthdaysButtonsSelect, GuildAlreadyExists
-from views.misc_commands.delete_channels import DropDownViewChannels
-from views.misc_commands.roles import DropDownRoles
+from src.commands.misc.cats import cat_command, cat_command_text
+from src.commands.openai.image_generation import new_image, image_2_image
+from src.modules.birthdays_module.hourly_check.force_check_birthday import force_check_birthday
+from src.modules.birthdays_module.user_validation.user_validate_time import users_time
+from src.commands.birthdays.add_new_birthday import add_birthday
+from src.commands.birthdays.show_birthday_list import send_birthday_list
+from src.misc_files.blocking_script import run_blocking
+from src.modules.birthdays_module.hourly_check.check_birthday_redone import check_birthday_new
+from src.modules.birthdays_module.hourly_check.check_roles import check_roles
+from src.modules.birthdays_module.hourly_check.check_time import check_time
+from src.misc_files import basevariables
+from src.modules.birthdays_module.user_validation.validation_main import main_validation_process
+from src.modules.logs_setup import logger
+from src.modules.on_message_processing.check_for_links import delete_server_links
+from src.modules.on_message_processing.gpt_bot_reply import look_for_bot_reply
+from src.modules.on_message_processing.replies import check_for_replies
+from src.modules.on_voice_state_processing.create_voice_channel import create_voice_channel
+from src.modules.releases.releases_check import check_new_releases
+from src.modules.twitter_link_fix.twitter_message_manager import manage_message
+from src.views.replies.delete_multiple_replies import DeleteReplyMultiple, DeleteReplyMultipleSelect
+from src.views.replies.delete_one_reply import DeleteOneReply
+from src.views.pagination.pagination import PaginationView
+from src.views.birthday.settings import BirthdaysButtonsSelect, GuildAlreadyExists
+from src.views.misc_commands.delete_channels import DropDownViewChannels
+from src.views.misc_commands.roles import DropDownRoles
 
 load_dotenv()
 # Grab the API token from the .env file.
