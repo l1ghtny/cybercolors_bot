@@ -6,7 +6,7 @@ job("Build and push Docker"){
             file = "Dockerfile"
             tags {
                 // use current job run number as a tag - '0.0.run_number'
-                +"lightny.registry.jetbrains.space/p/main/containers/vpn-api:latest"
+                +"lightny.registry.jetbrains.space/p/main/containers/discord-bot:latest"
             }
         }
     }
