@@ -28,7 +28,7 @@ LOGGING_CONFIG = {
         "file": {
             "level": "DEBUG",
             "formatter": "standard",
-            "class": "modules.logs_setup.logger_settings.MyTimedRotatingFileHandler",
+            "class": "src.modules.logs_setup.logger_settings.MyTimedRotatingFileHandler",
             "when": "h",
             "interval": 12,
             "filename": "./logs/main_log.log",
