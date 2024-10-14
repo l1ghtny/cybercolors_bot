@@ -13,6 +13,7 @@ import pytz
 
 from src.commands.misc.cats import cat_command, cat_command_text
 from src.commands.openai.image_generation import new_image, image_2_image
+from src.commands.vpn.get_code import get_vpn_promo_code
 from src.modules.birthdays_module.hourly_check.force_check_birthday import force_check_birthday
 from src.modules.birthdays_module.user_validation.user_validate_time import users_time
 from src.commands.birthdays.add_new_birthday import add_birthday
@@ -535,6 +536,11 @@ async def cat_text(interaction: discord.Interaction, text: str):
 @tree.command(name='cat', description='cat')
 async def cat(interaction: discord.Interaction):
     await cat_command(interaction)
+
+
+@tree.command(name='vpn_promo_code', description='Получить промокод для бета-теста vpn сервиса')
+async def vpn_promo_code(interaction: discord.Interaction):
+    await get_vpn_promo_code(interaction)
 
 
 @client.event
