@@ -10,7 +10,7 @@ vpn_url = os.getenv('VPN_API_URL')
 
 async def get_vpn_promo_code_api(discord_id: int):
     async with aiohttp.ClientSession() as session:
-        url = vpn_url+'promo_codes'
+        url = vpn_url+'bots/promo_codes'
         headers = {
             "Authorization": api_key
         }
@@ -32,12 +32,11 @@ async def get_vpn_promo_code_api(discord_id: int):
 
 async def get_promocodes_by_user(discord_id: int):
     async with aiohttp.ClientSession() as session:
-        url = vpn_url + f'promo_codes/{discord_id}'
+        url = vpn_url + f'bots/promo_codes/{discord_id}'
         headers = {
             "Authorization": api_key
         }
         async with session.get(url, headers=headers) as response:
             result = await response.json()
-            print(result)
             return result, response.status
 
