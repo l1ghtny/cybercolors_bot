@@ -11,17 +11,16 @@ async def get_vpn_promo_code(interaction):
     if has_roles:
         result, status = await get_promocodes_by_user(interaction.user.id)
         if status == 200:
-            if result is not bool:
-                promo_codes_count = len(result)
-                if promo_codes_count < 1:
-                    result, status = await get_vpn_promo_code_api(interaction.user.id)
-                    if status == 200:
-                        promo_code = result[0]
-                        await interaction.followup.send(f'Твой промокод: {promo_code}\nЧтобы им воспользоваться, иди в этого тг бота: https://t.me/YourYoutubeVpnBot')
-                    else:
-                        await interaction.followup.send('Что-то пошло не так, дай знать админу')
+            promo_codes_count = len(result)
+            if promo_codes_count < 1:
+                result, status = await get_vpn_promo_code_api(interaction.user.id)
+                if status == 200:
+                    promo_code = result[0]
+                    await interaction.followup.send(f'Твой промокод: {promo_code}\nЧтобы им воспользоваться, иди в этого тг бота: https://t.me/YourYoutubeVpnBot')
+                else:
+                    await interaction.followup.send('Что-то пошло не так, дай знать админу')
             else:
-                await interaction.followup.send(f'У тебя уже есть промокод, имей совесть \nЕсли что, напоминаю его: {result[0][0]['code']}')
+                await interaction.followup.send(f'У тебя уже есть промокод, имей совесть \nЕсли что, напоминаю его: {result[0]['code']}')
         else:
             await interaction.followup.send('Что-то пошло не так, дай знать админу')
     else:
