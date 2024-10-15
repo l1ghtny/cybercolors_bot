@@ -18,7 +18,7 @@ async def get_vpn_promo_code_api(discord_id: int):
             "amount": 1,
             "usages": 1,
             "percent_off": 100,
-            "card_needed": False,
+            "card_needed": 'False',
             "created_by": 'cybercolors',
             "created_for": discord_id,
             "payment_plan": 'free',
