@@ -11,7 +11,7 @@ async def get_vpn_promo_code(interaction):
     if has_roles:
         result, status = await get_promocodes_by_user(interaction.user.id)
         if status == 200:
-            promo_codes_count = result
+            promo_codes_count = len(result)
             if promo_codes_count < 1:
                 result, status = await get_vpn_promo_code_api(interaction.user.id)
                 if status == 200:
