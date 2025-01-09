@@ -261,7 +261,7 @@ async def add_reply(interaction: discord.Interaction, phrase: str, response: str
 
 @tree.command(name='delete_reply', description='Позволяет удалить заведенные триггеры на фразы')
 async def delete_reply_2(interaction: discord.Interaction, reply: str):
-    reply = reply.replace("\\\\", "\\") + '%'
+    reply = '%' + reply.replace("\\\\", "\\") + '%'
     user = interaction.user
     server_id = interaction.guild_id
     conn, cursor = await basevariables.access_db_on_interaction(interaction)
@@ -306,7 +306,7 @@ async def delete_reply_2_autocomplete(interaction: discord.Interaction, current:
     server_id = interaction.guild_id
     conn, cursor = await basevariables.access_db_on_interaction(interaction)
     query = 'SELECT request_phrase from "public".messages WHERE request_phrase LIKE %s AND server_id=%s LIMIT 25;'
-    request_string = f'{current}%'
+    request_string = f'%{current}%'
     values = (request_string, server_id,)
     cursor.execute(query, values)
     result = cursor.fetchall()
