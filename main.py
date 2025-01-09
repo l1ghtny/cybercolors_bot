@@ -40,6 +40,7 @@ from src.views.misc_commands.roles import DropDownRoles
 load_dotenv()
 # Grab the API token from the .env file.
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+DISCORD_TOKEN_TEST = os.getenv('DISCORD_TOKEN_TEST')
 
 # Register UUID to work with it in psycopg2
 psycopg2.extras.register_uuid()
@@ -310,6 +311,8 @@ async def delete_reply_2_autocomplete(interaction: discord.Interaction, current:
     for item in result:
         new_item = str(item)
         new_value = new_item[2:-2]
+        if len(new_value) > 100:
+            new_value = new_value[:96] + '...'
         result_list.append(app_commands.Choice(name=new_value, value=new_value))
     return result_list
 
@@ -580,4 +583,4 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
 
 
 # EXECUTES THE BOT WITH THE SPECIFIED TOKEN.
-client.run(DISCORD_TOKEN, root_logger=True)
+client.run(DISCORD_TOKEN_TEST, root_logger=True)
