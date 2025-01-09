@@ -261,11 +261,11 @@ async def add_reply(interaction: discord.Interaction, phrase: str, response: str
 
 @tree.command(name='delete_reply', description='Позволяет удалить заведенные триггеры на фразы')
 async def delete_reply_2(interaction: discord.Interaction, reply: str):
-    reply = reply.replace("\\\\", "\\")
+    reply = reply.replace("\\\\", "\\") + '%'
     user = interaction.user
     server_id = interaction.guild_id
     conn, cursor = await basevariables.access_db_on_interaction(interaction)
-    query = 'SELECT server_id, request_phrase, respond_phrase, added_by_name, added_at, message_id from "public".messages WHERE server_id=%s AND request_phrase=%s'
+    query = 'SELECT server_id, request_phrase, respond_phrase, added_by_name, added_at, message_id from "public".messages WHERE server_id=%s AND request_phrase LIKE %s'
     values = (server_id, reply,)
     sql_query = cursor.mogrify(query, values)
     print(sql_query.decode('utf-8'))
@@ -297,7 +297,7 @@ async def delete_reply_2(interaction: discord.Interaction, reply: str):
             embed.add_field(name='Ответ:', value=respond_phrase, inline=False)
             embed.add_field(name='Кто добавил:', value=added_by_name)
             embed.add_field(name='Когда добавил (МСК время):', value=added_at)
-            view = DeleteOneReply(interaction, user, message_id)
+            view = DeleteOneReply(interaction, user, message_id, True)
             await interaction.response.send_message(view=view, embed=embed, ephemeral=True)
 
 

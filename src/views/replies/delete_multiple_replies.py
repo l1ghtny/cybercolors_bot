@@ -45,7 +45,7 @@ class DeleteReplyMultipleSelect(discord.ui.Select):
             added_by_name = item['added_by_name']
             added_at_base = item['added_at']
             added_at = added_at_base.astimezone(pytz.timezone('EUROPE/MOSCOW')).strftime('%Y-%m-%d %H:%M:%S %Z%z')
-            view = DeleteOneReply(interaction, interaction.user, message_id)
+            view = DeleteOneReply(interaction, interaction.user, message_id, False, DeleteReplyMultiple, DeleteReplyMultipleSelect, self.options)
             embed = discord.Embed(title=f'Выбранный тобой ответ')
             embed.add_field(name='Триггер:', value=request_phrase)
             embed.add_field(name='Ответ:', value=respond_phrase, inline=False)
