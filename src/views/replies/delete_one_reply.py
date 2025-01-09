@@ -41,7 +41,7 @@ class DeleteOneReply(discord.ui.View):
         await interaction.response.send_message('Оке, тогда я ничего не меняю', ephemeral=True)
 
 
-    @discord.ui.button(label='Верни список, сук', custom_id='get_list_back', style=discord.ButtonStyle.success, emoji='\U0001F621')
+    @discord.ui.button(label='Верни список', custom_id='get_list_back', style=discord.ButtonStyle.success, emoji='\U0001F621')
     async def get_list_back(self, interaction: discord.Interaction, button):
         await self.disable_all_items()
         view = self.multiple_options_view(interaction)
