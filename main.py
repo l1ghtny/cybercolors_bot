@@ -589,4 +589,4 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
 
 
 # EXECUTES THE BOT WITH THE SPECIFIED TOKEN.
-client.run(DISCORD_TOKEN_TEST, root_logger=True)
+client.run(DISCORD_TOKEN, root_logger=True)
