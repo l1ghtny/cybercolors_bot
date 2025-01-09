@@ -20,7 +20,7 @@ async def get_vpn_promo_code(interaction):
                 else:
                     await interaction.followup.send('Что-то пошло не так, дай знать админу')
             else:
-                await interaction.followup.send(f'У тебя уже есть промокод, имей совесть \nЕсли что, напоминаю его: {result[0]['code']}')
+                await interaction.followup.send(f'У тебя уже есть промокод, имей совесть \n')
         else:
             await interaction.followup.send('Что-то пошло не так, дай знать админу')
     else:

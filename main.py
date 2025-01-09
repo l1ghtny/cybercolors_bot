@@ -261,11 +261,14 @@ async def add_reply(interaction: discord.Interaction, phrase: str, response: str
 
 @tree.command(name='delete_reply', description='Позволяет удалить заведенные триггеры на фразы')
 async def delete_reply_2(interaction: discord.Interaction, reply: str):
+    reply = reply.replace("\\\\", "\\")
     user = interaction.user
     server_id = interaction.guild_id
     conn, cursor = await basevariables.access_db_on_interaction(interaction)
     query = 'SELECT server_id, request_phrase, respond_phrase, added_by_name, added_at, message_id from "public".messages WHERE server_id=%s AND request_phrase=%s'
     values = (server_id, reply,)
+    sql_query = cursor.mogrify(query, values)
+    print(sql_query.decode('utf-8'))
     cursor.execute(query, values)
     results = cursor.fetchall()
     results_count = len(results)
@@ -302,7 +305,7 @@ async def delete_reply_2(interaction: discord.Interaction, reply: str):
 async def delete_reply_2_autocomplete(interaction: discord.Interaction, current: str):
     server_id = interaction.guild_id
     conn, cursor = await basevariables.access_db_on_interaction(interaction)
-    query = 'SELECT request_phrase from "public".messages WHERE request_phrase LIKE %s AND server_id=%s LIMIT 25 '
+    query = 'SELECT request_phrase from "public".messages WHERE request_phrase LIKE %s AND server_id=%s LIMIT 25;'
     request_string = f'{current}%'
     values = (request_string, server_id,)
     cursor.execute(query, values)
@@ -589,4 +592,4 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
 
 
 # EXECUTES THE BOT WITH THE SPECIFIED TOKEN.
-client.run(DISCORD_TOKEN, root_logger=True)
+client.run(DISCORD_TOKEN_TEST, root_logger=True)
