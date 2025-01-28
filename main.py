@@ -1,3 +1,5 @@
+import sys
+
 import discord
 import datetime
 import discord.ui
@@ -589,6 +591,13 @@ async def check_users_with_birthdays():
 @client.event
 async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
     await create_voice_channel(member, before, after)
+
+
+def handle_uncaught_exception(exc_type, exc_value, exc_traceback):
+    logger.critical("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
+    # Optionally, you can re-raise the exception or perform other actions
+
+sys.excepthook = handle_uncaught_exception
 
 
 # EXECUTES THE BOT WITH THE SPECIFIED TOKEN.
