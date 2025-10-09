@@ -1,7 +1,4 @@
-import sys
-
 import discord
-import datetime
 import discord.ui
 from discord import app_commands
 from discord.ext import tasks
@@ -12,8 +9,11 @@ import psycopg2.extras
 import uuid
 import demoji
 import pytz
+from sqlmodel import select
 
 from src.commands.misc.cats import cat_command, cat_command_text
+from src.db.database import get_session
+from src.db.models import Server, Message
 from src.modules.birthdays_module.hourly_check.force_check_birthday import force_check_birthday
 from src.modules.birthdays_module.user_validation.user_validate_time import users_time
 from src.commands.birthdays.add_new_birthday import add_birthday
@@ -29,7 +29,6 @@ from src.modules.on_message_processing.check_for_links import delete_server_link
 from src.modules.on_message_processing.gpt_bot_reply import look_for_bot_reply
 from src.modules.on_message_processing.replies import check_for_replies
 from src.modules.on_voice_state_processing.create_voice_channel import create_voice_channel
-from src.modules.releases.releases_check import check_new_releases
 from src.modules.twitter_link_fix.twitter_message_manager import manage_message
 from src.views.replies.delete_multiple_replies import DeleteReplyMultiple, DeleteReplyMultipleSelect
 from src.views.replies.delete_one_reply import DeleteOneReply
@@ -68,9 +67,9 @@ class Aclient(discord.AutoShardedClient):
             self.synced = True
         if not self.added:
             self.added = True
-        birthday.start()
-        # update_releases.start()
-        check_users_with_birthdays.start()
+        # birthday.start()
+        # # update_releases.start()
+        # check_users_with_birthdays.start()
         logger.info(f"We have logged in as {self.user}.")
 
 
@@ -100,53 +99,43 @@ async def add_my_birthday(interaction: discord.Interaction, day: int, month: app
     await add_birthday(client, interaction, month, day)
 
 
-# Settings for guild for birthdays module
+# TODO:
+#  1. Move it to a dedicated function
+#  2. Move the feature to the UI
 @tree.command(name='birthdays_settings', description='Настрой дни рождения для своего сервера')
 async def birthdays_settings(interaction: discord.Interaction):
     await interaction.response.defer()
-    database = basevariables.database
-    host = basevariables.host
-    user = basevariables.user
-    password = basevariables.password
-    port = basevariables.port
-    server_id = f'{interaction.guild.id}'
+    server_id = interaction.guild.id
     try:
-        conn = psycopg2.connect(database=database,
-                                host=host,
-                                user=user,
-                                password=password,
-                                port=port,
-                                cursor_factory=psycopg2.extras.DictCursor
-                                )
-        cursor = conn.cursor()
-        postgres_insert_query = ("""SELECT * from "public".servers WHERE server_id = %s""")
-        cursor.execute(postgres_insert_query, (server_id,))
-        row = cursor.fetchone()
-        if row is None:
-            embed = discord.Embed(title='Давай решим, в каком канале будет писать бот',
-                                  colour=discord.Colour.dark_blue())
-            view = BirthdaysButtonsSelect()
-            await interaction.response.edit_message(
-                f'{interaction.user.display_name}, начинаем настройку дней рождений!')
-            message = await interaction.channel.send(embed=embed, view=view)
-            view.message = message
-            view.user = interaction.user
-        else:
-            channel_name = row['channel_name']
-            server_name = row['server_name']
-            server_role_id = row['role_id']
-            server_role_try = interaction.guild.get_role(server_role_id)
-            server_role = server_role_try if server_role_try is not None else 'Не выбрано'
-            embed = discord.Embed(title='Этот сервер уже настроен', colour=discord.Colour.orange())
-            view = GuildAlreadyExists()
-            await interaction.response.edit_message(
-                f'Для сервера "{server_name}" выбран канал "{channel_name}" и выбрана роль "{server_role}"')
-            message = await interaction.channel.send(embed=embed, view=view)
-            view.message = message
-            view.user = interaction.user
-        conn.close()
-    except:
-        await interaction.edit_original_response(content=f'Что-то пошло не так. Ошибка:')
+        async with get_session() as session:
+            query = select(Server).where(Server.server_id == server_id)
+            result = await session.exec(query)
+            server_settings = result.first()
+            if server_settings is None:
+                embed = discord.Embed(title='Давай решим, в каком канале будет писать бот',
+                                      colour=discord.Colour.dark_blue())
+                view = BirthdaysButtonsSelect()
+                await interaction.edit_original_response(content=
+                    f'{interaction.user.display_name}, начинаем настройку дней рождений!')
+                message = await interaction.channel.send(embed=embed, view=view)
+                view.message = message
+                view.user = interaction.user
+            else:
+                channel_name = server_settings.birthday_channel_name
+                server_name = server_settings.server_name
+                server_role_id = server_settings.birthday_role_id
+                server_role_try = interaction.guild.get_role(server_role_id)
+                server_role = server_role_try if server_role_try is not None else 'Не выбрано'
+                embed = discord.Embed(title='Этот сервер уже настроен', colour=discord.Colour.orange())
+                view = GuildAlreadyExists()
+                await interaction.edit_original_response(content=
+                    f'Для сервера "{server_name}" выбран канал "{channel_name}" и выбрана роль "{server_role}"')
+                message = await interaction.channel.send(embed=embed, view=view)
+                view.message = message
+                view.user = interaction.user
+    except Exception as error:
+        await interaction.edit_original_response(content=f'Что-то пошло не так')
+        raise Exception(error)
 
 
 @tree.command(name='add_reply', description='Добавляет ответы на определенные слова и фразы для бота')
@@ -172,22 +161,19 @@ async def add_reply(interaction: discord.Interaction, phrase: str, response: str
     message_id = uuid.uuid4()
     server_id = interaction.guild_id
     user_id = interaction.user.id
-    user_name = interaction.user.name
     request_phrase_base = phrase.lower()
     request_phrase = em_replace(e_replace(request_phrase_base))
     response_phrase = add_fstring(response)
-    conn, cursor = await basevariables.access_db_on_interaction(interaction)
-    query = 'INSERT INTO "public".messages (message_id, server_id, request_phrase, respond_phrase, added_by_id, ' \
-            'added_by_name, added_at) VALUES (%s,%s,%s,%s,%s,%s,current_timestamp)'
-    values = (message_id, server_id, request_phrase, response_phrase, user_id, user_name,)
     try:
-        cursor.execute(query, values)
-        conn.commit()
-        conn.close()
-        await interaction.followup.send(f'Фраза "{phrase}" с ответом "{response}" записаны', ephemeral=True)
-    except psycopg2.Error as error:
-        logger.info(f'{message_id}')
+        async with get_session() as session:
+            message_to_add = Message(message_id=message_id, server_id=server_id, request_phrase=request_phrase,
+                                     respond_phrase=response_phrase, added_by_user_id=user_id)
+            session.add(message_to_add)
+            await session.commit()
+            await interaction.followup.send(f'Фраза "{phrase}" с ответом "{response}" записаны', ephemeral=True)
+    except Exception as error:
         await interaction.followup.send('Не получилось записать словосочетание из-за ошибки {}'.format(error.__str__()))
+        raise Exception(error)
 
 
 @tree.command(name='delete_reply', description='Позволяет удалить заведенные триггеры на фразы')
@@ -235,10 +221,11 @@ async def delete_reply_2(interaction: discord.Interaction, reply: str):
 @delete_reply_2.autocomplete('reply')
 async def delete_reply_2_autocomplete(interaction: discord.Interaction, current: str):
     server_id = interaction.guild_id
-    conn, cursor = await basevariables.access_db_on_interaction(interaction)
     query = 'SELECT request_phrase from "public".messages WHERE request_phrase LIKE %s AND server_id=%s LIMIT 25;'
     request_string = f'%{current}%'
     values = (request_string, server_id,)
+    async with get_session() as session:
+        query = select(Message).where(Message.request_phrase)
     cursor.execute(query, values)
     result = cursor.fetchall()
     conn.close()
