@@ -14,8 +14,6 @@ import demoji
 import pytz
 
 from src.commands.misc.cats import cat_command, cat_command_text
-from src.commands.openai.image_generation import new_image, image_2_image
-from src.commands.vpn.get_code import get_vpn_promo_code
 from src.modules.birthdays_module.hourly_check.force_check_birthday import force_check_birthday
 from src.modules.birthdays_module.user_validation.user_validate_time import users_time
 from src.commands.birthdays.add_new_birthday import add_birthday
@@ -66,13 +64,12 @@ class Aclient(discord.AutoShardedClient):
     async def on_ready(self):
         await self.wait_until_ready()
         if not self.synced:  # check if slash commands have been synced
-            await tree.sync(guild=discord.Object(id=779677470156390440))  # zagloti guild
             await tree.sync()  # global (can take 1-24 hours)
             self.synced = True
         if not self.added:
             self.added = True
         birthday.start()
-        update_releases.start()
+        # update_releases.start()
         check_users_with_birthdays.start()
         logger.info(f"We have logged in as {self.user}.")
 
@@ -81,73 +78,7 @@ client = Aclient()
 tree = app_commands.CommandTree(client)
 
 
-# say hello command
-@tree.command(guild=discord.Object(id=779677470156390440), name='say_hello',
-              description='testing_commands')
-async def basic_hello(interaction: discord.Interaction):
-    await interaction.response.send_message(
-        f"Привет, {interaction.user.display_name}, я работаю! Меня сделал Антон на питоне", ephemeral=False)
-
-
-# delete messages
-@tree.command(name='delete_last_x_messages',
-              description='для удаления последних сообщений')
-async def delete_last_messages(interaction: discord.Interaction, number: int):
-    channel = interaction.channel
-    messages = [message async for message in channel.history(limit=number)]
-    last_digit = int(repr(number)[-1])
-    await interaction.response.defer(thinking=True, ephemeral=False)
-    if number <= 0:
-        await interaction.followup.send('Ты шо сдурел, я не могу удалить то, чего нет')
-    else:
-        if last_digit == 1:
-            await interaction.followup.send(f"Хм, {interaction.user.display_name}, я удалил всего {number} сообщение!",
-                                            ephemeral=False)
-        if last_digit >= 5:
-            await interaction.followup.send(f"Сделано, {interaction.user.display_name}, я удалил {number} сообщений!",
-                                            ephemeral=False)
-        if (last_digit != 1) and (last_digit < 5) and (last_digit != 0):
-            await interaction.followup.send(
-                f'Нихера себе, {interaction.user.display_name}, я удалил целых {number} сообщения!', ephemeral=False)
-        if last_digit == 0:
-            await interaction.followup.send(f'Ну охуеть, я удалил аж {number} сообщений!')
-        await discord.TextChannel.delete_messages(self=channel, messages=messages)
-
-
-# rename channel
-@tree.command(guild=discord.Object(id=779677470156390440), name='rename_channel',
-              description='переименовать канал, а вы что думали?')
-async def channel_rename(interaction: discord.Interaction, name: str):
-    await interaction.channel.edit(name=name)
-    await interaction.response.send_message(f'Я переименовал этот канал в "{name}"', ephemeral=False)
-
-
-# add roles2
-@tree.command(guild=discord.Object(id=779677470156390440), name='roles',
-              description='Даёт возможность выбирать роли')
-async def roles2(interaction: discord.Interaction):
-    embed = discord.Embed(title='Выбери нужные тебе роли!', colour=discord.Colour.dark_magenta())
-    view = DropDownRoles(interaction.user)
-    message = await interaction.channel.send(embed=embed, view=view)
-    view.message = message
-    await interaction.response.send_message(
-        f'{interaction.user.display_name}, ты запустил новую систему выбора ролей. Она более красивая и вообще секс',
-        ephemeral=True)
-
-
-# delete_channels.py
-@tree.command(guild=discord.Object(id=779677470156390440), name='delete_channels',
-              description='Даёт возможность выбрать каналы для удаления')
-async def delete_channels(interaction: discord.Interaction):
-    embed = discord.Embed(title='Выбери нужные тебе каналы!', colour=discord.Colour.dark_magenta())
-    view = DropDownViewChannels()
-    message = await interaction.channel.send(embed=embed, view=view)
-    view.message = message
-    await interaction.response.send_message(f'{interaction.user.display_name}, ты запустил систему удаления каналов',
-                                            ephemeral=True)
-
-
-# Add birthdays with database
+# Add birthdays to the database
 @tree.command(name='add_my_birthday', description='Добавь свой день рождения')
 @app_commands.choices(
     month=[
@@ -172,7 +103,7 @@ async def add_my_birthday(interaction: discord.Interaction, day: int, month: app
 # Settings for guild for birthdays module
 @tree.command(name='birthdays_settings', description='Настрой дни рождения для своего сервера')
 async def birthdays_settings(interaction: discord.Interaction):
-    anton_id = client.get_user(267745993074671616)
+    await interaction.response.defer()
     database = basevariables.database
     host = basevariables.host
     user = basevariables.user
@@ -195,7 +126,7 @@ async def birthdays_settings(interaction: discord.Interaction):
             embed = discord.Embed(title='Давай решим, в каком канале будет писать бот',
                                   colour=discord.Colour.dark_blue())
             view = BirthdaysButtonsSelect()
-            await interaction.response.send_message(
+            await interaction.response.edit_message(
                 f'{interaction.user.display_name}, начинаем настройку дней рождений!')
             message = await interaction.channel.send(embed=embed, view=view)
             view.message = message
@@ -208,16 +139,14 @@ async def birthdays_settings(interaction: discord.Interaction):
             server_role = server_role_try if server_role_try is not None else 'Не выбрано'
             embed = discord.Embed(title='Этот сервер уже настроен', colour=discord.Colour.orange())
             view = GuildAlreadyExists()
-            await interaction.response.send_message(
+            await interaction.response.edit_message(
                 f'Для сервера "{server_name}" выбран канал "{channel_name}" и выбрана роль "{server_role}"')
             message = await interaction.channel.send(embed=embed, view=view)
             view.message = message
             view.user = interaction.user
         conn.close()
-    except psycopg2.Error as error:
-        await interaction.response.send_message(
-            f'Что-то пошло не так, напишите {anton_id.mention}. Ошибка: {error}'
-        )
+    except:
+        await interaction.edit_original_response(content=f'Что-то пошло не так. Ошибка:')
 
 
 @tree.command(name='add_reply', description='Добавляет ответы на определенные слова и фразы для бота')
@@ -323,27 +252,15 @@ async def delete_reply_2_autocomplete(interaction: discord.Interaction, current:
     return result_list
 
 
-@tree.command(name='check_dr', description='Форсированно запускает проверку на дни рождения в этом часу')
+@tree.command(name='check_dr', description='Форсированно запускает проверку на дни рождения, если сегодня кому-то не выдали роль')
 async def birthday_check(interaction: discord.Interaction):
     await interaction.response.defer()
     await birthday()
+    await force_check_birthday(client)
     await interaction.followup.send('OK')
 
 
-@tree.command(name='check_dr_today', description='Форсированно запускает проверку др на текущий день')
-async def birthday_check_today(interaction: discord.Interaction):
-    await force_check_birthday(client)
-    await interaction.response.send_message('DONE')
-
-
-@tree.command(name='help', description='Вызывайте, если что-то сломалось')
-async def help(interaction: discord.Interaction):
-    lightny_role = interaction.guild.get_role(1093537843307102289)
-    embed_description = f'Если с ботом что-то случилось, пингуйте меня: {lightny_role.mention}'
-    embed = discord.Embed(colour=discord.Colour.orange(), description=embed_description)
-    await interaction.response.send_message(embed=embed)
-
-
+# Needs to be implemented with UI
 @tree.command(name='add_birthday_message',
               description='Добавляет сообщение, которое бот использует, чтобы поздравлять именинников')
 async def birthday_message(interaction: discord.Interaction, message: str):
@@ -399,6 +316,7 @@ async def show_replies(interaction: discord.Interaction):
             f' \nВ таком случае обратись к Антону, он снизит количество штук на странице. \nНа всякий случай, вот ошибка:{error}')
 
 
+# Тоже должно жить в UI
 @tree.command(name='show_usage_by_day', description='посчитаю, сколько тебе стоил один день использования бота')
 async def show_usage_by_day(interaction: discord.Interaction, day: str):
     conn, cursor = await basevariables.access_db_on_interaction(interaction)
@@ -443,6 +361,7 @@ async def show_usage_by_day_autocomplete(interaction: discord.Interaction, curre
     return result_list
 
 
+# Тоже должно жить в UI
 @tree.command(name='show_usage_by_month',
               description='показывает расходы на использование chatgpt на определенном сервере за определенный месяц')
 async def show_usage_by_month(interaction: discord.Interaction, month: str):
@@ -488,52 +407,11 @@ async def show_usage_by_month_autocomplete(interaction: discord.Interaction, cur
     return result_list
 
 
-@tree.command(name='most_expensive_message_today', description='показываю, какое сообщение было сегодня самое дорогое')
-async def most_expensive_message_today(interaction: discord.Interaction):
-    conn, cursor = await basevariables.access_db_on_interaction(interaction)
-    today = datetime.datetime.today().date()
-    server_id = interaction.guild_id
-    query = """select g.date_added, g.token_amount, g.reply_link, g.server_id, g.today 
-    from (select datetime_added::TIMESTAMP::DATE as date_added, token_amount, reply_link, server_id, current_date as today
-    from "public".count_tokens) as g 
-    where g.date_added = %s AND g.server_id = %s order by g.token_amount desc"""
-    values = (today, server_id,)
-    cursor.execute(query, values)
-    message = cursor.fetchone()
-    token_amount = message['token_amount']
-    message_url = message['reply_link']
-    embed = discord.Embed(colour=discord.Colour.dark_gold())
-    embed.add_field(name='Количество токенов', value=token_amount)
-    embed.add_field(name='ссылка на сообщение', value=message_url)
-    await interaction.response.send_message(embed=embed)
-
-
 @tree.command(name='force_validation',
               description='command for testing purposes to check if validation works fine or not')
 async def force_validation(interaction: discord.Interaction):
     await check_users_with_birthdays()
     await interaction.response.send_message('команда выполнена')
-
-
-# @tree.command(name='midjourney_settings', description='настройки')
-# async def request_settings_from_midjourney(interaction: discord.Interaction):
-#     await midjourney_settings(interaction)
-
-
-@tree.command(name='imagine', description='Создаёт изображение через Midjourney по запросу')
-async def imagine2(interaction: discord.Interaction, prompt: str):
-    if interaction.guild is not None:
-        await new_image(interaction, prompt)
-    else:
-        await interaction.response.send_message('Ты хитрый, но этим можно пользоваться только на сервере')
-
-
-@tree.command(name='img2img', description='Изменяет изображение, которое получает по ссылке')
-async def img2img(interaction: discord.Interaction, image_link: str, prompt: str):
-    if interaction.guild is not None:
-        await image_2_image(interaction, prompt, image_link)
-    else:
-        await interaction.response.send_message('Ты хитрый, но этим можно пользоваться только на сервере')
 
 
 @tree.command(name='cat_text', description='Котя с текстом')
@@ -544,11 +422,6 @@ async def cat_text(interaction: discord.Interaction, text: str):
 @tree.command(name='cat', description='cat')
 async def cat(interaction: discord.Interaction):
     await cat_command(interaction)
-
-
-@tree.command(name='vpn_promo_code', description='Получить промокод для бета-теста vpn сервиса')
-async def vpn_promo_code(interaction: discord.Interaction):
-    await get_vpn_promo_code(interaction)
 
 
 @client.event
@@ -577,11 +450,6 @@ async def birthday():
     await check_roles(client)
 
 
-@tasks.loop(minutes=10)
-async def update_releases():
-    await check_new_releases(client)
-
-
 @tasks.loop(time=users_time)
 async def check_users_with_birthdays():
     logger.info('validation process started')
@@ -593,12 +461,12 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
     await create_voice_channel(member, before, after)
 
 
-def handle_uncaught_exception(exc_type, exc_value, exc_traceback):
-    logger.critical("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
-    # Optionally, you can re-raise the exception or perform other actions
+# def handle_uncaught_exception(exc_type, exc_value, exc_traceback):
+#     logger.critical("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
+#     # Optionally, you can re-raise the exception or perform other actions
 
-sys.excepthook = handle_uncaught_exception
+# sys.excepthook = handle_uncaught_exception
 
 
 # EXECUTES THE BOT WITH THE SPECIFIED TOKEN.
-client.run(DISCORD_TOKEN, root_logger=True)
+client.run(DISCORD_TOKEN_TEST, root_logger=True)

@@ -4,10 +4,10 @@ from openai import OpenAI
 from dotenv import load_dotenv
 from src.modules.logs_setup import logger
 
-client = OpenAI(
-    api_key=os.getenv("OPENAI_API_KEY"),
-    organization=os.getenv(os.getenv('OPENAI_ORG'))
-)
+# client = OpenAI(
+#     api_key=os.getenv("OPENAI_API_KEY"),
+#     organization=os.getenv(os.getenv('OPENAI_ORG'))
+# )
 
 
 load_dotenv()
