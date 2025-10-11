@@ -4,8 +4,6 @@ from discord import app_commands
 from discord.ext import tasks
 import os
 from dotenv import load_dotenv
-import psycopg2
-import psycopg2.extras
 import uuid
 import demoji
 import pytz
@@ -14,15 +12,12 @@ from sqlmodel import select
 from src.commands.misc.cats import cat_command, cat_command_text
 from src.db.database import get_session
 from src.db.models import Server, Message
-from src.modules.birthdays_module.hourly_check.force_check_birthday import force_check_birthday
 from src.modules.birthdays_module.user_validation.user_validate_time import users_time
 from src.commands.birthdays.add_new_birthday import add_birthday
 from src.commands.birthdays.show_birthday_list import send_birthday_list
-from src.misc_files.blocking_script import run_blocking
 from src.modules.birthdays_module.hourly_check.check_birthday_redone import check_birthday_new
 from src.modules.birthdays_module.hourly_check.check_roles import check_roles
 from src.modules.birthdays_module.hourly_check.check_time import check_time
-from src.misc_files import basevariables
 from src.modules.birthdays_module.user_validation.validation_main import main_validation_process
 from src.modules.logs_setup import logger
 from src.modules.on_message_processing.check_for_links import delete_server_links
@@ -34,16 +29,12 @@ from src.views.replies.delete_multiple_replies import DeleteReplyMultiple, Delet
 from src.views.replies.delete_one_reply import DeleteOneReply
 from src.views.pagination.pagination import PaginationView
 from src.views.birthday.settings import BirthdaysButtonsSelect, GuildAlreadyExists
-from src.views.misc_commands.delete_channels import DropDownViewChannels
-from src.views.misc_commands.roles import DropDownRoles
 
 load_dotenv()
 # Grab the API token from the .env file.
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 DISCORD_TOKEN_TEST = os.getenv('DISCORD_TOKEN_TEST')
 
-# Register UUID to work with it in psycopg2
-psycopg2.extras.register_uuid()
 
 intents = discord.Intents.all()
 intents.message_content = True
@@ -67,9 +58,8 @@ class Aclient(discord.AutoShardedClient):
             self.synced = True
         if not self.added:
             self.added = True
-        # birthday.start()
-        # # update_releases.start()
-        # check_users_with_birthdays.start()
+        birthday.start()
+        check_users_with_birthdays.start()
         logger.info(f"We have logged in as {self.user}.")
 
 
@@ -181,33 +171,34 @@ async def delete_reply_2(interaction: discord.Interaction, reply: str):
     reply = '%' + reply.replace("\\\\", "\\") + '%'
     user = interaction.user
     server_id = interaction.guild_id
-    conn, cursor = await basevariables.access_db_on_interaction(interaction)
-    query = 'SELECT server_id, request_phrase, respond_phrase, added_by_name, added_at, message_id from "public".messages WHERE server_id=%s AND request_phrase LIKE %s'
-    values = (server_id, reply,)
-    sql_query = cursor.mogrify(query, values)
-    print(sql_query.decode('utf-8'))
-    cursor.execute(query, values)
-    results = cursor.fetchall()
-    results_count = len(results)
-    conn.close()
+    async with get_session() as session:
+        statement = select(Message).where(
+            Message.server_id == server_id,
+            Message.request_phrase.like(reply)
+        )
+
+        # 4. Execute the query and get all results
+        result = await session.exec(statement)
+        messages = result.all()
+        results_count = len(messages)
     if results_count > 1:
         view = DeleteReplyMultiple(interaction)
-        select = DeleteReplyMultipleSelect(interaction, view)
-        for item in results:
-            label_base = item['respond_phrase']
+        select_module = DeleteReplyMultipleSelect(interaction, view)
+        for item in messages:
+            label_base = item.respond_phrase
             label = label_base[0:99]
-            value = str(item['message_id'])
-            select.add_option(label=label, value=value)
-        view.add_item(select)
+            value = str(item.message_id)
+            select_module.add_option(label=label, value=value)
+        view.add_item(select_module)
         await interaction.response.send_message(f'Варианта больше одного, их {results_count}. Выдаём выпадашку',
                                                 view=view, ephemeral=True)
     else:
-        for item in results:
-            message_id = item['message_id']
-            request_phrase = item['request_phrase']
-            respond_phrase = item['respond_phrase']
-            added_by_name = item['added_by_name']
-            added_at_base = item['added_at']
+        for item in messages:
+            message_id = item.message_id
+            request_phrase = item.request_phrase
+            respond_phrase = item.respond_phrase
+            added_by_name = interaction.guild.get_member(item.added_by_user_id).display_name
+            added_at_base = item.added_at
             added_at = added_at_base.astimezone(pytz.timezone('EUROPE/MOSCOW')).strftime('%Y-%m-%d %H:%M:%S')
             embed = discord.Embed(title='Выбранное сообщение', colour=discord.Colour.random())
             embed.add_field(name='Триггер:', value=request_phrase)
@@ -221,18 +212,14 @@ async def delete_reply_2(interaction: discord.Interaction, reply: str):
 @delete_reply_2.autocomplete('reply')
 async def delete_reply_2_autocomplete(interaction: discord.Interaction, current: str):
     server_id = interaction.guild_id
-    query = 'SELECT request_phrase from "public".messages WHERE request_phrase LIKE %s AND server_id=%s LIMIT 25;'
     request_string = f'%{current}%'
-    values = (request_string, server_id,)
     async with get_session() as session:
-        query = select(Message).where(Message.request_phrase)
-    cursor.execute(query, values)
-    result = cursor.fetchall()
-    conn.close()
+        query = select(Message).where(Message.request_phrase.like(request_string), Message.server_id == server_id)
+        result_get = await session.exec(query)
+        result = result_get.all()
     result_list = []
     for item in result:
-        new_item = str(item)
-        new_value = new_item[2:-2]
+        new_value = item.request_phrase
         if len(new_value) > 100:
             new_value = new_value[:96] + '...'
         result_list.append(app_commands.Choice(name=new_value, value=new_value))
@@ -242,31 +229,21 @@ async def delete_reply_2_autocomplete(interaction: discord.Interaction, current:
 @tree.command(name='check_dr', description='Форсированно запускает проверку на дни рождения, если сегодня кому-то не выдали роль')
 async def birthday_check(interaction: discord.Interaction):
     await interaction.response.defer()
-    await birthday()
-    await force_check_birthday(client)
+    await check_birthday_new(client)
+    await check_roles(client)
     await interaction.followup.send('OK')
 
 
-# Needs to be implemented with UI
-@tree.command(name='add_birthday_message',
-              description='Добавляет сообщение, которое бот использует, чтобы поздравлять именинников')
-async def birthday_message(interaction: discord.Interaction, message: str):
-    server_id = interaction.guild_id
-    bot_message = message
-    user_id = interaction.user.id
-    user_name = interaction.user.name
-    conn, cursor = await basevariables.access_db_on_interaction(interaction)
-    query = 'INSERT INTO "public".congratulations (bot_message, server_id, added_at, added_by_id, added_by_name) VALUES (%s,%s,current_timestamp,%s,%s)'
-    values = (bot_message, server_id, user_id, user_name,)
-    cursor.execute(query, values)
-    conn.commit()
-    conn.close()
-    await interaction.response.send_message(f'Сообщение "{message}" было добавлено', ephemeral=True)
+# TODO: Needs to be implemented with UI
+# @tree.command(name='add_birthday_message',
+#               description='Добавляет сообщение, которое бот использует, чтобы поздравлять именинников')
+# async def birthday_message(interaction: discord.Interaction, message: str):
+
 
 
 @tree.command(name='birthday_list', description='Показывает все дни рождения на сервере')
 async def birthday_list(interaction: discord.Interaction):
-    await send_birthday_list(client, interaction)
+    await send_birthday_list(client, interaction, 15)
 
 
 @tree.command(name='show_replies', description='Вызывает список всех вопросов-ответов на сервере')
@@ -274,125 +251,31 @@ async def show_replies(interaction: discord.Interaction):
     await interaction.response.defer()
     server_id = interaction.guild_id
     data = []
-    conn, cursor = await basevariables.access_db_on_interaction(interaction)
-    query = 'SELECT request_phrase, respond_phrase, server_id, added_at from "public".messages WHERE server_id=%s ORDER BY request_phrase'
-    values = (server_id,)
-    cursor.execute(query, values)
-    replies = cursor.fetchall()
-    conn.close()
-    for item in replies:
-        request = item['request_phrase']
-        response = item['respond_phrase']
-        data.append({
-            'label': f'Триггер: {request}',
-            'value': f'Ответ: {response}'
-        })
+    async with get_session() as session:
+        query = select(Message).where(Message.server_id == server_id).order_by(Message.request_phrase)
+        result = await session.exec(query)
+        replies = result.all()
+        for item in replies:
+            request = item['request_phrase']
+            response = item['respond_phrase']
+            data.append({
+                'label': f'Триггер: {request}',
+                'value': f'Ответ: {response}'
+            })
 
-    title = 'Триггеры на сервере'
-    footer = 'Всего ответов'
-    maximum = 'ответов'
-    pagination_view = PaginationView(data, interaction.user, title, footer, maximum, separator=8)
-    pagination_view.data = data
-    pagination_view.counted = len(replies)
-    try:
-        await pagination_view.send(interaction)
-        await interaction.followup.send('Держи, искал по всему серваку')
-    except discord.app_commands.CommandInvokeError as error:
-        await interaction.followup.send(
-            f'Что-то пошло не так, скорее всего, бот попытался отправить тебе слишком большое количество текста.'
-            f' \nВ таком случае обратись к Антону, он снизит количество штук на странице. \nНа всякий случай, вот ошибка:{error}')
-
-
-# Тоже должно жить в UI
-@tree.command(name='show_usage_by_day', description='посчитаю, сколько тебе стоил один день использования бота')
-async def show_usage_by_day(interaction: discord.Interaction, day: str):
-    conn, cursor = await basevariables.access_db_on_interaction(interaction)
-    server_id = interaction.guild_id
-    query = """select sum(g.token_amount), count(g.reply_link)
-    from (select to_char(datetime_added:: DATE, 'dd-mm-yyyy') as date_added, token_amount, reply_link, server_id 
-    from "public".count_tokens) as g where g.date_added = %s and g.server_id = %s"""
-    values = (day, server_id)
-    cursor.execute(query, values)
-    tokens_sum = cursor.fetchone()
-    tokens_counted = tokens_sum['sum']
-    days_counted = tokens_sum['count']
-    conn.close()
-    cost = tokens_counted / 1000 * 0.002
-    embed = discord.Embed(colour=discord.Colour.dark_magenta())
-    embed.add_field(name='дата:', value=day)
-    embed.add_field(name='количество сообщений:', value=days_counted)
-    embed.add_field(name='количество токенов:', value=tokens_counted)
-    embed.add_field(name='стоимость в долларах:', value=cost)
-    await interaction.response.send_message(embed=embed)
-
-
-@show_usage_by_day.autocomplete('day')
-async def show_usage_by_day_autocomplete(interaction: discord.Interaction, current: str):
-    date_str = f'{current}%'
-    server_id = interaction.guild_id
-    conn, cursor = await basevariables.access_db_on_interaction(interaction)
-    query = """
-    select distinct on (g.month_added, g.date_added)
-    g.date_added, g.datetime_added
-    from (select to_char(datetime_added:: DATE, 'dd-mm-yyyy') as date_added, to_char(datetime_added:: DATE, 'mm-yyyy') as month_added, token_amount, reply_link, server_id, datetime_added
-    from "public".count_tokens) as g
-    where g.date_added like %s and server_id = %s ORDER BY g.month_added DESC, g.date_added DESC, g.datetime_added LIMIT 25"""
-    values = (date_str, server_id)
-    cursor.execute(query, values)
-    result = cursor.fetchall()
-    result_list = []
-    for i in result:
-        new_value = i['date_added']
-        result_list.append(app_commands.Choice(name=new_value, value=new_value))
-    conn.close()
-    return result_list
-
-
-# Тоже должно жить в UI
-@tree.command(name='show_usage_by_month',
-              description='показывает расходы на использование chatgpt на определенном сервере за определенный месяц')
-async def show_usage_by_month(interaction: discord.Interaction, month: str):
-    conn, cursor = await basevariables.access_db_on_interaction(interaction)
-    server_id = interaction.guild_id
-    query = """select sum(g.token_amount), count(g.reply_link)
-        from (select to_char(datetime_added:: DATE, 'mm-yyyy') as date_added, token_amount, reply_link, server_id 
-        from "public".count_tokens) as g where g.date_added = %s and g.server_id = %s"""
-    values = (month, server_id)
-    cursor.execute(query, values)
-    tokens_sum = cursor.fetchone()
-    tokens_counted = tokens_sum['sum']
-    days_counted = tokens_sum['count']
-    conn.close()
-    cost = tokens_counted / 1000 * 0.002
-    embed = discord.Embed(colour=discord.Colour.dark_magenta())
-    embed.add_field(name='дата:', value=month)
-    embed.add_field(name='количество сообщений:', value=days_counted)
-    embed.add_field(name='количество токенов:', value=tokens_counted)
-    embed.add_field(name='стоимость в долларах:', value=cost)
-    await interaction.response.send_message(embed=embed)
-
-
-@show_usage_by_month.autocomplete('month')
-async def show_usage_by_month_autocomplete(interaction: discord.Interaction, current: str):
-    date_str = f'{current}%'
-    server_id = interaction.guild_id
-    conn, cursor = await basevariables.access_db_on_interaction(interaction)
-    query = """
-    select distinct on (g.date_added)
-    g.date_added, g.datetime_added
-        from (select to_char(datetime_added:: DATE, 'mm-yyyy') as date_added, token_amount, reply_link, server_id, datetime_added
-        from "public".count_tokens) as g
-        where g.date_added like %s and server_id = %s ORDER BY g.date_added DESC, g.datetime_added LIMIT 25"""
-    values = (date_str, server_id)
-    cursor.execute(query, values)
-    result = cursor.fetchall()
-    result_list = []
-    for i in result:
-        new_value = i['date_added']
-        result_list.append(app_commands.Choice(name=new_value, value=new_value))
-    conn.close()
-    return result_list
-
+        title = 'Триггеры на сервере'
+        footer = 'Всего ответов'
+        maximum = 'ответов'
+        pagination_view = PaginationView(data, interaction.user, title, footer, maximum, separator=8)
+        pagination_view.data = data
+        pagination_view.counted = len(replies)
+        try:
+            await pagination_view.send(interaction)
+            await interaction.followup.send('Держи, искал по всему серваку')
+        except discord.app_commands.CommandInvokeError as error:
+            await interaction.followup.send(
+                f'Что-то пошло не так, скорее всего, бот попытался отправить тебе слишком большое количество текста.'
+                f' \nВ таком случае обратись к Антону, он снизит количество штук на странице. \nНа всякий случай, вот ошибка:{error}')
 
 @tree.command(name='force_validation',
               description='command for testing purposes to check if validation works fine or not')
@@ -425,9 +308,9 @@ async def on_message(message):
                 await manage_message(message, user)
             elif 'https://x.com/' in message_content_base:
                 await manage_message(message, user)
-            conn, cursor, database_found, server_id = await check_for_replies(message)
+            database_found, server_id = await check_for_replies(message)
         if database_found is False:
-            await look_for_bot_reply(message, client, server_id, cursor, conn)
+            await look_for_bot_reply(message, client)
 
 
 # BD MODULE with checking task
@@ -440,7 +323,7 @@ async def birthday():
 @tasks.loop(time=users_time)
 async def check_users_with_birthdays():
     logger.info('validation process started')
-    await run_blocking(client, main_validation_process, client)
+    await main_validation_process(client)
 
 
 @client.event

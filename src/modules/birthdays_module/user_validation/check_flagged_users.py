@@ -1,39 +1,41 @@
-from src.misc_files.basevariables import access_db_sync
+from sqlmodel import select
+
+from src.db.database import get_session
+from src.db.models import User
 from src.modules.logs_setup import logger
 
 logger = logger.logging.getLogger("bot")
 
 
-def remove_flag_from_users_by_server(client):
-    conn, cursor = access_db_sync()
-    query = 'select user_id, server_id from "public".users where is_member = False'
-    cursor.execute(query)
-    servers_and_users = cursor.fetchall()
-    conn.close()
-    for each in servers_and_users:
-        server_id = each['server_id']
-        user_id = each['user_id']
-        server = client.get_guild(server_id)
-        if check_if_user_is_a_member(server, user_id) is True:
-            remove_flag_user(user_id, server_id)
-            user = client.get_user(user_id)
-            logger.info('removed_flag_from_user')
-            logger.info(user.display_name)
+async def remove_flag_from_users_by_server(client):
+    async with get_session() as session:
+        query = select(User).where(User.is_member == True)
+        servers_and_users = await session.exec(query)
+        servers_and_users = servers_and_users.all()
+        for each in servers_and_users:
+            server_id = each.server_id
+            user_id = each.user_id
+            server = await client.fetch_guild(server_id)
+            if not await check_if_user_is_a_member(server, user_id):
+                await remove_flag_user(user_id, server_id)
+                user = await client.fetch_user(user_id)
+                logger.info('removed_flag_from_user')
+                logger.info(user.display_name)
 
 
-def remove_flag_user(user_id, server_id):
-    conn, cursor = access_db_sync()
-    no_time = None
-    query = 'UPDATE "public".users SET is_member=True, flagged_absent_at=%s where user_id=%s and ' \
-            'server_id=%s'
-    values = (no_time, user_id, server_id,)
-    cursor.execute(query, values)
-    conn.commit()
-    conn.close()
+async def remove_flag_user(user_id, server_id):
+    async with get_session() as session:
+        user_to_update = await session.exec(select(User).where(User.user_id == user_id, User.server_id == server_id))
+        user_updated = user_to_update.first()
+        user_updated.is_member = True
+        session.add(user_updated)
+        await session.commit()
+        await session.refresh(user_updated)
 
 
-def check_if_user_is_a_member(server, user_id):
-    if server.get_member(user_id) is None:
+
+async def check_if_user_is_a_member(server, user_id):
+    if await server.fetch_member(user_id) is None:
         is_member = False
     else:
         is_member = True

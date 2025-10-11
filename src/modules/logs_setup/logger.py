@@ -29,8 +29,9 @@ LOGGING_CONFIG = {
             "level": "DEBUG",
             "formatter": "standard",
             "class": "src.modules.logs_setup.logger_settings.MyTimedRotatingFileHandler",
-            "when": "h",
-            "interval": 12,
+            "when": "midnight",
+            "interval": 1,
+            "backupCount": 30,
             "filename": "./logs/main_log.log",
             "encoding": "utf-8"
         },

@@ -1,6 +1,9 @@
 import string
 
-from src.misc_files import basevariables
+from sqlmodel import select
+
+from src.db.database import get_session
+from src.db.models import Message
 from src.modules.on_message_processing.processing_methods import em_replace, e_replace, string_found
 
 
@@ -12,11 +15,10 @@ async def check_for_replies(message):
 
     message_content = message_content_punctuation.translate(str.maketrans('', '', string.punctuation))
     server_id = message.guild.id
-    conn, cursor = await basevariables.access_db_on_message(message)
-    query = 'SELECT * from messages WHERE server_id=%s'
-    values = (server_id,)
-    cursor.execute(query, values)
-    all_rows = cursor.fetchall()
+    async with get_session() as session:
+        query = select(Message).where(Message.server_id == server_id)
+        result = await session.exec(query)
+        all_rows = result.all()
     for item in all_rows:
         request_base = item['request_phrase']
         request = request_base.translate(str.maketrans('', '', string.punctuation))
@@ -45,4 +47,4 @@ async def check_for_replies(message):
                         await message.reply(response_base.upper())
                     except NameError:
                         await message.reply(response_base.upper())
-    return conn, cursor, database_found, server_id
+    return database_found, server_id

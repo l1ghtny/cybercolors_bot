@@ -1,59 +1,89 @@
 import calendar
 import itertools
 import operator
+from datetime import datetime
 
-from src.misc_files import basevariables
+from sqlmodel import select, join
+from sqlalchemy.orm import selectinload
+
+from src.db.database import get_session
+from src.db.models import User, Birthday
 from src.views.pagination.pagination import PaginationView
 from src.modules.logs_setup import logger
 
 logger = logger.logging.getLogger("bot")
 
 
-async def send_birthday_list(client, interaction):
+async def send_birthday_list(client, interaction, separation):
     await interaction.response.defer()
     server_id = interaction.guild_id
-    old_data = [
+    old_data = []
 
-    ]
-    conn, cursor = await basevariables.access_db_on_interaction(interaction)
-    query = """SELECT e.server_id, e.user_id, e.day, e.month, e.close_month + e.close_day as closest
-                FROM (SELECT g.server_id, g.user_id, g.day, g.month,
-                CASE 
-                WHEN diff < 0 then 100 + diff ELSE diff END as close_month, 
-                CASE 
-                WHEN diff_1 < 0 and diff = 0 then 1000 + diff_1 ELSE 0 END as close_day
-                FROM (SELECT server_id, user_id, day, day - date_part('day', now()) AS diff_1, month, month - date_part('month', now()) AS diff FROM "public".users) as g
-                WHERE server_id=%s) as e
-                ORDER BY closest, day"""
-    values = (server_id,)
-    cursor.execute(query, values)
-    birthdays = cursor.fetchall()
-    conn.close()
-    bd_list = []
-    for item in birthdays:
-        user_id = item['user_id']
-        user = client.get_user(user_id)
-        month_num = item['month']
-        day = item['day']
-        month = calendar.month_name[month_num]
-        bd_list.append({
-            'user': user,
-            'date': f'{day} {month}'
-        })
+    async with get_session() as session:
+        # Get the current month and day
+        now = datetime.now()
+        current_month = now.month
+        current_day = now.day
 
-    for i in bd_list:
-        list_user = i['user']
-        list_date = i['date']
+        # Query users with birthdays for the current server
+        statement = (
+            select(User, Birthday)
+            .join(Birthday, Birthday.user_id == User.user_id)
+            .where(User.server_id == server_id)
+        )
+
+        result = await session.exec(statement)
+        users_with_birthdays = result.all()
+
+        # Calculate birthday proximity and sort
+        bd_list = []
+        for user, birthday in users_with_birthdays:
+            # Calculate the month difference
+            month_diff = birthday.month - current_month
+            if month_diff < 0:
+                month_diff = 100 + month_diff
+            else:
+                month_diff = month_diff
+
+            # Calculate day difference (only when months are equal)
+            day_diff = 0
+            if birthday.month == current_month:
+                day_diff = birthday.day - current_day
+                if day_diff < 0:
+                    day_diff = 1000 + day_diff
+
+            closest = month_diff + day_diff
+
+            # Get Discord user
+            discord_user = client.get_user(user.user_id)
+            if discord_user:
+                month_name = calendar.month_name[birthday.month]
+                bd_list.append({
+                    'user': discord_user,
+                    'date': f'{birthday.day} {month_name}',
+                    'day': birthday.day,
+                    'month': birthday.month,
+                    'closest': closest
+                })
+
+        # Sort by proximity
+        bd_list.sort(key=lambda x: (x['closest'], x['day']))
+
+    # Group birthdays by date
+    for item in bd_list:
+        list_user = item['user']
+        list_date = item['date']
         old_data.append({
             'label': list_date,
             'value': f'{list_user.mention}'
         })
+
     data = []
     for key, value in itertools.groupby(old_data, key=operator.itemgetter('label')):
         new_key = key
         new_value = ""
         for k in value:
-            if new_value is str(""):
+            if new_value == "":
                 new_value = k['value']
             else:
                 new_value += f" и {k['value']}"
@@ -65,8 +95,8 @@ async def send_birthday_list(client, interaction):
     title = 'Дни рождения'
     footer = 'Всего дней рождений'
     maximum = 'дней'
-    pagination_view = PaginationView(data, interaction.user, title, footer, maximum, separator=15)
+    pagination_view = PaginationView(data, interaction.user, title, footer, maximum, separator=separation)
     pagination_view.data = data
-    pagination_view.counted = len(birthdays)
+    pagination_view.counted = len(bd_list)
     await pagination_view.send(interaction)
     await interaction.followup.send('Все дни рождения найдены')

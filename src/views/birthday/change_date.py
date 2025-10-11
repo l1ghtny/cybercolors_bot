@@ -2,7 +2,10 @@ import calendar
 
 import discord
 import discord.ui
+from sqlmodel import select
 
+from src.db.database import get_session
+from src.db.models import Birthday, User
 from src.misc_files import basevariables
 from src.views.birthday.timezones import DropdownTimezones
 
@@ -43,11 +46,8 @@ class NewDayAgain(discord.ui.Modal):
             elif day > 31:
                 await interaction.response.send_message('Извини, ни в одном месяце не бывает столько дней')
             else:
-                # await interaction.response.send_message(f'Выбранный месяц = {self.month}, Выбранная дата = {day}',
-                #                                         ephemeral=True)
-                server_id = interaction.guild_id
                 user_id = interaction.user.id
-                status = await basevariables.add_new_day_month(server_id, user_id, day, self.month, interaction)
+                status = await basevariables.add_new_day_month(user_id, day, self.month, interaction)
                 if status == 'ok':
                     await interaction.response.defer(ephemeral=True)
                     month_num = int(self.month)
@@ -57,9 +57,9 @@ class NewDayAgain(discord.ui.Modal):
                     message = await interaction.followup.send('А теперь выбери свой часовой пояс:', view=view, ephemeral=True)
                     view.message = message
                 else:
-                    interaction.channel.send('Извини, что-то пошло не так')
+                    await interaction.channel.send('Извини, что-то пошло не так')
         else:
-            await interaction.followup.send('Извини, это не число. Попробуй добавить день рождения командой '
+            await interaction.response.send_message('Извини, это не число. Попробуй добавить день рождения командой '
                                                    '/add_my_birthday', ephemeral=True)
 
 
@@ -136,14 +136,11 @@ class UserAlreadyExists(discord.ui.View):
     async def user_not_ok_button(self, interaction, button):
         if interaction.user == self.user:
             await self.disable_all_items()
-            conn, cursor = await basevariables.access_db_on_interaction(interaction)
-            user = interaction.user.id
-            server = interaction.guild.id
-            query = 'DELETE FROM "public".users WHERE user_id=%s AND server_id=%s'
-            values = (user, server,)
-            cursor.execute(query, values)
-            conn.commit()
-            conn.close()
+            async with get_session() as session:
+                user = await session.exec(select(Birthday).join(User).where(User.user_id == interaction.user.id and User.server_id == interaction.guild.id))
+                user = user.first()
+                await session.delete(user)
+                await session.commit()
             embed = discord.Embed(title='Твой день рождения удален. Что хочешь сделать дальше?')
             view = ChangeBirthday(client=self.client)
             await interaction.response.send_message(embed=embed, view=view, ephemeral=True)

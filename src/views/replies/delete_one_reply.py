@@ -1,5 +1,8 @@
 import discord.ui
+from sqlmodel import select
 
+from src.db.database import get_session
+from src.db.models import Message
 from src.misc_files import basevariables
 
 
@@ -26,12 +29,11 @@ class DeleteOneReply(discord.ui.View):
                        emoji='\U0001F5D1')
     async def delete_the_reply(self, interaction: discord.Interaction, button):
         await self.disable_all_items()
-        conn, cursor = await basevariables.access_db_on_interaction(interaction)
-        query = 'DELETE from "public".messages WHERE message_id=%s'
-        values = (self.message_id,)
-        cursor.execute(query, values)
-        conn.commit()
-        conn.close()
+        async with get_session() as session:
+            message_to_delete = await session.exec(select(Message).where(Message.id == self.message_id)).first()
+            await session.delete(message_to_delete)
+            await session.commit()
+
         await interaction.response.send_message('Ответ удалён', ephemeral=True)
 
     @discord.ui.button(label='Не, не буду удалять', custom_id='dont_delete_the_reply', style=discord.ButtonStyle.danger,

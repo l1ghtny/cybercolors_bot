@@ -4,7 +4,10 @@ import os
 import discord
 import discord.ui
 import psycopg2
+from sqlmodel import select
 
+from src.db.database import get_session
+from src.db.models import Server
 from src.misc_files import basevariables
 from src.modules.logs_setup import logger
 
@@ -13,35 +16,26 @@ logger = logger.logging.getLogger("bot")
 
 class BirthdaysChannelText(discord.ui.ChannelSelect):
     def __init__(self, user):
-        super().__init__(custom_id='bd_channels', channel_types=[discord.ChannelType.text, discord.ChannelType.private])
+        super().__init__(custom_id='bday_channels', channel_types=[discord.ChannelType.text, discord.ChannelType.private])
 
     async def callback(self, interaction: discord.Interaction):
         await DropdownSelectBirthdaysChannels.disable_all_items(self.info)
         row = await basevariables.check_guild_id(interaction)
         selected_channel = self.values
         if row is None:
-            database = os.getenv("database")
-            host = os.getenv("host")
-            user = os.getenv("user")
-            password = os.getenv("password")
-            port = os.getenv("port")
             for item in selected_channel:
-                server_id = f'{item.guild.id}'
-                channel_id = f'{item.id}'
-                server_name = f'{item.guild.name}'
-                channel_name = f'{item.name}'
+                server_id = item.guild.id
+                channel_id = item.id
+                channel_name = item.name
                 try:
-                    conn = psycopg2.connect(database=database,
-                                            host=host,
-                                            user=user,
-                                            password=password,
-                                            port=port)
-                    cursor = conn.cursor()
-                    postgres_insert_query = """INSERT INTO "public".servers (server_id, channel_id, server_name, channel_name) VALUES (%s,%s,%s,%s)"""
-                    record_to_insert = (server_id, channel_id, server_name, channel_name)
-                    cursor.execute(postgres_insert_query, record_to_insert)
-                    conn.commit()
-                    conn.close()
+                    async with get_session() as session:
+                        server_settings = await session.exec(select(Server).where(Server.server_id == server_id))
+                        server_settings = server_settings.first()
+                        server_settings.birthday_channel_id = channel_id
+                        server_settings.birthday_channel_name = channel_name
+                        session.add(server_settings)
+                        await session.commit()
+                        await session.refresh(server_settings)
                     await interaction.response.send_message(
                         f'Выбранный канал: "{item.mention}". Не забудь добавить фразы поздравления командой "/add_birthday_message')
                 except psycopg2.Error as error:
@@ -87,8 +81,7 @@ class BirthdayRoleSelect(discord.ui.RoleSelect):
             server_id = interaction.guild_id
             for item in self.values:
                 role_id = item.id
-                role_name = item.name
-                await basevariables.update_server_role(interaction, server_id, role_id, role_name)
+                await basevariables.update_server_role(interaction, server_id, role_id)
         else:
             await interaction.response.send_message(f'{interaction.user.mention}, это не твоя менюшка, ухади',
                                                     ephemeral=True)
@@ -130,71 +123,71 @@ class BirthdaysButtonsSelect(discord.ui.View):
             item.disabled = True
         await self.message.edit(view=self)
 
-    @discord.ui.button(label='Создать новый', custom_id='create_new', style=discord.ButtonStyle.green,
-                       emoji='\U0001F58A')
-    async def new_channel(self, interaction, button):
-        current_user = self.user
-        if current_user == interaction.user:
-            await self.disable_all_items()
-            await interaction.response.send_modal(NewChannelName())
-        else:
-            await interaction.response.send_message(f'{interaction.user}, это не твоя кнопка, уходи', ephemeral=True)
-        options = [
-            discord.SelectOption(label='+0 Лондон', value='Europe/London'),
-            discord.SelectOption(label='+01 Центральная европа', value='Europe/Berlin'),
-            discord.SelectOption(label='+02 Калининград', value='Europe/Kaliningrad'),
-            discord.SelectOption(label='+03 Москва', value='Europe/Moscow'),
-            discord.SelectOption(label='+04 Самара', value='Europe/Samara'),
-            discord.SelectOption(label='+05 Екатеринбург', value='Asia/Yekaterinburg'),
-            discord.SelectOption(label='+06 Омск', value='Asia/Omsk'),
-            discord.SelectOption(label='+07 Новосибирск', value='Asia/Novosibirsk'),
-            discord.SelectOption(label='+08 Иркутск', value='Asia/Irkutsk'),
-            discord.SelectOption(label='+09 Якутск', value='Asia/Yakutsk'),
-            discord.SelectOption(label='+10 Владивосток', value='Asia/Vladivostok'),
-            # discord.SelectOption(),
-            # discord.SelectOption(),
-            # discord.SelectOption(),
-            # discord.SelectOption(),
-            # discord.SelectOption(),
-            # discord.SelectOption(),
-            # discord.SelectOption(),
-            # discord.SelectOption(),
-            # discord.SelectOption(),
-            # discord.SelectOption(),
-            # discord.SelectOption(),
-            # discord.SelectOption(),
-            # discord.SelectOption()
-        ]
-        super().__init__(custom_id='timezones_choice', placeholder='Твой часовой пояс', options=options, max_values=1,
-                         disabled=False)
-
-    async def callback(self, interaction: discord.Interaction):
-        interaction_guid = f'{interaction.guild.id}'
-        user = interaction.user.id
-        selected_timezone = f'{self.values}'
-        add_timezone_1 = selected_timezone[1:-1]
-        add_timezone = add_timezone_1[1:-1]
-        absolute_path = os.path.dirname(__file__)
-        logger.info(f'string: {add_timezone}')
-        table = f'bd_table.json'
-        file_1 = f'{os.path.join(absolute_path, table)}'
-        logger.info(f'self_values: {self.values}')
-        with open(file_1, 'r+') as file:
-            data = json.load(file)
-            logger.info(f'{data}')
-            for user_entry in data[interaction_guid]:
-                logger.info(f'user_entry: {user_entry}')
-                logger.info(f'my user id: {user}')
-                if 'user_id' in user_entry:
-                    if user_entry['user_id'] == user:
-                        user_entry["timezone"] = add_timezone
-                    else:
-                        logger.info('не подходит')
-                else:
-                    logger.info('не найдено entry')
-            file.seek(0)
-            json.dump(data, file, indent=4)
-        await interaction.response.send_message(f'{interaction.user.display_name}, спасибо, я всё записал(да)')
+    # @discord.ui.button(label='Создать новый', custom_id='create_new', style=discord.ButtonStyle.green,
+    #                    emoji='\U0001F58A')
+    # async def new_channel(self, interaction, button):
+    #     current_user = self.user
+    #     if current_user == interaction.user:
+    #         await self.disable_all_items()
+    #         await interaction.response.send_modal(NewChannelName())
+    #     else:
+    #         await interaction.response.send_message(f'{interaction.user}, это не твоя кнопка, уходи', ephemeral=True)
+    #     options = [
+    #         discord.SelectOption(label='+0 Лондон', value='Europe/London'),
+    #         discord.SelectOption(label='+01 Центральная европа', value='Europe/Berlin'),
+    #         discord.SelectOption(label='+02 Калининград', value='Europe/Kaliningrad'),
+    #         discord.SelectOption(label='+03 Москва', value='Europe/Moscow'),
+    #         discord.SelectOption(label='+04 Самара', value='Europe/Samara'),
+    #         discord.SelectOption(label='+05 Екатеринбург', value='Asia/Yekaterinburg'),
+    #         discord.SelectOption(label='+06 Омск', value='Asia/Omsk'),
+    #         discord.SelectOption(label='+07 Новосибирск', value='Asia/Novosibirsk'),
+    #         discord.SelectOption(label='+08 Иркутск', value='Asia/Irkutsk'),
+    #         discord.SelectOption(label='+09 Якутск', value='Asia/Yakutsk'),
+    #         discord.SelectOption(label='+10 Владивосток', value='Asia/Vladivostok'),
+    #         # discord.SelectOption(),
+    #         # discord.SelectOption(),
+    #         # discord.SelectOption(),
+    #         # discord.SelectOption(),
+    #         # discord.SelectOption(),
+    #         # discord.SelectOption(),
+    #         # discord.SelectOption(),
+    #         # discord.SelectOption(),
+    #         # discord.SelectOption(),
+    #         # discord.SelectOption(),
+    #         # discord.SelectOption(),
+    #         # discord.SelectOption(),
+    #         # discord.SelectOption()
+    #     ]
+    #     super().__init__(custom_id='timezones_choice', placeholder='Твой часовой пояс', options=options, max_values=1,
+    #                      disabled=False)
+    #
+    # async def callback(self, interaction: discord.Interaction):
+    #     interaction_guid = f'{interaction.guild.id}'
+    #     user = interaction.user.id
+    #     selected_timezone = f'{self.values}'
+    #     add_timezone_1 = selected_timezone[1:-1]
+    #     add_timezone = add_timezone_1[1:-1]
+    #     absolute_path = os.path.dirname(__file__)
+    #     logger.info(f'string: {add_timezone}')
+    #     table = f'bd_table.json'
+    #     file_1 = f'{os.path.join(absolute_path, table)}'
+    #     logger.info(f'self_values: {self.values}')
+    #     with open(file_1, 'r+') as file:
+    #         data = json.load(file)
+    #         logger.info(f'{data}')
+    #         for user_entry in data[interaction_guid]:
+    #             logger.info(f'user_entry: {user_entry}')
+    #             logger.info(f'my user id: {user}')
+    #             if 'user_id' in user_entry:
+    #                 if user_entry['user_id'] == user:
+    #                     user_entry["timezone"] = add_timezone
+    #                 else:
+    #                     logger.info('не подходит')
+    #             else:
+    #                 logger.info('не найдено entry')
+    #         file.seek(0)
+    #         json.dump(data, file, indent=4)
+    #     await interaction.response.send_message(f'{interaction.user.display_name}, спасибо, я всё записал(да)')
 
     @discord.ui.button(label='Выбрать существующий', custom_id='channel_select', style=discord.ButtonStyle.primary,
                        emoji='\U0001F4CB')
@@ -251,35 +244,33 @@ class GuildAlreadyExists(discord.ui.View):
     async def channel_change(self, interaction, button):
         if interaction.user == self.user:
             await self.disable_all_items()
-            database = basevariables.database
-            host = basevariables.host
-            user = basevariables.user
-            password = basevariables.password
-            port = basevariables.port
             try:
-                conn = psycopg2.connect(database=database,
-                                        host=host,
-                                        user=user,
-                                        password=password,
-                                        port=port)
-                cursor = conn.cursor()
-                postgres_insert_query = 'UPDATE "public".servers SET channel_id = %s, channel_name = %s WHERE server_id = %s'
-                server_id = f'{interaction.guild.id}'
-                channel_id = None
-                channel_name = None
-                update_values = (channel_id, channel_name, server_id,)
-                cursor.execute(postgres_insert_query, update_values)
-                conn.commit()
-                conn.close()
+                async with get_session() as session:
+
+                    server_id = interaction.guild.id
+                    channel_id = None
+                    channel_name = None
+                    server_settings = await session.exec(select(Server).where(Server.server_id == server_id))
+                    server_settings = server_settings.first()
+                    if not server_settings:
+                        server = Server(server_id=server_id, birthday_channel_id=channel_id, birthday_channel_name=channel_name)
+                        session.add(server)
+                        await session.commit()
+                        await session.refresh(server)
+                    else:
+                        server_settings.birthday_channel_id = channel_id
+                        server_settings.birthday_channel_name = channel_name
+                        await session.commit()
+                        await session.refresh(server_settings)
                 embed = discord.Embed(title='Давай выберем новый канал', colour=discord.Colour.dark_blue())
                 view = BirthdaysButtonsSelect()
                 await interaction.response.send_message('Тогда начинаем заново')
                 message = await interaction.channel.send(embed=embed, view=view)
                 view.message = message
                 view.user = interaction.user
-            except psycopg2.Error as error:
+            except Exception as error:
                 logger.info(f'{error}')
                 await interaction.response.send_message(
-                    'Удалить канал не получилось из-за ошибки "{}"'.format(error.__str__()))
+                    'Всё сломалость из-за ошибки "{}"'.format(error.__str__()))
         else:
             await interaction.response.send_message(f'{interaction.user}, это не твоя кнопка, уходи', ephemeral=True)

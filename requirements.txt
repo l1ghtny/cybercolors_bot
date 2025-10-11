@@ -1,12 +1,12 @@
-sqlalchemy
+jinja2
+sqlalchemy>=2.0.44
 requests>=2.32.3
 python-dotenv>=1.0.1
 discord.py>=2.4.0
 PyGithub>=2.4.0
 demoji>=1.1.0
 pytz>=2024.2
-openai>=1.109.1
-Pillow==10.3.0
+openai>=2.3.0
 numpy>=1.25.2
 aiohttp>=3.10.10
 sqlmodel>=0.0.27

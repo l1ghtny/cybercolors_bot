@@ -1,99 +1,136 @@
 import datetime
 import random
 
+import aiohttp
 import discord
 import requests
+from sqlmodel import select
+from sqlalchemy.orm import selectinload
+from jinja2 import Template
+
+
+from src.db.database import get_session
+from src.db.models import Birthday, Congratulations, User, Server, GlobalUser
+
 
 from src.misc_files import basevariables
-# from modules.error_handling.error_notification import send_error_message
 from src.modules.logs_setup import logger
 
 logger = logger.logging.getLogger("bot")
 
 
-async def check_birthday_new(client):
-    key = basevariables.t_key
-    list_timezones = await get_all_timezones(key)
-    zones = list_timezones['zones']
-    if list_timezones['status'] == 'OK':
-        conn, cursor = await basevariables.access_db_regular()
-        query = 'SELECT * from "public".users as users inner join "public".servers as servers using(server_id)'
-        cursor.execute(query)
-        values = cursor.fetchall()
-        conn.close()
-        for item in values:
-            guild_id = item['server_id']
-            guild_role_id = item['role_id']
-            logger.info(f'guild_role_id: {guild_role_id}')
-            guild = client.get_guild(guild_id)
-            guild_role = discord.utils.get(guild.roles, id=guild_role_id)
-            logger.info(f'guild_role: {guild_role.name}')
-            user_id = item['user_id']
-            user_timezone_name = item['timezone']
-            user = client.get_user(user_id)
-            member = guild.get_member(user_id)
-            if member is not None:
-                if user_timezone_name is not None:
-                    user_time = await get_user_time(user_timezone_name, zones)
-                    formatted = user_time
-                    today = datetime.date.today()
-                    t_year = today.year
-                    table_month = item['month']
-                    table_day = item['day']
-                    bd_date = datetime.datetime(t_year, table_month, table_day, hour=0, minute=0)
-                    json_date = datetime.datetime.fromtimestamp(formatted, datetime.timezone.utc)
-                    json_date_from_timestamp = datetime.datetime.utcnow()
-                    channel_id = item['channel_id']
-                    channel = client.get_channel(channel_id)
-                    logger.info(f'{user.name} др: {bd_date}')
-                    logger.info(f'{user.name} проверено в: {json_date}')
-                    logger.info(f'{user.name} дата по timestamp: {json_date_from_timestamp}')
-                    if json_date.date() == bd_date.date() and json_date.hour == bd_date.hour:
-                        conn, cursor = await basevariables.access_db_regular()
-                        query2 = 'SELECT * from "public".congratulations where server_id=%s'
-                        values2 = (guild_id,)
-                        cursor.execute(query2, values2)
-                        greetings = cursor.fetchall()
-                        greetings_text = []
-                        for rows in greetings:
-                            greetings_text.append(rows['bot_message'])
-                        message_text = random.choice(greetings_text)
-                        embed_description = eval(f'{message_text}')
-                        embed = discord.Embed(colour=discord.Colour.dark_gold(), description=embed_description)
+async def check_birthday_new(client: discord.Client):
+    """
+    Checks for user birthdays based on their timezone and sends a greeting.
+    """
+    key = basevariables.t_key  # Assuming t_key is still needed for the API
+    timezones_response = await get_all_timezones(key)
+
+    if timezones_response.get('status') != 'OK':
+        logger.error("TimezoneDB API returned a non-OK status.")
+        return
+
+    zones = timezones_response.get('zones', [])
+
+    async with get_session() as session:
+        # Efficient query for all birthdays and preload related memberships and server data
+        statement = select(Birthday).options(
+            selectinload(Birthday.global_user)
+                .selectinload(GlobalUser.memberships)
+                .selectinload(User.server)
+        )
+        result = await session.exec(statement)
+        all_birthdays = result.all()
+
+        for birthday in all_birthdays:
+            gu = birthday.global_user
+            if not birthday.timezone:
+                logger.info(f"User {gu.discord_id} has not set a timezone.")
+                continue
+
+            # Iterate through each server membership for this global user
+            for membership in gu.memberships:
+                server = membership.server  # Access the server through the membership relationship
+                # TODO: create a mechanism for managing the fact that the bot was deleted from a server
+                guild = await client.fetch_guild(server.server_id)
+                if not guild or not server.birthday_role_id:
+                    logger.warning(f"Guild or birthday role not found for server ID: {server.server_id}")
+                    continue
+
+                member = await guild.fetch_member(membership.user_id)
+                if not member:
+                    logger.info(f"User {membership.user_id} is no longer a member of guild {guild.name}")
+                    continue
+
+                # --- Date and Time Logic ---
+                user_timestamp = await get_user_time(birthday.timezone, zones)
+                if user_timestamp is None:
+                    continue
+
+                user_current_time = datetime.datetime.fromtimestamp(user_timestamp, datetime.timezone.utc)
+                birthday_date = datetime.datetime(user_current_time.year, int(birthday.month), birthday.day, hour=0, minute=0)
+
+                logger.info(
+                    f"Checking {member.name}: Birthday is {birthday_date.date()}, user's current time is {user_current_time}")
+
+                # --- Birthday Check ---
+                if user_current_time.date() == birthday_date.date() and user_current_time.hour == birthday_date.hour or user_current_time.date() == birthday_date.date() and birthday.role_added_at is None:
+                    logger.info(f"It's {member.name}'s birthday! 🎉")
+
+                    # 2. Query for congratulation messages for the specific server
+                    congrats_statement = select(Congratulations).where(Congratulations.server_id == server.server_id)
+                    congrats_result = await session.exec(congrats_statement)
+                    greetings = congrats_result.all()
+
+                    if not greetings:
+                        logger.warning(f"No congratulations messages found for server {server.server_name}")
+                        continue
+
+                    # --- Send Birthday Message ---
+                    greeting = random.choice(greetings)
+                    template = Template(greeting.bot_message)
+                    embed_description = template.render(user_mention=member.mention)
+
+                    embed = discord.Embed(colour=discord.Colour.dark_gold(), description=embed_description)
+
+                    channel = await client.fetch_channel(server.birthday_channel_id)
+                    if channel:
                         await channel.send(embed=embed)
-                        query3 = 'UPDATE "public".users SET role_added_at=%s WHERE user_id=%s AND server_id=%s'
-                        current_time = datetime.datetime.utcnow()
-                        values3 = (current_time, user_id, guild_id,)
-                        cursor.execute(query3, values3)
-                        conn.commit()
-                        conn.close()
-                        await member.add_roles(guild_role)
-                        logger.info('dr')
-                        logger.info('  ')
+
+                    # --- Add Role and Update Database ---
+                    birthday_role = guild.get_role(server.birthday_role_id)
+                    if birthday_role:
+                        await member.add_roles(birthday_role)
+                        # 3. Update the database record using the model object
+                        birthday.role_added_at = datetime.datetime.now(datetime.timezone.utc)
+                        await session.merge(birthday)
+                        await session.commit()
+                        await session.refresh(birthday)
+                        logger.info(
+                            f"Birthday role added to {member.name} and timestamp updated to {birthday.role_added_at}"
+                        )
+                        logger.info(f"Added birthday role to {member.name} and updated timestamp.")
                     else:
-                        logger.info('ne dr')
-                        logger.info('  ')
-                else:
-                    logger.info(f'{user_id} не указал свой часовой пояс, проверить невозможно')
-                    logger.info('  ')
-            else:
-                logger.info(f'{user_id} is not a member of the server "{guild.name}"')
-                logger.info('  ')
-        logger.info('the end')
-    else:
-        logger.error('TimezoneDB returned not OK')
-        message = 'TimezoneDB returned not OK'
-        module = 'birthdays'
-        # await send_error_message(client, message, module)
+                        logger.warning(
+                            f"Could not find birthday role with ID {server.birthday_role_id} in guild {guild.name}")
+
+    logger.info("Finished birthday check.")
 
 
 async def get_all_timezones(key):
-    request = f'http://api.timezonedb.com/v2.1/list-time-zone?key={key}&format=json'
-    response = requests.get(request).json()
-    return response
+    request_url = f'http://api.timezonedb.com/v2.1/list-time-zone?key={key}&format=json'
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(request_url) as response:
+                response.raise_for_status()  # Raises an HTTPError for bad responses (4xx or 5xx)
+                return await response.json()
+    except aiohttp.ClientError as e:
+        logger.error(f"Error fetching timezones: {e}")
+        return {}
 
 
 async def get_user_time(timezone, zones):
     for item in zones:
-        if item['zoneName'] == timezone:
-            return item['timestamp']
+        if item.get('zoneName') == timezone:
+            return item.get('timestamp')
+    return None

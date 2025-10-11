@@ -1,9 +1,14 @@
+from pprint import pprint
+
 import discord
 import discord.ui
 import psycopg2
+from sqlmodel import select
 
-from src.misc_files import basevariables
-from src.modules.birthdays_module.new_user.check_birthday_new_user import check_birthday_new_user
+from src.db.database import get_session
+from src.db.models import User, Birthday
+
+from src.modules.birthdays_module.hourly_check.check_birthday_redone import check_birthday_new
 from src.modules.logs_setup import logger
 
 logger = logger.logging.getLogger("bot")
@@ -53,31 +58,22 @@ class DropdownTimezones(discord.ui.View):
         max_values=1,
         disabled=False
     )
-    async def callback(self, interaction, select):
+    async def callback(self, interaction, select_model):
         if self.user == interaction.user:
             self.disabled = True
-            interaction_guid = f'{interaction.guild.id}'
-            user_id = f'{interaction.user.id}'
-            selected_timezone = f'{select.values}'
-            add_timezone_1 = selected_timezone[1:-1]
-            add_timezone = add_timezone_1[1:-1]
-            database = basevariables.database
-            host = basevariables.host
-            user = basevariables.user
-            password = basevariables.password
-            port = basevariables.port
+            user_id = interaction.user.id
+            selected_timezone = select_model.values
+            add_timezone = selected_timezone[0]
+
             try:
-                conn = psycopg2.connect(database=database,
-                                        host=host,
-                                        user=user,
-                                        password=password,
-                                        port=port)
-                cursor = conn.cursor()
-                postgres_insert_query = """UPDATE "public".users SET timezone = %s WHERE user_id = %s AND server_id =%s"""
-                record_to_insert = (add_timezone, user_id, interaction_guid)
-                cursor.execute(postgres_insert_query, record_to_insert)
-                conn.commit()
-                conn.close()
+                async with get_session() as session:
+                    query = select(Birthday).where(Birthday.user_id == user_id)
+                    result = await session.exec(query)
+                    user_data = result.first()
+                    user_data.timezone = add_timezone
+                    session.add(user_data)
+                    await session.commit()
+                    await session.refresh(user_data)
                 await self.disable_all_items()
                 embed = discord.Embed(title='Спасибо, я всё записал. Проверяй', colour=discord.Colour.orange())
                 embed.add_field(name=f'Выбранный день: {self.day}', value='')
@@ -85,8 +81,8 @@ class DropdownTimezones(discord.ui.View):
                 embed.add_field(name='Выбранный часовой пояс:', value=add_timezone, inline=False)
                 embed.add_field(name='', value=f'**{interaction.user.mention}, я всех приглашу на твой день рождения :)**')
                 await interaction.response.send_message(embed=embed)
-                await check_birthday_new_user(client=self.client, user=interaction.user, interaction=interaction)
-            except psycopg2.Error as error:
+                await check_birthday_new(client=self.client)
+            except Exception as error:
                 await interaction.response.send_message(
                     'Добавить часовой пояс не получилось из-за ошибки "{}"'.format(error.__str__()))
                 logger.info(f'{error}')

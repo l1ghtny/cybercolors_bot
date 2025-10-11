@@ -15,3 +15,4 @@ async def manage_message(message, user):
         reply = None
     await message.delete()
     await twitter_link_replace(message, user,  reply, attachment=files)
+    # TODO: add a button to delete the message

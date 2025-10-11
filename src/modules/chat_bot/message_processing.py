@@ -1,30 +1,29 @@
 import os
 
 from src.modules.chat_bot.create_response import create_one_response, create_response_to_dialog
-from src.misc_files.blocking_script import run_blocking
 from src.misc_files.check_if_message_has_reply import check_replies
 
 
 async def decide_on_response(message, client):
     if check_replies(message) is False:
-        bot_response, token_total = await run_blocking(client, create_one_response, message, client)
+        bot_response, token_total = await create_one_response(message, client)
     else:
         n, messages_raw = await count_replies(message)
         if n > 8:
             bot_response = 'Извини, я могу запомнить только пять запросов, не более. Если хочешь пообщаться, обратись ко мне заново'
             token_total = 0
         else:
-            if verify_user(messages_raw, message, client) is True:
-                messages_processed = organise_messages(messages_raw, client)
+            if verify_user(messages_raw, message, client):
+                messages_processed = await organise_messages(messages_raw, client)
                 messages_processed.append({'role': 'user', 'content': message.content})
-                bot_response, token_total = await run_blocking(client, create_response_to_dialog, messages_processed)
+                bot_response, token_total = await create_response_to_dialog(messages_processed)
             else:
                 bot_response = 'В цепочке ответов более одного пользователя. Я могу поддерживать диалог только с одним пользователем, извини'
                 token_total = 0
     return bot_response, token_total
 
 
-def check_bot_mention(message_to_check, client):
+async def check_bot_mention(message_to_check, client):
     mentions = message_to_check.mentions
     has_bot_request = False
     for i in mentions:
@@ -33,7 +32,7 @@ def check_bot_mention(message_to_check, client):
     return has_bot_request
 
 
-def check_for_channel(message_to_check_for_channel, client):
+async def check_for_channel(message_to_check_for_channel, client):
     bot_channel_id = int(os.getenv('chat_gpt_channel_id'))
     bot_den_channel_id = int(os.getenv('new_channel_chat_gpt_id'))
     bot_channel = client.get_channel(bot_channel_id)
@@ -45,7 +44,7 @@ def check_for_channel(message_to_check_for_channel, client):
     return allowed_channel, bot_channel
 
 
-def remove_bot_mention(message_to_remove_mention, client):
+async def remove_bot_mention(message_to_remove_mention, client):
     content = message_to_remove_mention.content
     bot_id = client.user.id
     new_content = content.replace(f'<@{bot_id}>', '')
@@ -68,7 +67,7 @@ async def count_replies(message):
     return n, messages_raw
 
 
-def organise_messages(messages, client):
+async def organise_messages(messages, client):
     messages.reverse()
     messages_processed = []
     for i in messages:
