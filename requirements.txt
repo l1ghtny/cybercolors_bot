@@ -1,3 +1,4 @@
+fastapi-swagger-dark>=0.0.7
 jinja2
 sqlalchemy>=2.0.44
 requests>=2.32.3
@@ -11,3 +12,4 @@ numpy>=1.25.2
 aiohttp>=3.10.10
 sqlmodel>=0.0.27
 asyncpg>=0.30.0
+fastapi[standard]>=0.119.0
