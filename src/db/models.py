@@ -1,7 +1,7 @@
 ﻿import uuid
 from typing import List, Optional
 from uuid import UUID, uuid4
-from datetime import datetime
+from datetime import datetime, UTC
 
 from sqlalchemy import BigInteger, Column, ForeignKey
 from sqlmodel import Field, Relationship, SQLModel
@@ -65,7 +65,7 @@ class Birthday(SQLModel, table=True):
 
 class Message(SQLModel, table=True):
     message_id: UUID = Field(default_factory=uuid4, primary_key=True)
-    added_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
+    added_at: datetime = Field(default_factory=datetime.now(UTC), nullable=False)
     request_phrase: str
     respond_phrase: str
 
@@ -102,3 +102,72 @@ class PastNickname(SQLModel, table=True):
 class VoiceChannel(SQLModel, table=True):
     server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("server.server_id"), nullable=False, primary_key=True))
     channel_id: int = Field(sa_column=Column(BigInteger, nullable=False, primary_key=True))
+
+
+# --- New Models for Moderation ---
+
+from enum import Enum
+
+
+class ActionType(str, Enum):
+    WARN = "warn"
+    MUTE = "mute"
+    BAN = "ban"
+
+
+class ModerationAction(SQLModel, table=True):
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    action_type: ActionType
+
+    server_id: int = Field(sa_column=Column(BigInteger, foreign_key="server.server_id"))
+    target_user_id: int = Field(sa_column=Column(BigInteger, foreign_key="global_users.discord_id"))
+    moderator_user_id: int = Field(sa_column=Column(BigInteger, foreign_key="global_users.discord_id"))
+
+    reason: str
+    created_at: datetime = Field(default_factory=datetime.now(UTC),)
+    expires_at: Optional[datetime] = None  # For temporary mutes/bans
+    is_active: bool = True  # To mark if a ban/mute has been cancelled
+
+
+class UserActivity(SQLModel, table=True):
+    # Composite primary key for uniqueness
+    user_id: int = Field(sa_column=Column(BigInteger, foreign_key="global_users.discord_id", primary_key=True))
+    server_id: int = Field(sa_column=Column(BigInteger, foreign_key="server.server_id", primary_key=True))
+    channel_id: int = Field(sa_column=Column(BigInteger))
+
+    message_count: int = 0
+    last_message_at: datetime = Field(default_factory=datetime.now(UTC))
+
+
+# In src/db/models.py
+
+class TempVoiceLog(SQLModel, table=True):
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    server_id: int = Field(foreign_key="server.server_id")
+    channel_id: int = Field(sa_column=Column(BigInteger))
+    channel_name: str
+    created_at: datetime
+    deleted_at: Optional[datetime] = None
+
+
+class MessageLog(SQLModel, table=True):
+    message_id: int = Field(sa_column=Column(BigInteger, primary_key=True))
+    log_id: UUID = Field(foreign_key="tempvoicelog.id")  # Link to the channel log
+
+    user_id: int = Field(foreign_key="global_users.discord_id")
+    content: str
+    created_at: datetime
+    # For replies
+    reply_to_message_id: Optional[int] = Field(sa_column=Column(BigInteger, nullable=True))
+
+
+class AttachmentLog(SQLModel, table=True):
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    message_id: int = Field(sa_column=Column(BigInteger, foreign_key="messagelog.message_id"))
+
+    # This would store the key or path to the file in your S3-like storage
+    storage_key: str
+    file_name: str
+    content_type: str
+
+
