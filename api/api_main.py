@@ -1,10 +1,11 @@
 ﻿from fastapi import FastAPI, APIRouter
 import fastapi_swagger_dark as fsd
 
-from routers.auth import auth
-from routers.birthdays import birthdays
-from routers.replies import replies
-from routers.servers import servers
+from api.routers.auth import auth
+from api.routers.birthdays import birthdays
+from api.routers.moderation import moderation
+from api.routers.replies import replies
+from api.routers.servers import servers
 
 app = FastAPI(title="CyberColors API", version="0.1.0", docs_url=None, redoc_url=None)
 
@@ -18,3 +19,4 @@ app.include_router(docs_router)
 app.include_router(birthdays)
 app.include_router(servers)
 app.include_router(replies)
+app.include_router(moderation)

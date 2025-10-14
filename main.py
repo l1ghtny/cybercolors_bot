@@ -10,6 +10,7 @@ import pytz
 from sqlmodel import select
 
 from src.commands.misc.cats import cat_command, cat_command_text
+from src.commands.moderation.warn import warn
 from src.db.database import get_session
 from src.db.models import Server, Message
 from src.modules.birthdays_module.user_validation.user_validate_time import users_time
@@ -34,7 +35,7 @@ load_dotenv()
 # Grab the API token from the .env file.
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 DISCORD_TOKEN_TEST = os.getenv('DISCORD_TOKEN_TEST')
-
+TEST_GUILD_ID = os.getenv('TEST_GUILD_ID')
 
 intents = discord.Intents.all()
 intents.message_content = True
@@ -54,7 +55,14 @@ class Aclient(discord.AutoShardedClient):
     async def on_ready(self):
         await self.wait_until_ready()
         if not self.synced:  # check if slash commands have been synced
-            await tree.sync()  # global (can take 1-24 hours)
+            if TEST_GUILD_ID:
+                guild = discord.Object(id=int(TEST_GUILD_ID))
+                tree.copy_global_to(guild=guild)
+                await tree.sync(guild=guild)
+                print(f"Commands synced to guild {TEST_GUILD_ID}.")
+            else:
+                await tree.sync()  # global (can take 1-24 hours)
+                print("Commands synced globally.")
             self.synced = True
         if not self.added:
             self.added = True
@@ -65,6 +73,7 @@ class Aclient(discord.AutoShardedClient):
 
 client = Aclient()
 tree = app_commands.CommandTree(client)
+tree.add_command(warn)
 
 
 # Add birthdays to the database
@@ -168,7 +177,7 @@ async def add_reply(interaction: discord.Interaction, phrase: str, response: str
 
 @tree.command(name='delete_reply', description='Позволяет удалить заведенные триггеры на фразы')
 async def delete_reply_2(interaction: discord.Interaction, reply: str):
-    reply = '%' + reply.replace("\\\\", "\\") + '%'
+    reply =( '%' + reply.replace("\\\\", "\\") + '%')
     user = interaction.user
     server_id = interaction.guild_id
     async with get_session() as session:
@@ -256,8 +265,8 @@ async def show_replies(interaction: discord.Interaction):
         result = await session.exec(query)
         replies = result.all()
         for item in replies:
-            request = item['request_phrase']
-            response = item['respond_phrase']
+            request = item.request_phrase
+            response = item.respond_phrase
             data.append({
                 'label': f'Триггер: {request}',
                 'value': f'Ответ: {response}'

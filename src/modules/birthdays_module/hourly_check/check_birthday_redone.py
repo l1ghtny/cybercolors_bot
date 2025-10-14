@@ -10,7 +10,7 @@ from jinja2 import Template
 
 
 from src.db.database import get_session
-from src.db.models import Birthday, Congratulations, User, Server, GlobalUser
+from src.db.models import Birthday, Congratulation, User, Server, GlobalUser
 
 
 from src.misc_files import basevariables
@@ -78,7 +78,7 @@ async def check_birthday_new(client: discord.Client):
                     logger.info(f"It's {member.name}'s birthday! 🎉")
 
                     # 2. Query for congratulation messages for the specific server
-                    congrats_statement = select(Congratulations).where(Congratulations.server_id == server.server_id)
+                    congrats_statement = select(Congratulation).where(Congratulation.server_id == server.server_id)
                     congrats_result = await session.exec(congrats_statement)
                     greetings = congrats_result.all()
 

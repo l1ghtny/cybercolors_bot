@@ -20,9 +20,9 @@ async def check_for_replies(message):
         result = await session.exec(query)
         all_rows = result.all()
     for item in all_rows:
-        request_base = item['request_phrase']
+        request_base = item.request_phrase
         request = request_base.translate(str.maketrans('', '', string.punctuation))
-        response_base = (item['respond_phrase'])
+        response_base = item.respond_phrase
         response = string.Template("f'$string'").substitute(string=response_base)
         if request_base.startswith('<'):
             if request in message_content:
