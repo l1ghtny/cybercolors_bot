@@ -1,5 +1,4 @@
 ﻿import os
-from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
 from dotenv import load_dotenv
@@ -9,28 +8,22 @@ from sqlalchemy.orm import sessionmaker
 
 load_dotenv()
 
+# It's a good practice to load environment variables once
 DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL environment variable is not set")
 
-
+# The engine is the source of database connectivity.
+# echo=True is great for debugging as it logs all SQL statements.
 engine = create_async_engine(DATABASE_URL, echo=True)
 
-# --- 3. Create a Session Maker ---
-# This configured "Session" class will be used to create new session objects.
-AsyncSessionLocal = sessionmaker(
-    bind=engine,
-    class_=AsyncSession,
-    expire_on_commit=False,  # Important for async context
-)
 
-# --- 4. Async Session Generator ---
-# This is the main function you'll use to get a database session.
-# It's a context manager that handles opening and closing the session.
-@asynccontextmanager
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     """
-    Provides a database session and ensures it's closed correctly.
+    FastAPI dependency that provides a database session,
+    handles commits, rollbacks, and closing.
     """
-    async with AsyncSessionLocal() as session:
+    async with AsyncSession(engine) as session:
         try:
             yield session
             await session.commit()
@@ -38,4 +31,6 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
             await session.rollback()
             raise
         finally:
+            # The 'async with' context manager ensures the session is closed.
+            # This 'finally' block is for clarity and to ensure cleanup even if something unexpected happens.
             await session.close()
