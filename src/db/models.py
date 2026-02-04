@@ -1,10 +1,15 @@
 ﻿import uuid
 from typing import List, Optional
 from uuid import UUID, uuid4
-from datetime import datetime, UTC
+from datetime import datetime, UTC, timezone
 
 from sqlalchemy import BigInteger, Column, ForeignKey, TIMESTAMP
 from sqlmodel import Field, Relationship, SQLModel
+
+
+def utcnow_utc_tz():
+    return datetime.now(timezone.utc).replace(tzinfo=UTC)
+
 
 # --- Main Models ---
 
@@ -15,6 +20,7 @@ class Server(SQLModel, table=True):
     birthday_channel_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
     birthday_channel_name: Optional[str] = None
     birthday_role_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
+    icon : Optional[str] = None
 
     users: List["User"] = Relationship(back_populates="server")
     messages: List["Message"] = Relationship(back_populates="server")
@@ -28,12 +34,22 @@ class GlobalUser(SQLModel, table=True):
     discord_id: int = Field(sa_column=Column(BigInteger, primary_key=True))
     username: Optional[str] = None
     joined_discord: Optional[datetime] = Field(default=None, sa_column=Column(TIMESTAMP(timezone=True)))
+    avatar_hash: Optional[str] = None
 
     # Relationships
     memberships: List["User"] = Relationship(back_populates="global_user")
     birthday: Optional["Birthday"] = Relationship(back_populates="global_user")
     congratulations: List["Congratulation"] = Relationship(back_populates="added_by")
     past_nicknames: List["PastNickname"] = Relationship(back_populates="global_user")
+    targeted_by_mod_action: List["ModerationAction"] = Relationship(
+        back_populates="global_user_target",
+        sa_relationship_kwargs={'foreign_keys': '[ModerationAction.target_user_id]'}
+    )
+    acting_moderator: List["ModerationAction"] = Relationship(
+        back_populates='global_user_moderator',
+        sa_relationship_kwargs={'foreign_keys': '[ModerationAction.moderator_user_id]'}
+    )
+
 
 
 class User(SQLModel, table=True):
@@ -68,7 +84,7 @@ class Birthday(SQLModel, table=True):
 class Message(SQLModel, table=True):
     __tablename__ = "messages"
     message_id: UUID = Field(default_factory=uuid4, primary_key=True)
-    added_at: datetime = Field(default_factory= datetime.now, nullable=False)
+    added_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
     request_phrase: str
     respond_phrase: str
 
@@ -83,7 +99,7 @@ class Congratulation(SQLModel, table=True):
     __tablename__ = "congratulations"
     id: UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     bot_message: str
-    added_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
+    added_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
 
     # --- Relationships ---
     server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False))
@@ -91,6 +107,17 @@ class Congratulation(SQLModel, table=True):
 
     added_by_user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False))
     added_by: GlobalUser = Relationship(back_populates="congratulations")
+
+
+class Replies(SQLModel, table=True):
+    __tablename__ = "replies"
+
+    id: UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    user_message: str = Field(nullable=False)
+    bot_reply: str = Field(nullable=False, index=True)
+    server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False))
+    created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+    created_by_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False))
 
 
 class PastNickname(SQLModel, table=True):
@@ -135,6 +162,15 @@ class ModerationAction(SQLModel, table=True):
     expires_at: Optional[datetime] = None  # For temporary mutes/bans
     is_active: bool = True  # To mark if a ban/mute has been cancelled
 
+    global_user_target: GlobalUser = Relationship(
+        back_populates="targeted_by_mod_action",
+        sa_relationship_kwargs={'foreign_keys': '[ModerationAction.target_user_id]'}
+    )
+    global_user_moderator: GlobalUser = Relationship(
+        back_populates="acting_moderator",
+        sa_relationship_kwargs={'foreign_keys': '[ModerationAction.moderator_user_id]'}
+    )
+
 
 class UserActivity(SQLModel, table=True):
     __tablename__ = "user_activity"
@@ -146,8 +182,6 @@ class UserActivity(SQLModel, table=True):
     message_count: int = 0
     last_message_at: datetime = Field(default_factory= datetime.now)
 
-
-# In src/db/models.py
 
 class TempVoiceLog(SQLModel, table=True):
     __tablename__ = "temp_voice_log"

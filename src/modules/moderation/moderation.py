@@ -44,6 +44,6 @@ async def check_if_server_exists(server: d.Guild, session: AsyncSession):
     result = await session.exec(query)
     server_in_db = result.first()
     if not server_in_db:
-        new_server = Server(server_id=server.id, server_name=server.name)
+        new_server = Server(server_id=server.id, server_name=server.name, icon=server.icon)
         session.add(new_server)
         # The commit will be handled by the API endpoint.

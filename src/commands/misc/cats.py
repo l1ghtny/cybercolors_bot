@@ -24,7 +24,6 @@ async def cat_command(interaction):
 
 async def get_a_cat_with_text(text):
     r = requests.get(url=f'https://cataas.com/cat/says/{text}?fontColor=%23FFFFFF', stream=True)
-    print(r.url)
     name = random.choice(string.ascii_lowercase)
     fp = open(f'{name}.png', 'wb')
     fp.write(r.content)
