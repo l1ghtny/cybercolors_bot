@@ -1,4 +1,5 @@
-﻿import os
+﻿import logging
+import os
 from typing import Annotated
 
 import httpx
@@ -11,10 +12,17 @@ from src.db.database import get_session
 from src.db.models import GlobalUser
 
 load_dotenv()
+
+logger = logging.getLogger("uvicorn")
+
 auth = APIRouter(prefix="/auth", tags=["auth"])
 
+
+test_bot_token = os.getenv("DISCORD_TOKEN_TEST")
+bot_token = os.getenv("DISCORD_TOKEN")
 # --- Discord OAuth2 Credentials ---
 DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID")
+DISCORD_TEST_CLIENT_ID = os.getenv("DISCORD_TEST_CLIENT_ID")
 DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET")
 DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI")
 DISCORD_API_BASE_URL = "https://discord.com/api/v10"
@@ -121,8 +129,18 @@ async def get_user_guilds(authorization: Annotated[str | None, Header()] = None)
                 guild for guild in guilds_json
                 if guild["owner"] or (int(guild["permissions"]) & ADMINISTRATOR_FLAG)
             ]
+            authorized_guilds_with_bot = []
+            for guild in authorized_guilds:
+                bot_headers = {"Authorization": f"Bot {test_bot_token}"}
+                me = (await client.get(f"{DISCORD_API_BASE_URL}/users/@me", headers=bot_headers)).json()
+                bot_in_guild = await client.get(f"{DISCORD_API_BASE_URL}/guilds/{guild['id']}/members/{me['id']}", headers=bot_headers)
+                if bot_in_guild.status_code == 200:
+                    authorized_guilds_with_bot.append(guild)
+                else:
+                    logger.info(f'Cannot get the user/guild for the guild name "{guild["name"]}" and id "{guild["id"]}. Bot is probably not there or an error has occurred')
 
-            return authorized_guilds
+
+            return authorized_guilds_with_bot
 
         except httpx.HTTPStatusError as e:
             # Handle cases where the token might be expired or invalid

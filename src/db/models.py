@@ -8,7 +8,7 @@ from sqlmodel import Field, Relationship, SQLModel
 
 
 def utcnow_utc_tz():
-    return datetime.now(timezone.utc).replace(tzinfo=UTC)
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 # --- Main Models ---
