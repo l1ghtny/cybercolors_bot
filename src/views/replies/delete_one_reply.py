@@ -2,7 +2,7 @@ import discord.ui
 from sqlmodel import select
 
 from src.db.database import get_session
-from src.db.models import Message
+from src.db.models import Replies as Message
 from src.misc_files import basevariables
 
 

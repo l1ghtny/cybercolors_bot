@@ -10,7 +10,7 @@ from datetime import datetime
 # Import your dependency and new models
 from src.db.database import get_session
 from src.db.models import ModerationAction, ActionType, GlobalUser
-from src.modules.moderation.moderation import check_if_user_exists, check_if_server_exists
+from src.modules.moderation.moderation_helpers import check_if_user_exists, check_if_server_exists
 
 moderation = APIRouter(prefix="/moderation", tags=["moderation"])
 

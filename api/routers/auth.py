@@ -137,7 +137,7 @@ async def get_user_guilds(authorization: Annotated[str | None, Header()] = None)
                 if bot_in_guild.status_code == 200:
                     authorized_guilds_with_bot.append(guild)
                 else:
-                    logger.info(f'Cannot get the user/guild for the guild name "{guild["name"]}" and id "{guild["id"]}. Bot is probably not there or an error has occurred')
+                    logger.info(f'Cannot get the user/guild for the guild name "{guild["name"]}" and id "{guild["id"]}". Bot is probably not there or an error has occurred')
 
 
             return authorized_guilds_with_bot

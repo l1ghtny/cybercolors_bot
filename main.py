@@ -1,3 +1,5 @@
+import asyncio
+
 import discord
 import discord.ui
 from discord import app_commands
@@ -8,11 +10,12 @@ import uuid
 import demoji
 import pytz
 from sqlmodel import select
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.commands.misc.cats import cat_command, cat_command_text
 from src.commands.moderation.warn import warn
-from src.db.database import get_session
-from src.db.models import Server, Message
+from src.db.database import get_session, engine
+from src.db.models import Server, Replies as Message, GlobalUser
 from src.modules.birthdays_module.user_validation.user_validate_time import users_time
 from src.commands.birthdays.add_new_birthday import add_birthday
 from src.commands.birthdays.show_birthday_list import send_birthday_list
@@ -21,6 +24,7 @@ from src.modules.birthdays_module.hourly_check.check_roles import check_roles
 from src.modules.birthdays_module.hourly_check.check_time import check_time
 from src.modules.birthdays_module.user_validation.validation_main import main_validation_process
 from src.modules.logs_setup import logger
+from src.modules.on_message_processing.background_message_processing import process_background_tasks
 from src.modules.on_message_processing.check_for_links import delete_server_links
 from src.modules.on_message_processing.gpt_bot_reply import look_for_bot_reply
 from src.modules.on_message_processing.replies import check_for_replies
@@ -50,6 +54,45 @@ class Aclient(discord.AutoShardedClient):
         super().__init__(intents=intents, shard_count=2)
         self.added = False
         self.synced = False  # we use this so the bot doesn't sync commands more than once
+
+        self.known_global_users = set()
+
+    async def setup_hook(self):
+        """
+        This method is called automatically by discord.py once the client
+        is logged in, but BEFORE it connects to the WebSocket.
+        It is the safe place for async DB calls.
+        """
+        # 2. Call your cache loader
+        await self.load_user_cache()
+        await self.load_current_server_rules()
+
+    async def load_user_cache(self):
+        """
+        Fetch existing user IDs from Postgres and store in memory.
+        """
+        logger.info("⏳ Pre-loading global users from database...")
+        try:
+            # Adjust these imports based on your actual file structure
+            # from the database import engine, GlobalUser
+
+            async with AsyncSession(engine) as session:
+                # Select only the ID column for efficiency
+                statement = select(GlobalUser.discord_id)
+                result = await session.exec(statement)
+                user_ids = result.all()
+
+                # Convert to a set for O(1) lookups
+                self.known_global_users = set(user_ids)
+
+            logger.info(f"✅ Cache warm! Loaded {len(self.known_global_users)} users.")
+
+        except Exception as e:
+            logger.error(f"❌ Failed to load user cache: {e}")
+
+    async def load_current_server_rules(self):
+
+
 
     # commands local sync
     async def on_ready(self):
@@ -308,7 +351,9 @@ async def on_message(message):
     user = message.author
     message_content_base = message.content.lower()
     server = message.guild
-    await delete_server_links(message, message_content_base)
+    link_deleted = await delete_server_links(message, message_content_base)
+    if link_deleted is True:
+        return
     if user and server:
         if user == client.user:
             return
@@ -320,6 +365,7 @@ async def on_message(message):
             database_found, server_id = await check_for_replies(message)
         if database_found is False:
             await look_for_bot_reply(message, client)
+        asyncio.create_task(process_background_tasks(message, client.current_server_rules, client.known_global_users))
 
 
 # BD MODULE with checking task

@@ -23,7 +23,7 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
     FastAPI dependency that provides a database session,
     handles commits, rollbacks, and closing.
     """
-    async with AsyncSession(engine) as session:
+    async with AsyncSession(engine, expire_on_commit=False) as session:
         try:
             yield session
             await session.commit()
@@ -34,3 +34,8 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
             # The 'async with' context manager ensures the session is closed.
             # This 'finally' block is for clarity and to ensure cleanup even if something unexpected happens.
             await session.close()
+
+
+async def get_async_session():
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        yield session

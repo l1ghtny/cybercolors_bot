@@ -1,6 +1,7 @@
 from sqlmodel import select
+from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.db.database import get_session
+from src.db.database import get_session, engine
 from src.db.models import User
 from src.modules.logs_setup import logger
 
@@ -18,7 +19,7 @@ async def manage_invalid_users(client):
 
 
 async def get_invalid_users(client):
-    async with get_session()as session:
+    async with AsyncSession(engine) as session:
         query = select(User).where(User.is_member == False)
         result = await session.exec(query)
         users = result.all()
@@ -36,7 +37,7 @@ async def get_invalid_users(client):
 
 
 async def remove_invalid_user_ids(ids_list):
-    async with get_session() as session:
+    async with AsyncSession(engine) as session:
         query = select(User).where(User.user_id.in_(ids_list))
         result = await session.exec(query)
         users_to_delete = result.all()
