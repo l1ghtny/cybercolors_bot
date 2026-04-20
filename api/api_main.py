@@ -3,6 +3,7 @@ import fastapi_swagger_dark as fsd
 from starlette.middleware.cors import CORSMiddleware
 
 from api.routers.auth import auth
+from api.routers.activity import activity
 from api.routers.birthdays import birthdays
 from api.routers.moderation import moderation
 from api.routers.replies import replies
@@ -31,6 +32,7 @@ fsd.install(docs_router)
 # Include your routes and the docs router
 app.include_router(auth)
 app.include_router(docs_router)
+app.include_router(activity)
 app.include_router(birthdays)
 app.include_router(servers)
 app.include_router(replies)

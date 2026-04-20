@@ -3,7 +3,7 @@ from typing import List, Optional
 from uuid import UUID, uuid4, uuid7
 from datetime import datetime, UTC, timezone
 
-from sqlalchemy import BigInteger, Column, ForeignKey, TIMESTAMP
+from sqlalchemy import BigInteger, Column, ForeignKey, TIMESTAMP, Text, UniqueConstraint
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -28,6 +28,9 @@ class Server(SQLModel, table=True):
     voice_channels: List["VoiceChannel"] = Relationship(back_populates="server")
     temp_voice_logs: List["TempVoiceLog"] = Relationship(back_populates="server")
     moderation_actions: List["ModerationAction"] = Relationship(back_populates="server")
+    moderation_cases: List["ModerationCase"] = Relationship(back_populates="server")
+    deleted_messages: List["DeletedMessage"] = Relationship(back_populates="server")
+    past_nicknames: List["PastNickname"] = Relationship(back_populates="server")
     user_activity: List["UserActivity"] = Relationship(back_populates="server")
 
 
@@ -52,6 +55,26 @@ class GlobalUser(SQLModel, table=True):
     acting_moderator: List["ModerationAction"] = Relationship(
         back_populates='global_user_moderator',
         sa_relationship_kwargs={'foreign_keys': '[ModerationAction.moderator_user_id]'}
+    )
+    opened_moderation_cases: List["ModerationCase"] = Relationship(
+        back_populates="opened_by",
+        sa_relationship_kwargs={'foreign_keys': '[ModerationCase.opened_by_user_id]'}
+    )
+    closed_moderation_cases: List["ModerationCase"] = Relationship(
+        back_populates="closed_by",
+        sa_relationship_kwargs={'foreign_keys': '[ModerationCase.closed_by_user_id]'}
+    )
+    moderation_case_notes: List["ModerationCaseNote"] = Relationship(back_populates="author")
+    moderation_case_evidence: List["ModerationCaseEvidence"] = Relationship(back_populates="added_by")
+    linked_mod_actions: List["ModerationCaseActionLink"] = Relationship(back_populates="linked_by")
+    action_deleted_messages: List["ModerationActionDeletedMessageLink"] = Relationship(back_populates="linked_by")
+    deleted_messages_authored: List["DeletedMessage"] = Relationship(
+        back_populates="author",
+        sa_relationship_kwargs={'foreign_keys': '[DeletedMessage.author_user_id]'}
+    )
+    deleted_messages_removed: List["DeletedMessage"] = Relationship(
+        back_populates="deleted_by",
+        sa_relationship_kwargs={'foreign_keys': '[DeletedMessage.deleted_by_user_id]'}
     )
 
     replies: List["Replies"] = Relationship(back_populates="created_by")
@@ -121,10 +144,13 @@ class PastNickname(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     discord_name: str
     server_name: str
+    server_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=True, index=True))
+    recorded_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
 
     # --- Relationships ---
     user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False))
     global_user: GlobalUser = Relationship(back_populates="past_nicknames")
+    server: Optional[Server] = Relationship(back_populates="past_nicknames")
 
 
 class VoiceChannel(SQLModel, table=True):
@@ -170,6 +196,167 @@ class ModerationAction(SQLModel, table=True):
     )
 
     server: Server = Relationship(back_populates="moderation_actions")
+    case_links: List["ModerationCaseActionLink"] = Relationship(back_populates="moderation_action")
+    deleted_message_links: List["ModerationActionDeletedMessageLink"] = Relationship(back_populates="moderation_action")
+
+
+class CaseStatus(str, Enum):
+    OPEN = "open"
+    CLOSED = "closed"
+    ARCHIVED = "archived"
+
+
+class EvidenceType(str, Enum):
+    SCREENSHOT = "screenshot"
+    LINK = "link"
+    NOTE = "note"
+    FILE = "file"
+
+
+class CaseUserRole(str, Enum):
+    PRIMARY_TARGET = "primary_target"
+    TARGET = "target"
+    REPORTER = "reporter"
+    WITNESS = "witness"
+    MODERATOR = "moderator"
+    RELATED = "related"
+
+
+class ModerationCase(SQLModel, table=True):
+    __tablename__ = "moderation_cases"
+
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False, index=True))
+    target_user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False, index=True))
+    opened_by_user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False))
+    title: str = Field(nullable=False)
+    summary: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    status: CaseStatus = Field(default=CaseStatus.OPEN, nullable=False, index=True)
+    created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+    closed_at: Optional[datetime] = None
+    closed_by_user_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=True))
+
+    server: Server = Relationship(back_populates="moderation_cases")
+    target_user: GlobalUser = Relationship(
+        sa_relationship_kwargs={'foreign_keys': '[ModerationCase.target_user_id]'}
+    )
+    opened_by: GlobalUser = Relationship(
+        back_populates="opened_moderation_cases",
+        sa_relationship_kwargs={'foreign_keys': '[ModerationCase.opened_by_user_id]'}
+    )
+    closed_by: Optional[GlobalUser] = Relationship(
+        back_populates="closed_moderation_cases",
+        sa_relationship_kwargs={'foreign_keys': '[ModerationCase.closed_by_user_id]'}
+    )
+    notes: List["ModerationCaseNote"] = Relationship(back_populates="moderation_case")
+    evidence_items: List["ModerationCaseEvidence"] = Relationship(back_populates="moderation_case")
+    action_links: List["ModerationCaseActionLink"] = Relationship(back_populates="moderation_case")
+    users: List["ModerationCaseUser"] = Relationship(back_populates="moderation_case")
+
+
+class ModerationCaseUser(SQLModel, table=True):
+    __tablename__ = "moderation_case_users"
+    __table_args__ = (UniqueConstraint("case_id", "user_id", name="uq_case_user_link"),)
+
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    case_id: UUID = Field(foreign_key="moderation_cases.id", nullable=False, index=True)
+    user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False, index=True))
+    role: CaseUserRole = Field(default=CaseUserRole.RELATED, nullable=False)
+    added_by_user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False))
+    added_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+
+    moderation_case: ModerationCase = Relationship(back_populates="users")
+    user: GlobalUser = Relationship(
+        sa_relationship_kwargs={'foreign_keys': '[ModerationCaseUser.user_id]'}
+    )
+    added_by: GlobalUser = Relationship(
+        sa_relationship_kwargs={'foreign_keys': '[ModerationCaseUser.added_by_user_id]'}
+    )
+
+
+class ModerationCaseActionLink(SQLModel, table=True):
+    __tablename__ = "moderation_case_action_links"
+    __table_args__ = (UniqueConstraint("case_id", "moderation_action_id", name="uq_case_action_link"),)
+
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    case_id: UUID = Field(foreign_key="moderation_cases.id", nullable=False, index=True)
+    moderation_action_id: UUID = Field(foreign_key="moderation_actions.id", nullable=False, index=True)
+    linked_by_user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False))
+    linked_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+
+    moderation_case: ModerationCase = Relationship(back_populates="action_links")
+    moderation_action: ModerationAction = Relationship(back_populates="case_links")
+    linked_by: GlobalUser = Relationship(back_populates="linked_mod_actions")
+
+
+class ModerationCaseNote(SQLModel, table=True):
+    __tablename__ = "moderation_case_notes"
+
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    case_id: UUID = Field(foreign_key="moderation_cases.id", nullable=False, index=True)
+    author_user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False))
+    note: str = Field(sa_column=Column(Text, nullable=False))
+    is_internal: bool = True
+    created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+
+    moderation_case: ModerationCase = Relationship(back_populates="notes")
+    author: GlobalUser = Relationship(back_populates="moderation_case_notes")
+
+
+class ModerationCaseEvidence(SQLModel, table=True):
+    __tablename__ = "moderation_case_evidence"
+
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    case_id: UUID = Field(foreign_key="moderation_cases.id", nullable=False, index=True)
+    added_by_user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False))
+    evidence_type: EvidenceType = Field(nullable=False)
+    url: Optional[str] = None
+    text: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    attachment_key: Optional[str] = None
+    created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+
+    moderation_case: ModerationCase = Relationship(back_populates="evidence_items")
+    added_by: GlobalUser = Relationship(back_populates="moderation_case_evidence")
+
+
+class DeletedMessage(SQLModel, table=True):
+    __tablename__ = "deleted_messages"
+
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False, index=True))
+    message_id: int = Field(sa_column=Column(BigInteger, nullable=False, index=True))
+    channel_id: int = Field(sa_column=Column(BigInteger, nullable=False))
+    author_user_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=True))
+    content: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    attachments_json: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    deleted_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+    deleted_by_user_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=True))
+
+    server: Server = Relationship(back_populates="deleted_messages")
+    author: Optional[GlobalUser] = Relationship(
+        back_populates="deleted_messages_authored",
+        sa_relationship_kwargs={'foreign_keys': '[DeletedMessage.author_user_id]'}
+    )
+    deleted_by: Optional[GlobalUser] = Relationship(
+        back_populates="deleted_messages_removed",
+        sa_relationship_kwargs={'foreign_keys': '[DeletedMessage.deleted_by_user_id]'}
+    )
+    action_links: List["ModerationActionDeletedMessageLink"] = Relationship(back_populates="deleted_message")
+
+
+class ModerationActionDeletedMessageLink(SQLModel, table=True):
+    __tablename__ = "moderation_action_deleted_message_links"
+    __table_args__ = (UniqueConstraint("moderation_action_id", "deleted_message_id", name="uq_action_deleted_message_link"),)
+
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    moderation_action_id: UUID = Field(foreign_key="moderation_actions.id", nullable=False, index=True)
+    deleted_message_id: UUID = Field(foreign_key="deleted_messages.id", nullable=False, index=True)
+    linked_by_user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False))
+    linked_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+
+    moderation_action: ModerationAction = Relationship(back_populates="deleted_message_links")
+    deleted_message: DeletedMessage = Relationship(back_populates="action_links")
+    linked_by: GlobalUser = Relationship(back_populates="action_deleted_messages")
 
 
 class UserActivity(SQLModel, table=True):
