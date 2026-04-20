@@ -28,3 +28,16 @@ class ServerUserModel(BaseModel):
 
 class ServerUsersLookupRequest(BaseModel):
     user_ids: list[str] = Field(default_factory=list, max_length=500)
+
+
+class ServerMetadataModel(BaseModel):
+    server_id: str
+    name: str | None = None
+    icon: str | None = None
+    member_count: int | None = None
+    owner_id: str | None = None
+    features: list[str] = Field(default_factory=list)
+    birthday_channel_id: str | None = None
+    birthday_channel_name: str | None = None
+    birthday_role_id: str | None = None
+    birthday_role_name: str | None = None

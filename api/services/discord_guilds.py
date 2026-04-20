@@ -49,3 +49,10 @@ async def fetch_channel(server_id: int, channel_id: int) -> dict | None:
         if int(channel["id"]) == channel_id:
             return channel
     return None
+
+
+async def fetch_guild_metadata(server_id: int) -> dict:
+    payload = await _discord_get(f"/guilds/{server_id}?with_counts=true")
+    if isinstance(payload, dict):
+        return payload
+    return {}

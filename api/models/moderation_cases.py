@@ -15,7 +15,7 @@ class ModerationActorModel(BaseModel):
 
 class ModerationCaseCreateModel(BaseModel):
     target_user_id: str = Field(pattern=r"^\d+$")
-    opened_by_user_id: str = Field(pattern=r"^\d+$")
+    opened_by_user_id: str | None = Field(default=None, pattern=r"^\d*$")
     title: str = Field(min_length=1, max_length=300)
     summary: str | None = Field(default=None, max_length=5000)
 
@@ -35,7 +35,7 @@ class ModerationCaseCreateModel(BaseModel):
 
 class ModerationCaseStatusUpdateModel(BaseModel):
     status: CaseStatus
-    closed_by_user_id: str | None = Field(default=None, pattern=r"^\d+$")
+    closed_by_user_id: str | None = Field(default=None, pattern=r"^\d*$")
 
 
 class ModerationCaseReadModel(BaseModel):
@@ -54,7 +54,7 @@ class ModerationCaseReadModel(BaseModel):
 
 
 class ModerationCaseNoteCreateModel(BaseModel):
-    author_user_id: str = Field(pattern=r"^\d+$")
+    author_user_id: str | None = Field(default=None, pattern=r"^\d*$")
     note: str = Field(min_length=1, max_length=10000)
     is_internal: bool = True
 
@@ -74,7 +74,7 @@ class ModerationCaseNoteReadModel(BaseModel):
 
 
 class ModerationCaseEvidenceCreateModel(BaseModel):
-    added_by_user_id: str = Field(pattern=r"^\d+$")
+    added_by_user_id: str | None = Field(default=None, pattern=r"^\d*$")
     evidence_type: EvidenceType
     url: str | None = Field(default=None, max_length=2000)
     text: str | None = Field(default=None, max_length=10000)
@@ -121,13 +121,13 @@ class ModerationEvidenceUploadUrlResponse(BaseModel):
 
 class ModerationCaseActionLinkCreateModel(BaseModel):
     moderation_action_id: str
-    linked_by_user_id: str = Field(pattern=r"^\d+$")
+    linked_by_user_id: str | None = Field(default=None, pattern=r"^\d*$")
 
 
 class ModerationCaseUserAddModel(BaseModel):
     user_id: str = Field(pattern=r"^\d+$")
     role: CaseUserRole = CaseUserRole.RELATED
-    added_by_user_id: str = Field(pattern=r"^\d+$")
+    added_by_user_id: str | None = Field(default=None, pattern=r"^\d*$")
 
 
 class ModerationCaseUserReadModel(BaseModel):
@@ -139,14 +139,14 @@ class ModerationCaseUserReadModel(BaseModel):
 
 
 class DeletedMessageCreateModel(BaseModel):
-    linked_by_user_id: str = Field(pattern=r"^\d+$")
+    linked_by_user_id: str | None = Field(default=None, pattern=r"^\d*$")
     message_id: str = Field(pattern=r"^\d+$")
     channel_id: str = Field(pattern=r"^\d+$")
-    author_user_id: str | None = Field(default=None, pattern=r"^\d+$")
+    author_user_id: str | None = Field(default=None, pattern=r"^\d*$")
     content: str | None = Field(default=None, max_length=12000)
     attachments_json: str | None = Field(default=None, max_length=20000)
     deleted_at: datetime | None = None
-    deleted_by_user_id: str | None = Field(default=None, pattern=r"^\d+$")
+    deleted_by_user_id: str | None = Field(default=None, pattern=r"^\d*$")
 
     @field_validator("content", "attachments_json")
     @classmethod
@@ -171,7 +171,7 @@ class DeletedMessageReadModel(BaseModel):
 
 
 class DeletedMessageLinkModel(BaseModel):
-    linked_by_user_id: str = Field(pattern=r"^\d+$")
+    linked_by_user_id: str | None = Field(default=None, pattern=r"^\d*$")
 
 
 class ModerationCaseDetailsModel(BaseModel):

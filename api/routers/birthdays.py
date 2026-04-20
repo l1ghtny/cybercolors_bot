@@ -5,6 +5,7 @@ from sqlalchemy import and_
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from api.dependencies.current_user import get_optional_current_discord_user_id, resolve_actor_user_id
 from api.models.birthdays import (
     BirthdayCreateModel,
     BirthdayReadModel,
@@ -20,6 +21,7 @@ from api.models.birthday_settings import (
     CelebrationMessageReadModel,
     CelebrationMessageUpdateModel,
 )
+from api.services.discord_guilds import fetch_guild_roles
 from src.db.database import get_session
 from src.db.models import Birthday, Congratulation, GlobalUser, Server, User
 
@@ -49,13 +51,14 @@ def _to_birthday_read(user: User, global_user: GlobalUser, birthday: Birthday) -
     )
 
 
-def _to_settings_model(server: Server) -> BirthdaySettingsModel:
+def _to_settings_model(server: Server, birthday_role_name: str | None = None) -> BirthdaySettingsModel:
     return BirthdaySettingsModel(
         server_id=str(server.server_id),
         server_name=server.server_name,
         birthday_channel_id=str(server.birthday_channel_id) if server.birthday_channel_id else None,
         birthday_channel_name=server.birthday_channel_name,
         birthday_role_id=str(server.birthday_role_id) if server.birthday_role_id else None,
+        birthday_role_name=birthday_role_name,
     )
 
 
@@ -128,6 +131,21 @@ async def _get_or_create_server(server_id: int, session: AsyncSession, server_na
     session.add(server)
     await session.flush()
     return server
+
+
+async def _resolve_birthday_role_name(server_id: int, role_id: int | None) -> str | None:
+    if not role_id:
+        return None
+    try:
+        roles = await fetch_guild_roles(server_id)
+    except Exception:
+        return None
+
+    for role in roles:
+        raw_id = role.get("id")
+        if raw_id is not None and int(raw_id) == role_id:
+            return role.get("name")
+    return None
 
 
 @birthdays.get("/{server_id}", response_model=list[BirthdayReadModel])
@@ -229,7 +247,8 @@ async def get_birthday_settings(server_id: int, session: AsyncSession = Depends(
     server = await session.get(Server, server_id)
     if not server:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Server settings not found")
-    return _to_settings_model(server)
+    role_name = await _resolve_birthday_role_name(server_id, server.birthday_role_id)
+    return _to_settings_model(server, birthday_role_name=role_name)
 
 
 @birthdays.put("/{server_id}/settings/channel", response_model=BirthdaySettingsModel)
@@ -245,7 +264,8 @@ async def update_birthday_channel(
     session.add(server)
     await session.flush()
     await session.refresh(server)
-    return _to_settings_model(server)
+    role_name = await _resolve_birthday_role_name(server_id, server.birthday_role_id)
+    return _to_settings_model(server, birthday_role_name=role_name)
 
 
 @birthdays.put("/{server_id}/settings/role", response_model=BirthdaySettingsModel)
@@ -259,7 +279,8 @@ async def update_birthday_role(
     session.add(server)
     await session.flush()
     await session.refresh(server)
-    return _to_settings_model(server)
+    role_name = body.role_name or await _resolve_birthday_role_name(server_id, server.birthday_role_id)
+    return _to_settings_model(server, birthday_role_name=role_name)
 
 
 @birthdays.get("/{server_id}/settings/messages", response_model=list[CelebrationMessageReadModel])
@@ -293,23 +314,14 @@ async def create_celebration_message(
     server_id: int,
     body: CelebrationMessageCreateModel,
     session: AsyncSession = Depends(get_session),
+    current_user_id: int | None = Depends(get_optional_current_discord_user_id),
 ):
     _validate_placeholder(body.message)
 
-    added_by_user_id = int(body.added_by_user_id)
-    global_user = await session.get(GlobalUser, added_by_user_id)
-    if not global_user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Author user not found")
+    added_by_user_id = resolve_actor_user_id(body.added_by_user_id, current_user_id)
+    membership, global_user = await _get_member_or_404(server_id, added_by_user_id, session)
 
     await _get_or_create_server(server_id, session)
-    membership = (
-        await session.exec(
-            select(User).where(
-                User.user_id == added_by_user_id,
-                User.server_id == server_id,
-            )
-        )
-    ).first()
 
     message = Congratulation(
         server_id=server_id,
