@@ -1,7 +1,6 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import and_
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -13,7 +12,6 @@ from api.models.birthdays import (
     ServerBirthdayUserModel,
 )
 from api.models.birthday_settings import (
-    BirthdayActorModel,
     BirthdayChannelUpdateModel,
     BirthdayRoleUpdateModel,
     BirthdaySettingsModel,
@@ -21,175 +19,32 @@ from api.models.birthday_settings import (
     CelebrationMessageReadModel,
     CelebrationMessageUpdateModel,
 )
-from api.services.discord_guilds import fetch_guild_roles
+from api.services.birthdays_service import (
+    get_member_or_404,
+    get_or_create_server,
+    list_birthdays,
+    list_celebration_messages,
+    list_server_birthday_users,
+    resolve_birthday_role_name,
+    to_birthday_read,
+    to_celebration_message_read,
+    to_settings_model,
+    validate_placeholder,
+)
 from src.db.database import get_session
 from src.db.models import Birthday, Congratulation, GlobalUser, Server, User
 
 birthdays = APIRouter(prefix="/birthdays", tags=["birthdays"])
-MENTION_PLACEHOLDER = "user_mention"
-
-
-def _display_name(user: User, global_user: GlobalUser) -> str:
-    if user.server_nickname:
-        return user.server_nickname
-    if global_user.username:
-        return global_user.username
-    return str(user.user_id)
-
-
-def _to_birthday_read(user: User, global_user: GlobalUser, birthday: Birthday) -> BirthdayReadModel:
-    return BirthdayReadModel(
-        user_id=str(user.user_id),
-        username=global_user.username,
-        server_nickname=user.server_nickname,
-        display_name=_display_name(user, global_user),
-        avatar_hash=global_user.avatar_hash,
-        day=birthday.day,
-        month=birthday.month,
-        timezone=birthday.timezone,
-        role_added_at=birthday.role_added_at,
-    )
-
-
-def _to_settings_model(server: Server, birthday_role_name: str | None = None) -> BirthdaySettingsModel:
-    return BirthdaySettingsModel(
-        server_id=str(server.server_id),
-        server_name=server.server_name,
-        birthday_channel_id=str(server.birthday_channel_id) if server.birthday_channel_id else None,
-        birthday_channel_name=server.birthday_channel_name,
-        birthday_role_id=str(server.birthday_role_id) if server.birthday_role_id else None,
-        birthday_role_name=birthday_role_name,
-    )
-
-
-def _to_celebration_message_read(
-    message: Congratulation,
-    global_user: GlobalUser | None,
-    membership: User | None,
-) -> CelebrationMessageReadModel:
-    username = global_user.username if global_user else None
-    display_name = membership.server_nickname if membership and membership.server_nickname else username
-    if not display_name:
-        display_name = str(message.added_by_user_id)
-
-    return CelebrationMessageReadModel(
-        id=str(message.id),
-        server_id=str(message.server_id),
-        message=message.bot_message,
-        added_at=message.added_at,
-        added_by_user_id=str(message.added_by_user_id),
-        added_by_username=username,
-        added_by=BirthdayActorModel(
-            user_id=str(message.added_by_user_id),
-            username=username,
-            server_nickname=membership.server_nickname if membership else None,
-            display_name=display_name,
-            avatar_hash=global_user.avatar_hash if global_user else None,
-        ),
-    )
-
-
-def _validate_placeholder(template: str):
-    if MENTION_PLACEHOLDER not in template:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                "Celebration message must contain the placeholder variable "
-                "`{{ user_mention }}`"
-            ),
-        )
-
-
-async def _get_member_or_404(server_id: int, user_id: int, session: AsyncSession) -> tuple[User, GlobalUser]:
-    statement = (
-        select(User, GlobalUser)
-        .join(GlobalUser, GlobalUser.discord_id == User.user_id)
-        .where(
-            User.server_id == server_id,
-            User.user_id == user_id,
-            User.is_member.is_(True),
-        )
-    )
-    member_row = (await session.exec(statement)).first()
-    if not member_row:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User is not an active member of this server",
-        )
-    return member_row
-
-
-async def _get_or_create_server(server_id: int, session: AsyncSession, server_name: str | None = None) -> Server:
-    server = await session.get(Server, server_id)
-    if server:
-        if server_name:
-            server.server_name = server_name
-            session.add(server)
-        return server
-
-    server = Server(server_id=server_id, server_name=server_name)
-    session.add(server)
-    await session.flush()
-    return server
-
-
-async def _resolve_birthday_role_name(server_id: int, role_id: int | None) -> str | None:
-    if not role_id:
-        return None
-    try:
-        roles = await fetch_guild_roles(server_id)
-    except Exception:
-        return None
-
-    for role in roles:
-        raw_id = role.get("id")
-        if raw_id is not None and int(raw_id) == role_id:
-            return role.get("name")
-    return None
 
 
 @birthdays.get("/{server_id}", response_model=list[BirthdayReadModel])
 async def get_birthdays_by_server_id(server_id: int, session: AsyncSession = Depends(get_session)):
-    statement = (
-        select(User, GlobalUser, Birthday)
-        .join(GlobalUser, GlobalUser.discord_id == User.user_id)
-        .join(Birthday, Birthday.user_id == User.user_id)
-        .where(User.server_id == server_id, User.is_member.is_(True))
-        .order_by(Birthday.month, Birthday.day, User.server_nickname, GlobalUser.username)
-    )
-    result = (await session.exec(statement)).all()
-    return [_to_birthday_read(user, global_user, birthday) for user, global_user, birthday in result]
+    return await list_birthdays(session, server_id)
 
 
 @birthdays.get("/{server_id}/users", response_model=list[ServerBirthdayUserModel])
 async def get_server_users_for_birthday_selector(server_id: int, session: AsyncSession = Depends(get_session)):
-    statement = (
-        select(User, GlobalUser, Birthday)
-        .join(GlobalUser, GlobalUser.discord_id == User.user_id)
-        .outerjoin(Birthday, Birthday.user_id == User.user_id)
-        .where(User.server_id == server_id, User.is_member.is_(True))
-        .order_by(User.server_nickname, GlobalUser.username)
-    )
-    result = (await session.exec(statement)).all()
-
-    users: list[ServerBirthdayUserModel] = []
-    for user, global_user, birthday in result:
-        users.append(
-            ServerBirthdayUserModel(
-                user_id=str(user.user_id),
-                username=global_user.username,
-                server_nickname=user.server_nickname,
-                display_name=_display_name(user, global_user),
-                avatar_hash=global_user.avatar_hash,
-                has_birthday=birthday is not None,
-                birthday=(
-                    BirthdayWriteModel(day=birthday.day, month=birthday.month, timezone=birthday.timezone)
-                    if birthday
-                    else None
-                ),
-            )
-        )
-    return users
+    return await list_server_birthday_users(session, server_id)
 
 
 @birthdays.post("/{server_id}", response_model=BirthdayReadModel, status_code=status.HTTP_201_CREATED)
@@ -199,7 +54,7 @@ async def add_birthday_for_server(
     session: AsyncSession = Depends(get_session),
 ):
     user_id = int(body.user_id)
-    member, global_user = await _get_member_or_404(server_id, user_id, session)
+    member, global_user = await get_member_or_404(server_id, user_id, session)
 
     existing = await session.get(Birthday, user_id)
     if existing:
@@ -217,7 +72,7 @@ async def add_birthday_for_server(
     session.add(birthday)
     await session.flush()
     await session.refresh(birthday)
-    return _to_birthday_read(member, global_user, birthday)
+    return to_birthday_read(member, global_user, birthday)
 
 
 @birthdays.put("/{server_id}/{user_id}", response_model=BirthdayReadModel)
@@ -227,7 +82,7 @@ async def update_birthday_for_server_user(
     body: BirthdayWriteModel,
     session: AsyncSession = Depends(get_session),
 ):
-    member, global_user = await _get_member_or_404(server_id, user_id, session)
+    member, global_user = await get_member_or_404(server_id, user_id, session)
 
     birthday = await session.get(Birthday, user_id)
     if not birthday:
@@ -239,7 +94,7 @@ async def update_birthday_for_server_user(
     session.add(birthday)
     await session.flush()
     await session.refresh(birthday)
-    return _to_birthday_read(member, global_user, birthday)
+    return to_birthday_read(member, global_user, birthday)
 
 
 @birthdays.get("/{server_id}/settings", response_model=BirthdaySettingsModel)
@@ -247,8 +102,8 @@ async def get_birthday_settings(server_id: int, session: AsyncSession = Depends(
     server = await session.get(Server, server_id)
     if not server:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Server settings not found")
-    role_name = await _resolve_birthday_role_name(server_id, server.birthday_role_id)
-    return _to_settings_model(server, birthday_role_name=role_name)
+    role_name = await resolve_birthday_role_name(server_id, server.birthday_role_id)
+    return to_settings_model(server, birthday_role_name=role_name)
 
 
 @birthdays.put("/{server_id}/settings/channel", response_model=BirthdaySettingsModel)
@@ -257,15 +112,15 @@ async def update_birthday_channel(
     body: BirthdayChannelUpdateModel,
     session: AsyncSession = Depends(get_session),
 ):
-    server = await _get_or_create_server(server_id, session, body.server_name)
+    server = await get_or_create_server(server_id, session, body.server_name)
 
     server.birthday_channel_id = int(body.channel_id) if body.channel_id else None
     server.birthday_channel_name = body.channel_name
     session.add(server)
     await session.flush()
     await session.refresh(server)
-    role_name = await _resolve_birthday_role_name(server_id, server.birthday_role_id)
-    return _to_settings_model(server, birthday_role_name=role_name)
+    role_name = await resolve_birthday_role_name(server_id, server.birthday_role_id)
+    return to_settings_model(server, birthday_role_name=role_name)
 
 
 @birthdays.put("/{server_id}/settings/role", response_model=BirthdaySettingsModel)
@@ -274,35 +129,18 @@ async def update_birthday_role(
     body: BirthdayRoleUpdateModel,
     session: AsyncSession = Depends(get_session),
 ):
-    server = await _get_or_create_server(server_id, session, body.server_name)
+    server = await get_or_create_server(server_id, session, body.server_name)
     server.birthday_role_id = int(body.role_id) if body.role_id else None
     session.add(server)
     await session.flush()
     await session.refresh(server)
-    role_name = body.role_name or await _resolve_birthday_role_name(server_id, server.birthday_role_id)
-    return _to_settings_model(server, birthday_role_name=role_name)
+    role_name = body.role_name or await resolve_birthday_role_name(server_id, server.birthday_role_id)
+    return to_settings_model(server, birthday_role_name=role_name)
 
 
 @birthdays.get("/{server_id}/settings/messages", response_model=list[CelebrationMessageReadModel])
 async def get_celebration_messages(server_id: int, session: AsyncSession = Depends(get_session)):
-    statement = (
-        select(Congratulation, GlobalUser, User)
-        .outerjoin(GlobalUser, GlobalUser.discord_id == Congratulation.added_by_user_id)
-        .outerjoin(
-            User,
-            and_(
-                User.user_id == Congratulation.added_by_user_id,
-                User.server_id == Congratulation.server_id,
-            ),
-        )
-        .where(Congratulation.server_id == server_id)
-        .order_by(Congratulation.added_at.desc())
-    )
-    result = (await session.exec(statement)).all()
-    return [
-        _to_celebration_message_read(message, global_user, membership)
-        for message, global_user, membership in result
-    ]
+    return await list_celebration_messages(session, server_id)
 
 
 @birthdays.post(
@@ -316,12 +154,12 @@ async def create_celebration_message(
     session: AsyncSession = Depends(get_session),
     current_user_id: int | None = Depends(get_optional_current_discord_user_id),
 ):
-    _validate_placeholder(body.message)
+    validate_placeholder(body.message)
 
     added_by_user_id = resolve_actor_user_id(body.added_by_user_id, current_user_id)
-    membership, global_user = await _get_member_or_404(server_id, added_by_user_id, session)
+    membership, global_user = await get_member_or_404(server_id, added_by_user_id, session)
 
-    await _get_or_create_server(server_id, session)
+    await get_or_create_server(server_id, session)
 
     message = Congratulation(
         server_id=server_id,
@@ -331,7 +169,7 @@ async def create_celebration_message(
     session.add(message)
     await session.flush()
     await session.refresh(message)
-    return _to_celebration_message_read(message, global_user, membership)
+    return to_celebration_message_read(message, global_user, membership)
 
 
 @birthdays.put("/{server_id}/settings/messages/{message_id}", response_model=CelebrationMessageReadModel)
@@ -341,7 +179,7 @@ async def update_celebration_message(
     body: CelebrationMessageUpdateModel,
     session: AsyncSession = Depends(get_session),
 ):
-    _validate_placeholder(body.message)
+    validate_placeholder(body.message)
 
     message = await session.get(Congratulation, message_id)
     if not message or message.server_id != server_id:
@@ -360,7 +198,7 @@ async def update_celebration_message(
     session.add(message)
     await session.flush()
     await session.refresh(message)
-    return _to_celebration_message_read(message, global_user, membership)
+    return to_celebration_message_read(message, global_user, membership)
 
 
 @birthdays.delete("/{server_id}/settings/messages/{message_id}", status_code=status.HTTP_204_NO_CONTENT)
