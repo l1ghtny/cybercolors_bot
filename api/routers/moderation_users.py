@@ -1,15 +1,32 @@
 from typing import List
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from api.dependencies.current_user import get_optional_current_discord_user_id, resolve_actor_user_id
+from api.models.monitoring import (
+    MonitoredUserCommentCreateModel,
+    MonitoredUserCommentReadModel,
+    MonitoredUserCreateModel,
+    MonitoredUserReadModel,
+    MonitoredUserStatusEventReadModel,
+    MonitoredUserUpdateModel,
+)
 from api.models.moderation_actions import ModerationActionRead
 from api.models.moderation_cases import ModerationCaseReadModel
 from api.models.user_profiles import (
     NicknameLogModel,
     NicknameRecordModel,
     UserProfileCardModel,
+)
+from api.services.monitoring_service import (
+    add_monitored_user_comment,
+    list_monitored_users as list_monitored_users_service,
+    list_monitored_user_comments,
+    list_monitored_user_status_events,
+    update_monitored_user,
+    upsert_monitored_user,
 )
 from api.services.moderation_core import (
     get_nickname_history,
@@ -135,3 +152,122 @@ async def get_cases_for_user(
         status_filter=status_filter,
         limit=limit,
     )
+
+
+@moderation_users_router.get("/users/{server_id}/monitored", response_model=list[MonitoredUserReadModel])
+async def get_monitored_users(
+    server_id: int,
+    active_only: bool = Query(default=True),
+    session: AsyncSession = Depends(get_session),
+):
+    return await list_monitored_users_service(session=session, server_id=server_id, active_only=active_only)
+
+
+@moderation_users_router.post(
+    "/users/{server_id}/monitored",
+    response_model=MonitoredUserReadModel,
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_monitored_user(
+    server_id: int,
+    body: MonitoredUserCreateModel,
+    session: AsyncSession = Depends(get_session),
+    current_user_id: int | None = Depends(get_optional_current_discord_user_id),
+):
+    added_by_user_id = resolve_actor_user_id(body.added_by_user_id, current_user_id)
+    return await upsert_monitored_user(
+        session=session,
+        server_id=server_id,
+        user_id=int(body.user_id),
+        reason=body.reason,
+        added_by_user_id=added_by_user_id,
+    )
+
+
+@moderation_users_router.patch("/users/{server_id}/monitored/{user_id}", response_model=MonitoredUserReadModel)
+async def patch_monitored_user(
+    server_id: int,
+    user_id: int,
+    body: MonitoredUserUpdateModel,
+    session: AsyncSession = Depends(get_session),
+    current_user_id: int | None = Depends(get_optional_current_discord_user_id),
+):
+    updated_by_user_id = resolve_actor_user_id(body.updated_by_user_id, current_user_id)
+    try:
+        return await update_monitored_user(
+            session=session,
+            server_id=server_id,
+            user_id=user_id,
+            reason=body.reason,
+            is_active=body.is_active,
+            updated_by_user_id=updated_by_user_id,
+        )
+    except LookupError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Monitored user not found")
+
+
+@moderation_users_router.get(
+    "/users/{server_id}/monitored/{user_id}/comments",
+    response_model=list[MonitoredUserCommentReadModel],
+)
+async def get_monitored_user_comments(
+    server_id: int,
+    user_id: int,
+    limit: int = Query(default=200, ge=1, le=1000),
+    session: AsyncSession = Depends(get_session),
+):
+    try:
+        return await list_monitored_user_comments(
+            session=session,
+            server_id=server_id,
+            user_id=user_id,
+            limit=limit,
+        )
+    except LookupError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Monitored user not found")
+
+
+@moderation_users_router.post(
+    "/users/{server_id}/monitored/{user_id}/comments",
+    response_model=MonitoredUserCommentReadModel,
+    status_code=status.HTTP_201_CREATED,
+)
+async def post_monitored_user_comment(
+    server_id: int,
+    user_id: int,
+    body: MonitoredUserCommentCreateModel,
+    session: AsyncSession = Depends(get_session),
+    current_user_id: int | None = Depends(get_optional_current_discord_user_id),
+):
+    author_user_id = resolve_actor_user_id(body.author_user_id, current_user_id)
+    try:
+        return await add_monitored_user_comment(
+            session=session,
+            server_id=server_id,
+            user_id=user_id,
+            comment=body.comment,
+            author_user_id=author_user_id,
+        )
+    except LookupError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Monitored user not found")
+
+
+@moderation_users_router.get(
+    "/users/{server_id}/monitored/{user_id}/status-history",
+    response_model=list[MonitoredUserStatusEventReadModel],
+)
+async def get_monitored_user_status_history(
+    server_id: int,
+    user_id: int,
+    limit: int = Query(default=200, ge=1, le=1000),
+    session: AsyncSession = Depends(get_session),
+):
+    try:
+        return await list_monitored_user_status_events(
+            session=session,
+            server_id=server_id,
+            user_id=user_id,
+            limit=limit,
+        )
+    except LookupError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Monitored user not found")

@@ -32,6 +32,9 @@ class Server(SQLModel, table=True):
     deleted_messages: List["DeletedMessage"] = Relationship(back_populates="server")
     past_nicknames: List["PastNickname"] = Relationship(back_populates="server")
     user_activity: List["UserActivity"] = Relationship(back_populates="server")
+    monitored_users: List["MonitoredUser"] = Relationship(back_populates="server")
+    dashboard_access_users: List["DashboardAccessUser"] = Relationship(back_populates="server")
+    dashboard_access_roles: List["DashboardAccessRole"] = Relationship(back_populates="server")
 
 
 class GlobalUser(SQLModel, table=True):
@@ -75,6 +78,34 @@ class GlobalUser(SQLModel, table=True):
     deleted_messages_removed: List["DeletedMessage"] = Relationship(
         back_populates="deleted_by",
         sa_relationship_kwargs={'foreign_keys': '[DeletedMessage.deleted_by_user_id]'}
+    )
+    monitored_records: List["MonitoredUser"] = Relationship(
+        back_populates="user",
+        sa_relationship_kwargs={'foreign_keys': '[MonitoredUser.user_id]'}
+    )
+    monitored_records_added: List["MonitoredUser"] = Relationship(
+        back_populates="added_by",
+        sa_relationship_kwargs={'foreign_keys': '[MonitoredUser.added_by_user_id]'}
+    )
+    monitored_status_changes: List["MonitoredUserStatusEvent"] = Relationship(
+        back_populates="changed_by",
+        sa_relationship_kwargs={'foreign_keys': '[MonitoredUserStatusEvent.changed_by_user_id]'}
+    )
+    monitored_comments_authored: List["MonitoredUserComment"] = Relationship(
+        back_populates="author",
+        sa_relationship_kwargs={'foreign_keys': '[MonitoredUserComment.author_user_id]'}
+    )
+    dashboard_access_user_targets: List["DashboardAccessUser"] = Relationship(
+        back_populates="user",
+        sa_relationship_kwargs={'foreign_keys': '[DashboardAccessUser.user_id]'}
+    )
+    dashboard_access_user_added: List["DashboardAccessUser"] = Relationship(
+        back_populates="added_by",
+        sa_relationship_kwargs={'foreign_keys': '[DashboardAccessUser.added_by_user_id]'}
+    )
+    dashboard_access_role_added: List["DashboardAccessRole"] = Relationship(
+        back_populates="added_by",
+        sa_relationship_kwargs={'foreign_keys': '[DashboardAccessRole.added_by_user_id]'}
     )
 
     replies: List["Replies"] = Relationship(back_populates="created_by")
@@ -220,6 +251,103 @@ class CaseUserRole(str, Enum):
     WITNESS = "witness"
     MODERATOR = "moderator"
     RELATED = "related"
+
+
+class MonitoredUser(SQLModel, table=True):
+    __tablename__ = "monitored_users"
+    __table_args__ = (UniqueConstraint("server_id", "user_id", name="uq_monitored_users_server_user"),)
+
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False, index=True))
+    user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False, index=True))
+    added_by_user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False))
+    reason: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    is_active: bool = Field(default=True, nullable=False, index=True)
+    created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+    updated_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+
+    server: Server = Relationship(back_populates="monitored_users")
+    user: GlobalUser = Relationship(
+        back_populates="monitored_records",
+        sa_relationship_kwargs={'foreign_keys': '[MonitoredUser.user_id]'}
+    )
+    added_by: GlobalUser = Relationship(
+        back_populates="monitored_records_added",
+        sa_relationship_kwargs={'foreign_keys': '[MonitoredUser.added_by_user_id]'}
+    )
+    comments: List["MonitoredUserComment"] = Relationship(back_populates="monitored_user")
+    status_events: List["MonitoredUserStatusEvent"] = Relationship(back_populates="monitored_user")
+
+
+class MonitoredUserComment(SQLModel, table=True):
+    __tablename__ = "monitored_user_comments"
+
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    monitored_user_id: UUID = Field(foreign_key="monitored_users.id", nullable=False, index=True)
+    author_user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False))
+    comment: str = Field(sa_column=Column(Text, nullable=False))
+    created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False, index=True)
+
+    monitored_user: MonitoredUser = Relationship(back_populates="comments")
+    author: GlobalUser = Relationship(
+        back_populates="monitored_comments_authored",
+        sa_relationship_kwargs={'foreign_keys': '[MonitoredUserComment.author_user_id]'}
+    )
+
+
+class MonitoredUserStatusEvent(SQLModel, table=True):
+    __tablename__ = "monitored_user_status_events"
+
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    monitored_user_id: UUID = Field(foreign_key="monitored_users.id", nullable=False, index=True)
+    changed_by_user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False))
+    from_is_active: Optional[bool] = Field(default=None, nullable=True)
+    to_is_active: bool = Field(nullable=False)
+    changed_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False, index=True)
+
+    monitored_user: MonitoredUser = Relationship(back_populates="status_events")
+    changed_by: GlobalUser = Relationship(
+        back_populates="monitored_status_changes",
+        sa_relationship_kwargs={'foreign_keys': '[MonitoredUserStatusEvent.changed_by_user_id]'}
+    )
+
+
+class DashboardAccessUser(SQLModel, table=True):
+    __tablename__ = "dashboard_access_users"
+    __table_args__ = (UniqueConstraint("server_id", "user_id", name="uq_dashboard_access_users_server_user"),)
+
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False, index=True))
+    user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False, index=True))
+    added_by_user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False))
+    created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+
+    server: Server = Relationship(back_populates="dashboard_access_users")
+    user: GlobalUser = Relationship(
+        back_populates="dashboard_access_user_targets",
+        sa_relationship_kwargs={'foreign_keys': '[DashboardAccessUser.user_id]'}
+    )
+    added_by: GlobalUser = Relationship(
+        back_populates="dashboard_access_user_added",
+        sa_relationship_kwargs={'foreign_keys': '[DashboardAccessUser.added_by_user_id]'}
+    )
+
+
+class DashboardAccessRole(SQLModel, table=True):
+    __tablename__ = "dashboard_access_roles"
+    __table_args__ = (UniqueConstraint("server_id", "role_id", name="uq_dashboard_access_roles_server_role"),)
+
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False, index=True))
+    role_id: int = Field(sa_column=Column(BigInteger, nullable=False, index=True))
+    added_by_user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False))
+    created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+
+    server: Server = Relationship(back_populates="dashboard_access_roles")
+    added_by: GlobalUser = Relationship(
+        back_populates="dashboard_access_role_added",
+        sa_relationship_kwargs={'foreign_keys': '[DashboardAccessRole.added_by_user_id]'}
+    )
 
 
 class ModerationCase(SQLModel, table=True):

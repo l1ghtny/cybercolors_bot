@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Request, Header
 from fastapi import Depends
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from api.services.dashboard_access_service import load_dashboard_access_maps
 from src.db.database import get_session
 from src.db.models import GlobalUser
 
@@ -26,6 +27,13 @@ DISCORD_TEST_CLIENT_ID = os.getenv("DISCORD_TEST_CLIENT_ID")
 DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET")
 DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI")
 DISCORD_API_BASE_URL = "https://discord.com/api/v10"
+
+
+def _get_bot_token_for_auth() -> str:
+    token = test_bot_token or bot_token
+    if not token:
+        raise HTTPException(status_code=500, detail="Discord bot token is not configured")
+    return token
 
 
 @auth.post("/login")
@@ -101,7 +109,10 @@ async def login(request: Request, session: AsyncSession = Depends(get_session)):
 
 
 @auth.get("/guilds")
-async def get_user_guilds(authorization: Annotated[str | None, Header()] = None):
+async def get_user_guilds(
+    authorization: Annotated[str | None, Header()] = None,
+    session: AsyncSession = Depends(get_session),
+):
     """
     Fetches the guilds for the authenticated user from Discord and filters them.
     Returns only guilds where the user is an owner or has administrator permissions.
@@ -114,33 +125,55 @@ async def get_user_guilds(authorization: Annotated[str | None, Header()] = None)
         raise HTTPException(status_code=401, detail="Invalid authorization header")
 
     headers = {"Authorization": f"Bearer {access_token}"}
+    bot_headers = {"Authorization": f"Bot {_get_bot_token_for_auth()}"}
 
     async with httpx.AsyncClient() as client:
         try:
+            me_res = await client.get(f"{DISCORD_API_BASE_URL}/users/@me", headers=headers)
+            me_res.raise_for_status()
+            me_json = me_res.json()
+            current_user_id = int(me_json["id"])
+
             guilds_res = await client.get(f"{DISCORD_API_BASE_URL}/users/@me/guilds", headers=headers)
             guilds_res.raise_for_status()
             guilds_json = guilds_res.json()
+            guild_ids = [int(guild["id"]) for guild in guilds_json if str(guild.get("id", "")).isdigit()]
+            access_users_map, access_roles_map = await load_dashboard_access_maps(session, guild_ids)
 
-            # Filter guilds where the user has admin permissions or is the owner
             # The permissions integer is a bitfield. 8 is the administrator flag.
             ADMINISTRATOR_FLAG = 1 << 3
 
-            authorized_guilds = [
-                guild for guild in guilds_json
-                if guild["owner"] or (int(guild["permissions"]) & ADMINISTRATOR_FLAG)
-            ]
-            authorized_guilds_with_bot = []
-            for guild in authorized_guilds:
-                bot_headers = {"Authorization": f"Bot {test_bot_token}"}
-                me = (await client.get(f"{DISCORD_API_BASE_URL}/users/@me", headers=bot_headers)).json()
-                bot_in_guild = await client.get(f"{DISCORD_API_BASE_URL}/guilds/{guild['id']}/members/{me['id']}", headers=bot_headers)
-                if bot_in_guild.status_code == 200:
-                    authorized_guilds_with_bot.append(guild)
-                else:
-                    logger.info(f'Cannot get the user/guild for the guild name "{guild["name"]}" and id "{guild["id"]}". Bot is probably not there or an error has occurred')
+            authorized_guilds: list[dict] = []
+            for guild in guilds_json:
+                guild_id = int(guild["id"])
+                is_owner = bool(guild.get("owner"))
+                permissions = int(guild.get("permissions", 0))
+                is_admin = bool(permissions & ADMINISTRATOR_FLAG)
 
+                member_res = await client.get(
+                    f"{DISCORD_API_BASE_URL}/guilds/{guild_id}/members/{current_user_id}",
+                    headers=bot_headers,
+                )
+                if member_res.status_code != 200:
+                    logger.info(
+                        'Skipping guild "%s" (%s): bot not present or cannot fetch member',
+                        guild.get("name", "unknown"),
+                        guild_id,
+                    )
+                    continue
 
-            return authorized_guilds_with_bot
+                member_json = member_res.json()
+                member_role_ids = {
+                    int(role_id) for role_id in member_json.get("roles", []) if str(role_id).isdigit()
+                }
+                allowed_users = access_users_map.get(guild_id, set())
+                allowed_roles = access_roles_map.get(guild_id, set())
+                allowlisted = (current_user_id in allowed_users) or bool(member_role_ids.intersection(allowed_roles))
+
+                if is_owner or is_admin or allowlisted:
+                    authorized_guilds.append(guild)
+
+            return authorized_guilds
 
         except httpx.HTTPStatusError as e:
             # Handle cases where the token might be expired or invalid

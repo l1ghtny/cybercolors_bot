@@ -56,3 +56,15 @@ async def fetch_guild_metadata(server_id: int) -> dict:
     if isinstance(payload, dict):
         return payload
     return {}
+
+
+async def fetch_guild_member(server_id: int, user_id: int) -> dict | None:
+    try:
+        payload = await _discord_get(f"/guilds/{server_id}/members/{user_id}")
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_404_NOT_FOUND:
+            return None
+        raise
+    if isinstance(payload, dict):
+        return payload
+    return None

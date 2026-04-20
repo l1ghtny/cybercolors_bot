@@ -1,6 +1,20 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from api.dependencies.current_user import get_current_discord_user_id
+from api.models.dashboard_access import (
+    DashboardAccessAddRoleModel,
+    DashboardAccessAddUserModel,
+    DashboardAccessReadModel,
+)
+from api.services.dashboard_access_service import (
+    add_dashboard_access_role,
+    add_dashboard_access_user,
+    assert_server_owner,
+    get_dashboard_access,
+    remove_dashboard_access_role,
+    remove_dashboard_access_user,
+)
 from api.models.server_directory import (
     ServerChannelModel,
     ServerMetadataModel,
@@ -78,3 +92,67 @@ async def lookup_server_users(
         if raw_id.isdigit():
             user_ids.append(int(raw_id))
     return await lookup_server_users_by_ids(session=session, server_id=server_id, user_ids=user_ids)
+
+
+@servers.get("/{server_id}/dashboard-access", response_model=DashboardAccessReadModel)
+async def get_server_dashboard_access(
+    server_id: int,
+    session: AsyncSession = Depends(get_session),
+    current_user_id: int = Depends(get_current_discord_user_id),
+):
+    await assert_server_owner(server_id, current_user_id)
+    return await get_dashboard_access(session=session, server_id=server_id)
+
+
+@servers.post("/{server_id}/dashboard-access/users", response_model=DashboardAccessReadModel)
+async def add_server_dashboard_access_user(
+    server_id: int,
+    body: DashboardAccessAddUserModel,
+    session: AsyncSession = Depends(get_session),
+    current_user_id: int = Depends(get_current_discord_user_id),
+):
+    await assert_server_owner(server_id, current_user_id)
+    return await add_dashboard_access_user(
+        session=session,
+        server_id=server_id,
+        user_id=int(body.user_id),
+        added_by_user_id=current_user_id,
+    )
+
+
+@servers.delete("/{server_id}/dashboard-access/users/{user_id}", response_model=DashboardAccessReadModel)
+async def remove_server_dashboard_access_user(
+    server_id: int,
+    user_id: int,
+    session: AsyncSession = Depends(get_session),
+    current_user_id: int = Depends(get_current_discord_user_id),
+):
+    await assert_server_owner(server_id, current_user_id)
+    return await remove_dashboard_access_user(session=session, server_id=server_id, user_id=user_id)
+
+
+@servers.post("/{server_id}/dashboard-access/roles", response_model=DashboardAccessReadModel)
+async def add_server_dashboard_access_role(
+    server_id: int,
+    body: DashboardAccessAddRoleModel,
+    session: AsyncSession = Depends(get_session),
+    current_user_id: int = Depends(get_current_discord_user_id),
+):
+    await assert_server_owner(server_id, current_user_id)
+    return await add_dashboard_access_role(
+        session=session,
+        server_id=server_id,
+        role_id=int(body.role_id),
+        added_by_user_id=current_user_id,
+    )
+
+
+@servers.delete("/{server_id}/dashboard-access/roles/{role_id}", response_model=DashboardAccessReadModel)
+async def remove_server_dashboard_access_role(
+    server_id: int,
+    role_id: int,
+    session: AsyncSession = Depends(get_session),
+    current_user_id: int = Depends(get_current_discord_user_id),
+):
+    await assert_server_owner(server_id, current_user_id)
+    return await remove_dashboard_access_role(session=session, server_id=server_id, role_id=role_id)
