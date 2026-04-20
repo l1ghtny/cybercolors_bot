@@ -20,7 +20,7 @@ async def warn(interaction: discord.Interaction, user: discord.Member, reason: s
 
     # 2. Prepare data for the API POST request
     # Ensure you have BOT_API_URL in your environment variables (e.g., http://127.0.0.1:8000)
-    api_url = f"{os.getenv('BOT_API_URL')}/moderation/"
+    api_url = f"{os.getenv('BOT_API_URL')}/moderation/create_action"
     payload = {
         "action_type": "warn",
         "moderator_user_id": interaction.user.id,

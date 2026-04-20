@@ -13,6 +13,12 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.commands.misc.cats import cat_command, cat_command_text
+from src.commands.moderation.security import (
+    security_capture_permissions,
+    security_lockdown,
+    security_set_verified_role,
+    verify_member,
+)
 from src.commands.moderation.warn import warn
 from src.db.database import get_session, engine
 from src.db.models import Server, Replies as Message, GlobalUser
@@ -91,6 +97,7 @@ class Aclient(discord.AutoShardedClient):
             logger.error(f"❌ Failed to load user cache: {e}")
 
     async def load_current_server_rules(self):
+        pass
 
 
 
@@ -117,6 +124,10 @@ class Aclient(discord.AutoShardedClient):
 client = Aclient()
 tree = app_commands.CommandTree(client)
 tree.add_command(warn)
+tree.add_command(security_set_verified_role)
+tree.add_command(security_capture_permissions)
+tree.add_command(security_lockdown)
+tree.add_command(verify_member)
 
 
 # Add birthdays to the database
