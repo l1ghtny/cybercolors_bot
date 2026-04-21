@@ -11,7 +11,10 @@ def _bot_api_url() -> str:
 
 
 async def _fetch_server_rules(server_id: int) -> list[dict]:
-    api_url = f"{_bot_api_url()}/moderation/rules/{server_id}"
+    base_url = _bot_api_url()
+    if not base_url:
+        raise RuntimeError("BOT_API_URL is not configured")
+    api_url = f"{base_url}/moderation/rules/{server_id}"
     async with httpx.AsyncClient() as client:
         response = await client.get(api_url)
         response.raise_for_status()
@@ -82,7 +85,11 @@ async def warn(
         )
 
     # 2. Prepare data for the API POST request
-    api_url = f"{_bot_api_url()}/moderation/create_action"
+    base_url = _bot_api_url()
+    if not base_url:
+        await interaction.followup.send("BOT_API_URL is not configured.", ephemeral=True)
+        return
+    api_url = f"{base_url}/moderation/create_action"
     payload = {
         "action_type": "warn",
         "moderator_user_id": interaction.user.id,
