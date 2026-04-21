@@ -5,7 +5,7 @@ import discord
 import discord.ui
 from sqlmodel import select
 
-from src.db.database import get_session
+from src.db.database import get_async_session
 from src.db.models import Server
 from src.misc_files import basevariables
 from src.modules.logs_setup import logger
@@ -27,7 +27,7 @@ class BirthdaysChannelText(discord.ui.ChannelSelect):
                 channel_id = item.id
                 channel_name = item.name
                 try:
-                    async with get_session() as session:
+                    async with get_async_session() as session:
                         server_settings = await session.exec(select(Server).where(Server.server_id == server_id))
                         server_settings = server_settings.first()
                         server_settings.birthday_channel_id = channel_id
@@ -244,7 +244,7 @@ class GuildAlreadyExists(discord.ui.View):
         if interaction.user == self.user:
             await self.disable_all_items()
             try:
-                async with get_session() as session:
+                async with get_async_session() as session:
 
                     server_id = interaction.guild.id
                     channel_id = None

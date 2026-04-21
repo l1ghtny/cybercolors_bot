@@ -2,7 +2,7 @@ import discord
 from sqlalchemy.orm import selectinload
 from sqlmodel import select
 
-from src.db.database import get_session
+from src.db.database import get_async_session
 from src.db.models import User, Birthday, GlobalUser
 from src.views.birthday.change_date import UserAlreadyExists
 from src.views.birthday.timezones import DropdownTimezones
@@ -30,7 +30,7 @@ async def add_birthday(client, interaction, month, day):
         server_id = interaction.guild.id
         day = int(day)
         try:
-            async with get_session() as session:
+            async with get_async_session() as session:
                 # Load GlobalUser with their birthday
                 query = select(GlobalUser).where(GlobalUser.discord_id == user_id).options(selectinload(GlobalUser.birthday))
                 result = await session.exec(query)

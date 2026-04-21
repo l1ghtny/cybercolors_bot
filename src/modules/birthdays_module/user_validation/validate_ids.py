@@ -1,7 +1,7 @@
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.db.database import get_session, engine
+from src.db.database import engine
 from src.db.models import User
 from src.modules.logs_setup import logger
 

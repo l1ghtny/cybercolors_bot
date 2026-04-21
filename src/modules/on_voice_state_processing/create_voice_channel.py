@@ -1,6 +1,6 @@
 from sqlmodel import select
 
-from src.db.database import get_session
+from src.db.database import get_async_session
 from src.db.models import VoiceChannel
 from src.misc_files import basevariables
 from src.modules.logs_setup import logger
@@ -10,7 +10,7 @@ logger = logger.logging.getLogger("bot")
 
 async def create_voice_channel(member, before, after):
     server_id = member.guild.id
-    async with get_session() as session:
+    async with get_async_session() as session:
         temp_channels_info = await session.exec(select(VoiceChannel).where(VoiceChannel.server_id == member.guild.id)).all()
 
         temp_channels = []

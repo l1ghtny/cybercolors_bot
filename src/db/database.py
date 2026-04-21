@@ -1,10 +1,10 @@
-﻿import os
-from typing import AsyncGenerator
+import os
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator, AsyncIterator
 
 from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel.ext.asyncio.session import AsyncSession
-from sqlalchemy.orm import sessionmaker
 
 load_dotenv()
 
@@ -36,6 +36,13 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
             await session.close()
 
 
-async def get_async_session():
+@asynccontextmanager
+async def get_async_session() -> AsyncIterator[AsyncSession]:
     async with AsyncSession(engine, expire_on_commit=False) as session:
-        yield session
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()

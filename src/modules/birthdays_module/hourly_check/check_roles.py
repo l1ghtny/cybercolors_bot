@@ -7,13 +7,13 @@ from sqlmodel import select
 
 from src.db.models import User, Birthday
 from src.modules.logs_setup import logger
-from src.db.database import get_session
+from src.db.database import get_async_session
 
 logger = logger.logging.getLogger("bot")
 
 
 async def check_roles(client):
-    async with get_session() as session:
+    async with get_async_session() as session:
         query = (
             select(User, Birthday)
             .join(Birthday, Birthday.user_id == User.user_id)

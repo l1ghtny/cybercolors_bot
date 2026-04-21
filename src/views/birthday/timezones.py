@@ -4,7 +4,7 @@ import discord
 import discord.ui
 from sqlmodel import select
 
-from src.db.database import get_session
+from src.db.database import get_async_session
 from src.db.models import User, Birthday
 
 from src.modules.birthdays_module.hourly_check.check_birthday_redone import check_birthday_new
@@ -65,7 +65,7 @@ class DropdownTimezones(discord.ui.View):
             add_timezone = selected_timezone[0]
 
             try:
-                async with get_session() as session:
+                async with get_async_session() as session:
                     query = select(Birthday).where(Birthday.user_id == user_id)
                     result = await session.exec(query)
                     user_data = result.first()

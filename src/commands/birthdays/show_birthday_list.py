@@ -6,7 +6,7 @@ from datetime import datetime
 from sqlmodel import select, join
 from sqlalchemy.orm import selectinload
 
-from src.db.database import get_session
+from src.db.database import get_async_session
 from src.db.models import User, Birthday
 from src.views.pagination.pagination import PaginationView
 from src.modules.logs_setup import logger
@@ -19,7 +19,7 @@ async def send_birthday_list(client, interaction, separation):
     server_id = interaction.guild_id
     old_data = []
 
-    async with get_session() as session:
+    async with get_async_session() as session:
         # Get the current month and day
         now = datetime.now()
         current_month = now.month

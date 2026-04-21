@@ -27,3 +27,7 @@ Also, there is a check for users who deleted their accounts or left the server. 
 ## In progress
 
 ### Admin features
+
+## Development notes
+
+- DB session usage guide: [docs/session-conventions.md](docs/session-conventions.md)

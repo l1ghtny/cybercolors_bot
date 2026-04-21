@@ -6,9 +6,7 @@ from discord import app_commands
 from discord.ext import tasks
 import os
 from dotenv import load_dotenv
-import uuid
 import demoji
-import pytz
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -20,9 +18,13 @@ from src.commands.moderation.security import (
     verify_member,
 )
 from src.commands.moderation.warn import warn
-from src.db.database import get_session, engine
-from sqlmodel.ext.asyncio.session import AsyncSession
-from src.modules.moderation.moderation_helpers import handle_message_deletion
+from src.db.database import engine, get_async_session
+from src.modules.moderation.moderation_helpers import (
+    check_if_server_exists,
+    check_if_user_exists,
+    handle_bulk_message_deletion,
+    handle_message_deletion,
+)
 from src.db.models import Server, Replies, Triggers, GlobalUser
 from src.modules.birthdays_module.user_validation.user_validate_time import users_time
 from src.commands.birthdays.add_new_birthday import add_birthday
@@ -162,7 +164,7 @@ async def birthdays_settings(interaction: discord.Interaction):
     await interaction.response.defer()
     server_id = interaction.guild.id
     try:
-        async with get_session() as session:
+        async with get_async_session() as session:
             query = select(Server).where(Server.server_id == server_id)
             result = await session.exec(query)
             server_settings = result.first()
@@ -213,7 +215,10 @@ async def add_reply(interaction: discord.Interaction, phrase: str, response: str
     trigger_text = em_replace(e_replace(phrase.lower().strip()))
     
     try:
-        async with get_session() as session:
+        async with get_async_session() as session:
+            await check_if_server_exists(interaction.guild, session)
+            await check_if_user_exists(interaction.user, interaction.guild, session)
+
             new_reply = Replies(
                 bot_reply=response,
                 server_id=server_id,
@@ -240,7 +245,7 @@ async def delete_reply(interaction: discord.Interaction, trigger: str):
     search_pattern = f'%{trigger}%'
     server_id = interaction.guild_id
     
-    async with get_session() as session:
+    async with get_async_session() as session:
         statement = select(Triggers).join(Replies).where(
             Replies.server_id == server_id,
             Triggers.message.like(search_pattern)
@@ -257,7 +262,7 @@ async def delete_reply(interaction: discord.Interaction, trigger: str):
         view = DeleteReplyMultiple(interaction)
         select_module = DeleteReplyMultipleSelect(interaction, view)
         for t in triggers:
-            async with get_session() as session:
+            async with get_async_session() as session:
                 reply = await session.get(Replies, t.reply_id)
             
             label = f"Т: {t.message[:40]} -> О: {reply.bot_reply[:40]}"
@@ -268,7 +273,7 @@ async def delete_reply(interaction: discord.Interaction, trigger: str):
                                                 view=view, ephemeral=True)
     else:
         target_trigger = triggers[0]
-        async with get_session() as session:
+        async with get_async_session() as session:
             reply = await session.get(Replies, target_trigger.reply_id)
             creator = await session.get(GlobalUser, reply.created_by_id)
             creator_name = creator.username if creator else "Unknown"
@@ -286,7 +291,7 @@ async def delete_reply(interaction: discord.Interaction, trigger: str):
 async def delete_reply_autocomplete(interaction: discord.Interaction, current: str):
     server_id = interaction.guild_id
     request_string = f'%{current}%'
-    async with get_session() as session:
+    async with get_async_session() as session:
         query = select(Triggers).join(Replies).where(
             Triggers.message.like(request_string), 
             Replies.server_id == server_id
@@ -329,7 +334,7 @@ async def show_replies(interaction: discord.Interaction):
     server_id = interaction.guild_id
     data = []
     
-    async with get_session() as session:
+    async with get_async_session() as session:
         statement = select(Triggers, Replies).join(Replies).where(Replies.server_id == server_id).order_by(Triggers.message)
         result = await session.exec(statement)
         rows = result.all()
@@ -392,7 +397,7 @@ async def on_message(message):
             database_found, server_id = await check_for_replies(message)
         if database_found is False:
             await look_for_bot_reply(message, client)
-        asyncio.create_task(process_background_tasks(message, client.load_current_server_rules, client.known_global_users))
+        asyncio.create_task(process_background_tasks(message, client.known_global_users))
 
 
 @client.event
@@ -400,6 +405,13 @@ async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent):
     """Triggered when a message is deleted. Moves it to deleted_messages table."""
     async with AsyncSession(engine) as session:
         await handle_message_deletion(payload.message_id, payload.guild_id, session)
+
+
+@client.event
+async def on_raw_bulk_message_delete(payload: discord.RawBulkMessageDeleteEvent):
+    """Triggered when multiple messages are deleted in bulk."""
+    async with AsyncSession(engine) as session:
+        await handle_bulk_message_deletion(payload.message_ids, payload.guild_id, session)
 
 
 # BD MODULE with checking task

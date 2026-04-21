@@ -2,3 +2,6 @@
 /regular_bot.bat
 /.idea/
 /logs/
+**/__pycache__/
+*.pyc
+*.pyo

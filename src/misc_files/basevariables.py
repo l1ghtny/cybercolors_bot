@@ -2,7 +2,7 @@ import os
 from dotenv import load_dotenv
 from sqlmodel import select
 
-from src.db.database import get_session
+from src.db.database import get_async_session
 from src.db.models import Server, Birthday, VoiceChannel
 from src.modules.logs_setup import logger
 
@@ -19,7 +19,7 @@ async def create_new_channel(interaction, new_channel):
     server_name = interaction.guild.name
     channel_name = new_channel.name
     try:
-        async with get_session() as session:
+        async with get_async_session() as session:
             new_settings = Server(server_id=server_id, birthday_channel_id=channel_id, birthday_channel_name=channel_name, server_name=server_name)
             session.add(new_settings)
             await session.commit()
@@ -35,7 +35,7 @@ async def update_channel_values(interaction, new_channel):
     channel_id = new_channel.id
     channel_name = new_channel.name
     try:
-        async with get_session() as session:
+        async with get_async_session() as session:
             server_settings = await session.exec(select(Server).where(Server.server_id == server_id))
             server_settings = server_settings.first()
             server_settings.birthday_channel_id = channel_id
@@ -52,7 +52,7 @@ async def update_channel_values(interaction, new_channel):
 async def check_guild_id(interaction):
     server_id = interaction.guild.id
     try:
-        async with get_session() as session:
+        async with get_async_session() as session:
             query = select(Server).where(Server.server_id == server_id)
             result = await session.exec(query)
             row = result.first()
@@ -64,7 +64,7 @@ async def check_guild_id(interaction):
 
 async def update_server_role(interaction, server_id, role_id):
     try:
-        async with get_session() as session:
+        async with get_async_session() as session:
             server_settings = await session.exec(select(Server).where(Server.server_id == server_id))
             server_settings = server_settings.first()
             server_settings.birthday_role_id = role_id
@@ -80,7 +80,7 @@ async def update_server_role(interaction, server_id, role_id):
 
 async def add_new_day_month(user_id, day, month, interaction):
     try:
-        async with get_session() as session:
+        async with get_async_session() as session:
             result = await session.exec(select(Birthday).where(Birthday.user_id == user_id))
             birthday = result.first()
             if birthday is None:
@@ -102,7 +102,7 @@ async def add_new_day_month(user_id, day, month, interaction):
 
 
 async def delete_channel_id(channel_id, server_id):
-    async with get_session() as session:
+    async with get_async_session() as session:
         selected_channel = await session.exec(select(VoiceChannel).where(VoiceChannel.channel_id == channel_id and VoiceChannel.server_id == server_id))
         selected_channel = selected_channel.first()
         if selected_channel is not None:

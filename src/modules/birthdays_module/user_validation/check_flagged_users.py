@@ -1,6 +1,6 @@
 from sqlmodel import select
 
-from src.db.database import get_session
+from src.db.database import get_async_session
 from src.db.models import User
 from src.modules.logs_setup import logger
 
@@ -8,7 +8,7 @@ logger = logger.logging.getLogger("bot")
 
 
 async def remove_flag_from_users_by_server(client):
-    async with get_session() as session:
+    async with get_async_session() as session:
         query = select(User).where(User.is_member == True)
         servers_and_users = await session.exec(query)
         servers_and_users = servers_and_users.all()
@@ -24,7 +24,7 @@ async def remove_flag_from_users_by_server(client):
 
 
 async def remove_flag_user(user_id, server_id):
-    async with get_session() as session:
+    async with get_async_session() as session:
         user_to_update = await session.exec(select(User).where(User.user_id == user_id, User.server_id == server_id))
         user_updated = user_to_update.first()
         user_updated.is_member = True

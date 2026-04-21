@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 import discord
 from discord import app_commands
 
-from src.db.database import get_session
+from src.db.database import get_async_session
 from src.db.models import Server, ServerSecuritySettings
 
 
@@ -12,7 +12,7 @@ def _utcnow_naive() -> datetime:
 
 
 async def _get_or_create_security_settings(server_id: int, server_name: str) -> ServerSecuritySettings:
-    async with get_session() as session:
+    async with get_async_session() as session:
         server = await session.get(Server, server_id)
         if not server:
             server = Server(server_id=server_id, server_name=server_name)
@@ -39,7 +39,7 @@ async def security_set_verified_role(interaction: discord.Interaction, role: dis
     await interaction.response.defer(ephemeral=True)
     settings = await _get_or_create_security_settings(interaction.guild.id, interaction.guild.name)
 
-    async with get_session() as session:
+    async with get_async_session() as session:
         settings = await session.get(ServerSecuritySettings, interaction.guild.id)
         settings.verified_role_id = role.id
         if settings.normal_permissions is None:
@@ -72,7 +72,7 @@ async def security_capture_permissions(interaction: discord.Interaction, mode: a
         await interaction.followup.send("Verified role is not configured or not found on this server.", ephemeral=True)
         return
 
-    async with get_session() as session:
+    async with get_async_session() as session:
         settings = await session.get(ServerSecuritySettings, interaction.guild.id)
         if mode.value == "normal":
             settings.normal_permissions = role.permissions.value
@@ -112,7 +112,7 @@ async def security_lockdown(interaction: discord.Interaction, enabled: bool):
 
     await role.edit(permissions=discord.Permissions(target_permissions))
 
-    async with get_session() as session:
+    async with get_async_session() as session:
         settings = await session.get(ServerSecuritySettings, interaction.guild.id)
         settings.lockdown_enabled = enabled
         settings.updated_at = _utcnow_naive()

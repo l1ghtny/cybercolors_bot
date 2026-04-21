@@ -4,7 +4,7 @@ import discord
 import discord.ui
 from sqlmodel import select
 
-from src.db.database import get_session
+from src.db.database import get_async_session
 from src.db.models import Birthday, User
 from src.misc_files import basevariables
 from src.views.birthday.timezones import DropdownTimezones
@@ -136,7 +136,7 @@ class UserAlreadyExists(discord.ui.View):
     async def user_not_ok_button(self, interaction, button):
         if interaction.user == self.user:
             await self.disable_all_items()
-            async with get_session() as session:
+            async with get_async_session() as session:
                 user = await session.exec(select(Birthday).join(User).where(User.user_id == interaction.user.id and User.server_id == interaction.guild.id))
                 user = user.first()
                 await session.delete(user)

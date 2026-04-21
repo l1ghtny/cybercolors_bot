@@ -7,7 +7,7 @@ import discord
 from sqlalchemy.orm import selectinload
 from sqlmodel import select
 
-from src.db.database import get_session
+from src.db.database import get_async_session
 from src.db.models import Birthday, Congratulation, GlobalUser, User
 from src.misc_files import basevariables
 from src.modules.logs_setup import logger
@@ -43,7 +43,7 @@ async def check_birthday_new(client: discord.Client):
 
     zones = timezones_response.get("zones", [])
 
-    async with get_session() as session:
+    async with get_async_session() as session:
         statement = select(Birthday).options(
             selectinload(Birthday.global_user).selectinload(GlobalUser.memberships).selectinload(User.server)
         )
