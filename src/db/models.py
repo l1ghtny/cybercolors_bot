@@ -35,6 +35,7 @@ class Server(SQLModel, table=True):
     monitored_users: List["MonitoredUser"] = Relationship(back_populates="server")
     dashboard_access_users: List["DashboardAccessUser"] = Relationship(back_populates="server")
     dashboard_access_roles: List["DashboardAccessRole"] = Relationship(back_populates="server")
+    moderation_rules: List["ModerationRule"] = Relationship(back_populates="server")
     security_settings: Optional["ServerSecuritySettings"] = Relationship(
         back_populates="server",
         sa_relationship_kwargs={"uselist": False},
@@ -114,6 +115,7 @@ class GlobalUser(SQLModel, table=True):
 
     replies: List["Replies"] = Relationship(back_populates="created_by")
     user_activity: List["UserActivity"] = Relationship(back_populates="global_user")
+    moderation_rules_created: List["ModerationRule"] = Relationship(back_populates="created_by")
 
 
 
@@ -220,6 +222,31 @@ class ActionType(str, Enum):
     BAN = "ban"
 
 
+class ModerationRule(SQLModel, table=True):
+    __tablename__ = "moderation_rules"
+
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False, index=True))
+    code: Optional[str] = Field(default=None, nullable=True, index=True)
+    title: str = Field(nullable=False)
+    description: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    sort_order: int = Field(default=0, nullable=False)
+    source_channel_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
+    source_message_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
+    source_marker: Optional[str] = Field(default=None, nullable=True)
+    is_active: bool = Field(default=True, nullable=False, index=True)
+    created_by_user_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=True),
+    )
+    created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+    updated_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+
+    server: Server = Relationship(back_populates="moderation_rules")
+    created_by: Optional[GlobalUser] = Relationship(back_populates="moderation_rules_created")
+    moderation_actions: List["ModerationAction"] = Relationship(back_populates="rule")
+
+
 class ModerationAction(SQLModel, table=True):
     __tablename__ = "moderation_actions"
     id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
@@ -228,8 +255,10 @@ class ModerationAction(SQLModel, table=True):
     server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id")))
     target_user_id: int = Field(sa_column=Column(BigInteger, (ForeignKey("global_users.discord_id"))))
     moderator_user_id: int = Field(sa_column=Column(BigInteger, (ForeignKey("global_users.discord_id"))))
+    rule_id: Optional[UUID] = Field(default=None, foreign_key="moderation_rules.id")
 
     reason: str
+    commentary: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     created_at: datetime = Field(default_factory= datetime.now)
     expires_at: Optional[datetime] = None  # For temporary mutes/bans
     is_active: bool = True  # To mark if a ban/mute has been cancelled
@@ -244,6 +273,7 @@ class ModerationAction(SQLModel, table=True):
     )
 
     server: Server = Relationship(back_populates="moderation_actions")
+    rule: Optional[ModerationRule] = Relationship(back_populates="moderation_actions")
     case_links: List["ModerationCaseActionLink"] = Relationship(back_populates="moderation_action")
     deleted_message_links: List["ModerationActionDeletedMessageLink"] = Relationship(back_populates="moderation_action")
 

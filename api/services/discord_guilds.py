@@ -82,6 +82,13 @@ async def fetch_guild_member(server_id: int, user_id: int) -> dict | None:
     return None
 
 
+async def fetch_channel_message(channel_id: int, message_id: int) -> dict:
+    payload = await _discord_get(f"/channels/{channel_id}/messages/{message_id}")
+    if isinstance(payload, dict):
+        return payload
+    return {}
+
+
 async def update_guild_role_permissions(server_id: int, role_id: int, permissions: int) -> dict:
     payload = await _discord_patch(
         f"/guilds/{server_id}/roles/{role_id}",

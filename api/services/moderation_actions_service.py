@@ -14,7 +14,7 @@ from api.services.moderation_queries import (
     query_deleted_messages_for_action,
     query_moderation_actions,
 )
-from src.db.models import DeletedMessage, GlobalUser, ModerationAction, ModerationActionDeletedMessageLink
+from src.db.models import DeletedMessage, GlobalUser, ModerationAction, ModerationActionDeletedMessageLink, ModerationRule
 from src.modules.moderation.moderation_helpers import check_if_server_exists, check_if_user_exists
 
 
@@ -38,10 +38,33 @@ async def create_action(
     await check_if_server_exists(mock_server, session)
     await check_if_user_exists(mock_user, mock_server, session)
 
+    resolved_commentary = action.commentary.strip() if action.commentary else None
+    resolved_reason = action.reason.strip() if action.reason else None
+    resolved_rule_id = None
+
+    if action.rule_id is not None:
+        rule = await session.get(ModerationRule, action.rule_id)
+        if not rule or not rule.is_active or rule.server_id != action.server_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Invalid moderation rule for this server",
+            )
+        resolved_rule_id = rule.id
+        base_reason = f"{rule.code} {rule.title}".strip() if rule.code else rule.title
+        resolved_reason = f"{base_reason}\nКомментарий: {resolved_commentary}" if resolved_commentary else base_reason
+
+    if not resolved_reason:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Either reason or rule_id must be provided",
+        )
+
     db_action = ModerationAction(
         action_type=action.action_type,
         moderator_user_id=moderator_user_id,
-        reason=action.reason,
+        reason=resolved_reason,
+        rule_id=resolved_rule_id,
+        commentary=resolved_commentary,
         expires_at=action.expires_at,
         target_user_id=action.target_user_id,
         server_id=action.server_id,

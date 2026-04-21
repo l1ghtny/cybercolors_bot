@@ -25,7 +25,7 @@ from src.modules.moderation.moderation_helpers import (
     handle_bulk_message_deletion,
     handle_message_deletion,
 )
-from src.db.models import Server, Replies, Triggers, GlobalUser
+from src.db.models import Server, Replies, Triggers, GlobalUser, ModerationRule
 from src.modules.birthdays_module.user_validation.user_validate_time import users_time
 from src.commands.birthdays.add_new_birthday import add_birthday
 from src.commands.birthdays.show_birthday_list import send_birthday_list
@@ -66,6 +66,7 @@ class Aclient(discord.AutoShardedClient):
         self.synced = False  # we use this so the bot doesn't sync commands more than once
 
         self.known_global_users = set()
+        self.current_server_rules: dict[int, list[dict]] = {}
 
     async def setup_hook(self):
         """
@@ -101,7 +102,35 @@ class Aclient(discord.AutoShardedClient):
             logger.error(f"❌ Failed to load user cache: {e}")
 
     async def load_current_server_rules(self):
-        pass
+        """
+        Fetch active moderation rules per server and keep them in-memory.
+        """
+        logger.info("Pre-loading active moderation rules from database...")
+        try:
+            async with get_async_session() as session:
+                statement = (
+                    select(ModerationRule)
+                    .where(ModerationRule.is_active == True)
+                    .order_by(ModerationRule.server_id.asc(), ModerationRule.sort_order.asc())
+                )
+                result = await session.exec(statement)
+                rules = result.all()
+
+            rules_map: dict[int, list[dict]] = {}
+            for rule in rules:
+                rules_map.setdefault(rule.server_id, []).append(
+                    {
+                        "id": str(rule.id),
+                        "code": rule.code,
+                        "title": rule.title,
+                        "description": rule.description,
+                        "sort_order": rule.sort_order,
+                    }
+                )
+            self.current_server_rules = rules_map
+            logger.info(f"Loaded moderation rules for {len(self.current_server_rules)} servers.")
+        except Exception as e:
+            logger.error(f"Failed to load moderation rules cache: {e}")
 
 
 

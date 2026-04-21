@@ -31,3 +31,4 @@ Also, there is a check for users who deleted their accounts or left the server. 
 ## Development notes
 
 - DB session usage guide: [docs/session-conventions.md](docs/session-conventions.md)
+- Moderation rules import format: [docs/moderation-rules-style-guide.md](docs/moderation-rules-style-guide.md)

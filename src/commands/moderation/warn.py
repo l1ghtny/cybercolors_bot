@@ -1,33 +1,101 @@
-﻿import os
-from datetime import datetime
+import os
+from datetime import datetime, timezone
+
 import discord
 from discord import app_commands
 import httpx
 
 
-@app_commands.command(name='warn', description='Warns a user and logs the action.')
-async def warn(interaction: discord.Interaction, user: discord.Member, reason: str):
-    """Handles the /warn command, sends a DM, and calls the internal API to log the warning."""
+def _bot_api_url() -> str:
+    return os.getenv("BOT_API_URL", "").rstrip("/")
+
+
+async def _fetch_server_rules(server_id: int) -> list[dict]:
+    api_url = f"{_bot_api_url()}/moderation/rules/{server_id}"
+    async with httpx.AsyncClient() as client:
+        response = await client.get(api_url)
+        response.raise_for_status()
+        payload = response.json()
+    if isinstance(payload, list):
+        return payload
+    return []
+
+
+def _find_rule(rules: list[dict], rule_id: str) -> dict | None:
+    for rule in rules:
+        if str(rule.get("id")) == rule_id:
+            return rule
+    return None
+
+
+def _rule_label(rule: dict) -> str:
+    code = (rule.get("code") or "").strip()
+    title = (rule.get("title") or "").strip()
+    if code:
+        return f"{code} {title}".strip()
+    return title or "Rule"
+
+
+@app_commands.command(name="warn", description="Warns a user and logs the action.")
+async def warn(
+    interaction: discord.Interaction,
+    user: discord.Member,
+    rule: str,
+    commentary: str | None = None,
+):
+    """Handles /warn: select a declared server rule, add optional commentary, and log action."""
     await interaction.response.defer(ephemeral=True)
+
+    try:
+        rules = await _fetch_server_rules(interaction.guild.id)
+    except Exception as error:
+        await interaction.followup.send(
+            f"Could not fetch moderation rules from API: {error}",
+            ephemeral=True,
+        )
+        return
+
+    selected_rule = _find_rule(rules, rule)
+    if not selected_rule:
+        await interaction.followup.send(
+            "Selected rule is invalid or no longer active. Please choose from autocomplete suggestions.",
+            ephemeral=True,
+        )
+        return
+
+    selected_rule_label = _rule_label(selected_rule)
+    commentary_text = commentary.strip() if commentary else None
 
     # 1. Perform Discord-specific actions
     try:
-        dm_message = f"You have been warned in **{interaction.guild.name}** for the following reason:\n> {reason}"
+        dm_message = (
+            f"You have been warned in **{interaction.guild.name}** for the following rule:\n"
+            f"> {selected_rule_label}"
+        )
+        if commentary_text:
+            dm_message += f"\n\nModerator commentary:\n> {commentary_text}"
         await user.send(dm_message)
     except discord.Forbidden:
-        # Inform the moderator but continue with logging the action
-        await interaction.followup.send("Could not send a DM to the user, but the warning will still be logged.", ephemeral=True)
+        await interaction.followup.send(
+            "Could not send a DM to the user, but the warning will still be logged.",
+            ephemeral=True,
+        )
 
     # 2. Prepare data for the API POST request
-    # Ensure you have BOT_API_URL in your environment variables (e.g., http://127.0.0.1:8000)
-    api_url = f"{os.getenv('BOT_API_URL')}/moderation/create_action"
+    api_url = f"{_bot_api_url()}/moderation/create_action"
     payload = {
         "action_type": "warn",
         "moderator_user_id": interaction.user.id,
-        "reason": reason,
+        "rule_id": rule,
+        "commentary": commentary_text,
+        "reason": None,
         "target_user_id": user.id,
         "target_user_name": user.name,
-        "target_user_joined_at": user.joined_at.isoformat(),
+        "target_user_joined_at": (
+            user.joined_at.isoformat()
+            if user.joined_at is not None
+            else datetime.now(timezone.utc).isoformat()
+        ),
         "target_user_server_nickname": user.nick,
         "server_id": interaction.guild.id,
         "server_name": interaction.guild.name,
@@ -37,13 +105,41 @@ async def warn(interaction: discord.Interaction, user: discord.Member, reason: s
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(api_url, json=payload)
-            response.raise_for_status()  # Raises an exception for 4xx or 5xx status codes
+            response.raise_for_status()
+        await interaction.followup.send(
+            f"Successfully warned {user.mention} for `{selected_rule_label}` and logged the action.",
+            ephemeral=False,
+        )
+    except httpx.RequestError as error:
+        await interaction.followup.send(
+            f"An error occurred while communicating with the API: {error}",
+            ephemeral=True,
+        )
+    except httpx.HTTPStatusError as error:
+        await interaction.followup.send(
+            f"The API responded with an error: {error.response.status_code} - {error.response.text}",
+            ephemeral=True,
+        )
 
-        await interaction.followup.send(f"Successfully warned {user.mention} and logged the action.", ephemeral=False)
 
-    except httpx.RequestError as e:
-        await interaction.followup.send(f"An error occurred while communicating with the API: {e}", ephemeral=True)
-        print(f"API Request Error: {e}") # For debugging
-    except httpx.HTTPStatusError as e:
-        await interaction.followup.send(f"The API responded with an error: {e.response.status_code} - {e.response.text}", ephemeral=True)
-        print(f"API Status Error: {e.response.text}") # For debugging
+@warn.autocomplete("rule")
+async def warn_rule_autocomplete(interaction: discord.Interaction, current: str):
+    if interaction.guild_id is None:
+        return []
+
+    try:
+        rules = await _fetch_server_rules(interaction.guild_id)
+    except Exception:
+        return []
+
+    current_lower = current.lower().strip()
+    choices: list[app_commands.Choice[str]] = []
+    for item in rules:
+        label = _rule_label(item)
+        if current_lower and current_lower not in label.lower():
+            continue
+        display_name = label if len(label) <= 100 else f"{label[:97]}..."
+        choices.append(app_commands.Choice(name=display_name, value=str(item.get("id"))))
+        if len(choices) >= 25:
+            break
+    return choices

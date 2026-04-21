@@ -56,6 +56,7 @@ async def query_moderation_actions(
     statement = statement.options(
         selectinload(ModerationAction.global_user_moderator),
         selectinload(ModerationAction.global_user_target),
+        selectinload(ModerationAction.rule),
     ).order_by(ModerationAction.created_at.desc())
     if limit is not None:
         statement = statement.limit(limit)
