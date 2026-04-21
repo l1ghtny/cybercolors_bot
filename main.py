@@ -17,6 +17,12 @@ from src.commands.moderation.security import (
     security_set_verified_role,
     verify_member,
 )
+from src.commands.moderation.rules import (
+    rule_add,
+    rules_import_message,
+    rules_import_from_message_ctx,
+    rules_list,
+)
 from src.commands.moderation.warn import warn
 from src.db.database import engine, get_async_session
 from src.modules.moderation.moderation_helpers import (
@@ -157,6 +163,10 @@ class Aclient(discord.AutoShardedClient):
 client = Aclient()
 tree = app_commands.CommandTree(client)
 tree.add_command(warn)
+tree.add_command(rule_add)
+tree.add_command(rules_import_message)
+tree.add_command(rules_list)
+tree.add_command(rules_import_from_message_ctx)
 tree.add_command(security_set_verified_role)
 tree.add_command(security_capture_permissions)
 tree.add_command(security_lockdown)
