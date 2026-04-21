@@ -12,7 +12,7 @@ from api.services.discord_guilds import fetch_channel_message
 from api.services.moderation_core import naive_utcnow
 from src.db.models import ModerationRule, Server
 
-RULE_START_RE = re.compile(r"^\s*(?P<marker>(?:\d+[.)]|[0-9]\uFE0F?\u20E3|[0-9]️⃣))\s*(?P<body>.+)$")
+RULE_START_RE = re.compile(r"^\s*(?P<num>[1-9]\d?)(?P<marker>\s*[\W_]{0,4})\s*(?P<body>.+)$")
 
 
 @dataclass
@@ -28,6 +28,7 @@ def _normalize_text(value: str) -> str:
     cleaned = value.replace("ᅠ", " ")
     cleaned = re.sub(r"<:[^:>]+:\d+>", " ", cleaned)
     cleaned = re.sub(r"\*\*(.*?)\*\*", r"\1", cleaned)
+    cleaned = re.sub(r"^\*+|\*+$", "", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned)
     return cleaned.strip()
 
@@ -70,11 +71,17 @@ def parse_rules_from_text(text: str) -> list[ParsedRule]:
     for line in lines:
         match = RULE_START_RE.match(line)
         if match:
-            flush_current()
-            marker = match.group("marker")
+            marker_suffix = (match.group("marker") or "").strip()
             body = match.group("body").strip()
+            # Prevent false positives like "2024 roadmap" and treat only explicit markers as rule starts.
+            if not marker_suffix and not body.startswith("**"):
+                match = None
+
+        if match:
+            flush_current()
+            marker = f"{match.group('num')}{(match.group('marker') or '').strip()}"
             current_marker = marker
-            current_code = _normalize_text(marker)
+            current_code = match.group("num")
             current_lines = [body]
             continue
 
