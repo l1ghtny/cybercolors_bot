@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 from typing import Sequence
 from uuid import UUID
@@ -9,6 +10,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.models.moderation_actions import ModerationActionRead
 from api.models.moderation_cases import (
+    DeletedMessageAttachmentModel,
     DeletedMessageReadModel,
     ModerationActorModel,
     ModerationCaseReadModel,
@@ -249,6 +251,18 @@ async def to_deleted_message_read(
 ) -> DeletedMessageReadModel:
     author = await build_optional_actor(session, deleted_message.server_id, deleted_message.author_user_id)
     deleted_by = await build_optional_actor(session, deleted_message.server_id, deleted_message.deleted_by_user_id)
+    attachments: list[DeletedMessageAttachmentModel] = []
+    if deleted_message.attachments_json:
+        try:
+            parsed = json.loads(deleted_message.attachments_json)
+            if isinstance(parsed, list):
+                attachments = [
+                    DeletedMessageAttachmentModel.model_validate(item)
+                    for item in parsed
+                    if isinstance(item, dict)
+                ]
+        except json.JSONDecodeError:
+            attachments = []
 
     return DeletedMessageReadModel(
         id=str(deleted_message.id),
@@ -258,6 +272,7 @@ async def to_deleted_message_read(
         channel_name=channel_name,
         content=deleted_message.content,
         attachments_json=deleted_message.attachments_json,
+        attachments=attachments,
         deleted_at=deleted_message.deleted_at,
         author=author,
         deleted_by=deleted_by,

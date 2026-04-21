@@ -157,6 +157,12 @@ class DeletedMessageCreateModel(BaseModel):
         return cleaned or None
 
 
+class DeletedMessageAttachmentModel(BaseModel):
+    storage_key: str | None = None
+    file_name: str | None = None
+    content_type: str | None = None
+
+
 class DeletedMessageReadModel(BaseModel):
     id: str
     server_id: str
@@ -165,6 +171,7 @@ class DeletedMessageReadModel(BaseModel):
     channel_name: str | None = None
     content: str | None = None
     attachments_json: str | None = None
+    attachments: list[DeletedMessageAttachmentModel] = Field(default_factory=list)
     deleted_at: datetime
     author: ModerationActorModel | None = None
     deleted_by: ModerationActorModel | None = None
