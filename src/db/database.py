@@ -13,9 +13,20 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL environment variable is not set")
 
+# Engine tuning for long-lived API processes:
+# - pool_pre_ping avoids stale idle connections causing first-request 500s
+# - pool_recycle proactively refreshes connections before server-side idle timeouts
+DB_ECHO = os.getenv("DB_ECHO", "true").lower() == "true"
+DB_POOL_RECYCLE_SECONDS = int(os.getenv("DB_POOL_RECYCLE_SECONDS", "1800"))
+
 # The engine is the source of database connectivity.
 # echo=True is great for debugging as it logs all SQL statements.
-engine = create_async_engine(DATABASE_URL, echo=True)
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=DB_ECHO,
+    pool_pre_ping=True,
+    pool_recycle=DB_POOL_RECYCLE_SECONDS,
+)
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
