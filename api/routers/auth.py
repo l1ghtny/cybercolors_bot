@@ -38,15 +38,18 @@ def _get_bot_token_for_auth() -> str:
 
 @auth.post("/login")
 async def login(request: Request, session: AsyncSession = Depends(get_session)):
-    """
-    Handles the final step of the OAuth2 flow.
-    Exchanges the code for an access token and returns it along with user data.
-    """
     try:
         body = await request.json()
         code = body.get("code")
+        # Get the redirect URI from the frontend request
+        client_redirect_uri = body.get("redirect_uri")
+
         if not code:
             raise HTTPException(status_code=400, detail="Authorization code is required.")
+
+        # Determine which redirect URI to use
+        # If the frontend sent one, use it. Otherwise, use the env variable.
+        redirect_uri = client_redirect_uri or DISCORD_REDIRECT_URI
 
         # --- 1. Exchange code for access token ---
         token_data = {
@@ -54,7 +57,7 @@ async def login(request: Request, session: AsyncSession = Depends(get_session)):
             "client_secret": DISCORD_CLIENT_SECRET,
             "grant_type": "authorization_code",
             "code": code,
-            "redirect_uri": DISCORD_REDIRECT_URI,
+            "redirect_uri": redirect_uri, # Use the dynamic URI here
         }
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
 

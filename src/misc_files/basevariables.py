@@ -1,7 +1,5 @@
 import os
 from dotenv import load_dotenv
-import psycopg2
-from psycopg2.extras import NamedTupleCursor
 from sqlmodel import select
 
 from src.db.database import get_session
@@ -27,7 +25,7 @@ async def create_new_channel(interaction, new_channel):
             await session.commit()
             await session.refresh(new_settings)
         await interaction.response.send_message(f'Выбранный канал: {new_channel.mention}')
-    except psycopg2.Error as error:
+    except Exception as error:
         await interaction.response.send_message(
             'Добавить канал не получилось из-за ошибки "{}"'.format(error.__str__()))
 
@@ -59,7 +57,7 @@ async def check_guild_id(interaction):
             result = await session.exec(query)
             row = result.first()
         return row
-    except psycopg2.Error as error:
+    except Exception as error:
         await interaction.response.send_message(
             'Всё сломалось из-за ошибки "{}"'.format(error.__str__()))
 

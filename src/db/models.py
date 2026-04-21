@@ -533,15 +533,16 @@ class TempVoiceLog(SQLModel, table=True):
 class MessageLog(SQLModel, table=True):
     __tablename__ = "message_log"
     message_id: int = Field(sa_column=Column(BigInteger, primary_key=True))
-    log_id: UUID = Field(foreign_key="temp_voice_log.id")  # Link to the channel log
-    user_id: int = Field(foreign_key="global_users.discord_id")
+    log_id: Optional[UUID] = Field(default=None, foreign_key="temp_voice_log.id", nullable=True)  # Optional link to channel log
+    user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id")))
+    channel_id: int = Field(sa_column=Column(BigInteger, nullable=False))
     content: str
     created_at: datetime
     # For replies
     reply_to_message_id: Optional[int] = Field(sa_column=Column(BigInteger, nullable=True))
     server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id")))
 
-    attachments: AttachmentLog = Relationship(back_populates="message")
+    attachments: List["AttachmentLog"] = Relationship(back_populates="message")
 
 
 class AttachmentLog(SQLModel, table=True):

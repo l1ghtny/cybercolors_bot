@@ -1,4 +1,3 @@
-import psycopg2
 import discord
 from sqlalchemy.orm import selectinload
 from sqlmodel import select

@@ -14,7 +14,8 @@ app = FastAPI(title="CyberColors API", version="0.1.0", docs_url=None, redoc_url
 origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
-    "https://id-preview--ee4421b9-d859-42bd-b506-4c32a5dc1982.lovable.app"
+    "https://id-preview--ee4421b9-d859-42bd-b506-4c32a5dc1982.lovable.app",
+    "https://preview--bot-pal-dash.lovable.app"
 ]
 
 app.add_middleware(

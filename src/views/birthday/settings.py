@@ -3,7 +3,6 @@ import os
 
 import discord
 import discord.ui
-import psycopg2
 from sqlmodel import select
 
 from src.db.database import get_session
@@ -38,7 +37,7 @@ class BirthdaysChannelText(discord.ui.ChannelSelect):
                         await session.refresh(server_settings)
                     await interaction.response.send_message(
                         f'Выбранный канал: "{item.mention}". Не забудь добавить фразы поздравления командой "/add_birthday_message')
-                except psycopg2.Error as error:
+                except Exception as error:
                     await interaction.response.send_message(
                         'Добавить канал не получилось из-за ошибки "{}"'.format(error.__str__()))
         else:

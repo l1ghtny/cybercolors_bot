@@ -21,7 +21,9 @@ from src.commands.moderation.security import (
 )
 from src.commands.moderation.warn import warn
 from src.db.database import get_session, engine
-from src.db.models import Server, Replies as Message, GlobalUser
+from sqlmodel.ext.asyncio.session import AsyncSession
+from src.modules.moderation.moderation_helpers import handle_message_deletion
+from src.db.models import Server, Replies, Triggers, GlobalUser
 from src.modules.birthdays_module.user_validation.user_validate_time import users_time
 from src.commands.birthdays.add_new_birthday import add_birthday
 from src.commands.birthdays.show_birthday_list import send_birthday_list
@@ -197,92 +199,104 @@ async def add_reply(interaction: discord.Interaction, phrase: str, response: str
         emoji = demoji.findall(string)
         for i in emoji:
             unicode = i.encode('unicode-escape').decode('ASCII')
-            logger.info(f'unicode: {unicode}')
             string = string.replace(i, unicode)
         return string
 
     def e_replace(string):
-        string_new = string.replace('ё', 'е')
-        return string_new
-
-    def add_fstring(string):
-        add_string = (f'{string}')
-        string_new = string.replace(string, f'{add_string}')
-        return string_new
+        return string.replace('ё', 'е')
 
     await interaction.response.defer(ephemeral=True)
-    message_id = uuid.uuid4()
     server_id = interaction.guild_id
     user_id = interaction.user.id
-    request_phrase_base = phrase.lower()
-    request_phrase = em_replace(e_replace(request_phrase_base))
-    response_phrase = add_fstring(response)
+    
+    # Normalize the trigger phrase
+    trigger_text = em_replace(e_replace(phrase.lower().strip()))
+    
     try:
         async with get_session() as session:
-            message_to_add = Message(message_id=message_id, server_id=server_id, request_phrase=request_phrase,
-                                     respond_phrase=response_phrase, added_by_user_id=user_id)
-            session.add(message_to_add)
+            new_reply = Replies(
+                bot_reply=response,
+                server_id=server_id,
+                created_by_id=user_id
+            )
+            session.add(new_reply)
+            await session.flush() # Get the new_reply.id
+            
+            new_trigger = Triggers(
+                message=trigger_text,
+                reply_id=new_reply.id
+            )
+            session.add(new_trigger)
+            
             await session.commit()
             await interaction.followup.send(f'Фраза "{phrase}" с ответом "{response}" записаны', ephemeral=True)
     except Exception as error:
-        await interaction.followup.send('Не получилось записать словосочетание из-за ошибки {}'.format(error.__str__()))
-        raise Exception(error)
+        logger.error(f"Error adding reply: {error}")
+        await interaction.followup.send(f'Не получилось записать словосочетание из-за ошибки: {error}', ephemeral=True)
 
 
 @tree.command(name='delete_reply', description='Позволяет удалить заведенные триггеры на фразы')
-async def delete_reply_2(interaction: discord.Interaction, reply: str):
-    reply =( '%' + reply.replace("\\\\", "\\") + '%')
-    user = interaction.user
+async def delete_reply(interaction: discord.Interaction, trigger: str):
+    search_pattern = f'%{trigger}%'
     server_id = interaction.guild_id
+    
     async with get_session() as session:
-        statement = select(Message).where(
-            Message.server_id == server_id,
-            Message.request_phrase.like(reply)
+        statement = select(Triggers).join(Replies).where(
+            Replies.server_id == server_id,
+            Triggers.message.like(search_pattern)
         )
-
-        # 4. Execute the query and get all results
         result = await session.exec(statement)
-        messages = result.all()
-        results_count = len(messages)
+        triggers = result.all()
+        results_count = len(triggers)
+
+    if results_count == 0:
+        await interaction.response.send_message("Триггеры не найдены.", ephemeral=True)
+        return
+
     if results_count > 1:
         view = DeleteReplyMultiple(interaction)
         select_module = DeleteReplyMultipleSelect(interaction, view)
-        for item in messages:
-            label_base = item.respond_phrase
-            label = label_base[0:99]
-            value = str(item.message_id)
-            select_module.add_option(label=label, value=value)
+        for t in triggers:
+            async with get_session() as session:
+                reply = await session.get(Replies, t.reply_id)
+            
+            label = f"Т: {t.message[:40]} -> О: {reply.bot_reply[:40]}"
+            select_module.add_option(label=label, value=str(t.id))
+        
         view.add_item(select_module)
-        await interaction.response.send_message(f'Варианта больше одного, их {results_count}. Выдаём выпадашку',
+        await interaction.response.send_message(f'Найдено {results_count} совпадений. Выберите для удаления:',
                                                 view=view, ephemeral=True)
     else:
-        for item in messages:
-            message_id = item.message_id
-            request_phrase = item.request_phrase
-            respond_phrase = item.respond_phrase
-            added_by_name = interaction.guild.get_member(item.added_by_user_id).display_name
-            added_at_base = item.added_at
-            added_at = added_at_base.astimezone(pytz.timezone('EUROPE/MOSCOW')).strftime('%Y-%m-%d %H:%M:%S')
-            embed = discord.Embed(title='Выбранное сообщение', colour=discord.Colour.random())
-            embed.add_field(name='Триггер:', value=request_phrase)
-            embed.add_field(name='Ответ:', value=respond_phrase, inline=False)
-            embed.add_field(name='Кто добавил:', value=added_by_name)
-            embed.add_field(name='Когда добавил (МСК время):', value=added_at)
-            view = DeleteOneReply(interaction, user, message_id, True)
+        target_trigger = triggers[0]
+        async with get_session() as session:
+            reply = await session.get(Replies, target_trigger.reply_id)
+            creator = await session.get(GlobalUser, reply.created_by_id)
+            creator_name = creator.username if creator else "Unknown"
+            
+            embed = discord.Embed(title='Удаление триггера', colour=discord.Colour.red())
+            embed.add_field(name='Триггер:', value=target_trigger.message)
+            embed.add_field(name='Ответ:', value=reply.bot_reply, inline=False)
+            embed.add_field(name='Кто добавил:', value=creator_name)
+            
+            view = DeleteOneReply(interaction, interaction.user, target_trigger.id, True)
             await interaction.response.send_message(view=view, embed=embed, ephemeral=True)
 
 
-@delete_reply_2.autocomplete('reply')
-async def delete_reply_2_autocomplete(interaction: discord.Interaction, current: str):
+@delete_reply.autocomplete('trigger')
+async def delete_reply_autocomplete(interaction: discord.Interaction, current: str):
     server_id = interaction.guild_id
     request_string = f'%{current}%'
     async with get_session() as session:
-        query = select(Message).where(Message.request_phrase.like(request_string), Message.server_id == server_id)
+        query = select(Triggers).join(Replies).where(
+            Triggers.message.like(request_string), 
+            Replies.server_id == server_id
+        )
         result_get = await session.exec(query)
         result = result_get.all()
+    
     result_list = []
     for item in result:
-        new_value = item.request_phrase
+        new_value = item.message
         if len(new_value) > 100:
             new_value = new_value[:96] + '...'
         result_list.append(app_commands.Choice(name=new_value, value=new_value))
@@ -314,31 +328,33 @@ async def show_replies(interaction: discord.Interaction):
     await interaction.response.defer()
     server_id = interaction.guild_id
     data = []
+    
     async with get_session() as session:
-        query = select(Message).where(Message.server_id == server_id).order_by(Message.request_phrase)
-        result = await session.exec(query)
-        replies = result.all()
-        for item in replies:
-            request = item.request_phrase
-            response = item.respond_phrase
+        statement = select(Triggers, Replies).join(Replies).where(Replies.server_id == server_id).order_by(Triggers.message)
+        result = await session.exec(statement)
+        rows = result.all()
+        
+        for trigger, reply in rows:
             data.append({
-                'label': f'Триггер: {request}',
-                'value': f'Ответ: {response}'
+                'label': f'Триггер: {trigger.message}',
+                'value': f'Ответ: {reply.bot_reply}'
             })
 
-        title = 'Триггеры на сервере'
-        footer = 'Всего ответов'
-        maximum = 'ответов'
-        pagination_view = PaginationView(data, interaction.user, title, footer, maximum, separator=8)
-        pagination_view.data = data
-        pagination_view.counted = len(replies)
-        try:
-            await pagination_view.send(interaction)
-            await interaction.followup.send('Держи, искал по всему серваку')
-        except discord.app_commands.CommandInvokeError as error:
-            await interaction.followup.send(
-                f'Что-то пошло не так, скорее всего, бот попытался отправить тебе слишком большое количество текста.'
-                f' \nВ таком случае обратись к Антону, он снизит количество штук на странице. \nНа всякий случай, вот ошибка:{error}')
+    title = 'Триггеры на сервере'
+    footer = 'Всего триггеров'
+    maximum = 'триггеров'
+    pagination_view = PaginationView(data, interaction.user, title, footer, maximum, separator=8)
+    
+    if not data:
+        await interaction.followup.send("На этом сервере пока нет настроенных ответов.")
+        return
+
+    try:
+        await pagination_view.send(interaction)
+    except Exception as error:
+        logger.error(f"Pagination error: {error}")
+        await interaction.followup.send(f'Ошибка при выводе списка: {error}')
+
 
 @tree.command(name='force_validation',
               description='command for testing purposes to check if validation works fine or not')
@@ -376,7 +392,14 @@ async def on_message(message):
             database_found, server_id = await check_for_replies(message)
         if database_found is False:
             await look_for_bot_reply(message, client)
-        asyncio.create_task(process_background_tasks(message, client.current_server_rules, client.known_global_users))
+        asyncio.create_task(process_background_tasks(message, client.load_current_server_rules, client.known_global_users))
+
+
+@client.event
+async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent):
+    """Triggered when a message is deleted. Moves it to deleted_messages table."""
+    async with AsyncSession(engine) as session:
+        await handle_message_deletion(payload.message_id, payload.guild_id, session)
 
 
 # BD MODULE with checking task

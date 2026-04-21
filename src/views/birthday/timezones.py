@@ -2,7 +2,6 @@ from pprint import pprint
 
 import discord
 import discord.ui
-import psycopg2
 from sqlmodel import select
 
 from src.db.database import get_session
