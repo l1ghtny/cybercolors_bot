@@ -21,12 +21,20 @@ class UserActivityUpsertModel(BaseModel):
         return cleaned or None
 
 
+class UserActivityChannelCountModel(BaseModel):
+    channel_id: str
+    message_count: int
+
+
 class UserActivitySummaryModel(BaseModel):
     user_id: str
     server_id: str
-    channel_id: str
     message_count: int
-    last_message_at: datetime
+    last_message_at: datetime | None = None
+    channel_id: str | None = None
+    channels: list[UserActivityChannelCountModel] = Field(default_factory=list)
+    period_start: datetime | None = None
+    period_end: datetime | None = None
 
 
 class UserActivityLeaderboardItemModel(BaseModel):
@@ -36,6 +44,9 @@ class UserActivityLeaderboardItemModel(BaseModel):
     display_name: str
     message_count: int
     last_message_at: datetime
+    channels: list[UserActivityChannelCountModel] = Field(default_factory=list)
+    period_start: datetime | None = None
+    period_end: datetime | None = None
 
 
 class NicknameLogModel(BaseModel):
