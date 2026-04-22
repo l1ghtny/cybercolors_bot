@@ -3,6 +3,7 @@ import discord
 from src.db.database import get_async_session
 from src.db.models import ServerModerationSettings
 from src.modules.logs_setup import logger
+from src.modules.moderation.mod_log import build_unmute_log_message, send_mod_log_message
 from src.modules.moderation.mute_management import get_expired_active_mutes
 
 logger = logger.logging.getLogger("bot")
@@ -62,10 +63,30 @@ async def process_expired_mutes(client: discord.Client) -> tuple[int, int]:
                     failed += 1
                     logger.warning("Auto-unmute failed for member %s in guild %s: %s", action.target_user_id, guild.id, error)
                     continue
+                removed_role = True
+            else:
+                removed_role = False
 
             action.is_active = False
             session.add(action)
             processed += 1
+
+            if settings.mod_log_channel_id:
+                content = build_unmute_log_message(
+                    target_user_id=action.target_user_id,
+                    target_display=member.display_name if member else str(action.target_user_id),
+                    moderator_user_id=None,
+                    moderator_display=None,
+                    reason="Mute expired",
+                    removed_role=removed_role,
+                    closed_actions=1,
+                    is_auto=True,
+                )
+                await send_mod_log_message(
+                    guild=guild,
+                    mod_log_channel_id=settings.mod_log_channel_id,
+                    content=content,
+                )
 
         await session.commit()
 

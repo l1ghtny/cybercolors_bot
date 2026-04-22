@@ -11,6 +11,7 @@ from src.modules.moderation.mute_management import (
     get_or_create_moderation_settings,
     try_reconnect_voice_member,
 )
+from src.modules.moderation.mod_log import build_unmute_log_message, send_mod_log_message
 
 
 def _bot_api_url() -> str:
@@ -149,11 +150,26 @@ async def moderation_settings(interaction: discord.Interaction):
         )
         mute_role = interaction.guild.get_role(settings.mute_role_id) if settings.mute_role_id else None
         mute_role_name = mute_role.name if mute_role else "Not configured"
+        mod_log_channel = (
+            interaction.guild.get_channel(settings.mod_log_channel_id)
+            if settings.mod_log_channel_id
+            else None
+        )
+        mod_log_channel_label = (
+            f"{mod_log_channel.mention} (`{settings.mod_log_channel_id}`)"
+            if mod_log_channel is not None
+            else (
+                f"`{settings.mod_log_channel_id}` (not found)"
+                if settings.mod_log_channel_id
+                else "Not configured"
+            )
+        )
         await session.commit()
 
     await interaction.followup.send(
         "Moderation settings:\n"
         f"- Mute role: `{mute_role_name}`\n"
+        f"- Mod log channel: {mod_log_channel_label}\n"
         f"- Default mute minutes: `{settings.default_mute_minutes}`\n"
         f"- Max mute minutes: `{settings.max_mute_minutes}`\n"
         f"- Voice reconnect on mute: `{settings.auto_reconnect_voice_on_mute}`",
@@ -180,6 +196,46 @@ async def moderation_set_mute_role(interaction: discord.Interaction, role: disco
         await session.commit()
 
     await interaction.followup.send(f'Mute role set to `{role.name}`.', ephemeral=True)
+
+
+@app_commands.checks.has_permissions(manage_guild=True)
+@app_commands.command(
+    name="moderation_set_log_channel",
+    description="Set the moderation log channel.",
+)
+async def moderation_set_log_channel(interaction: discord.Interaction, channel: discord.TextChannel):
+    await interaction.response.defer(ephemeral=True)
+    async with get_async_session() as session:
+        settings = await get_or_create_moderation_settings(
+            session=session,
+            server_id=interaction.guild.id,
+            server_name=interaction.guild.name,
+        )
+        settings.mod_log_channel_id = channel.id
+        settings.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        session.add(settings)
+        await session.commit()
+    await interaction.followup.send(f"Moderation log channel set to {channel.mention}.", ephemeral=True)
+
+
+@app_commands.checks.has_permissions(manage_guild=True)
+@app_commands.command(
+    name="moderation_clear_log_channel",
+    description="Clear moderation log channel setting.",
+)
+async def moderation_clear_log_channel(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    async with get_async_session() as session:
+        settings = await get_or_create_moderation_settings(
+            session=session,
+            server_id=interaction.guild.id,
+            server_name=interaction.guild.name,
+        )
+        settings.mod_log_channel_id = None
+        settings.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        session.add(settings)
+        await session.commit()
+    await interaction.followup.send("Moderation log channel cleared.", ephemeral=True)
 
 
 @app_commands.checks.has_permissions(manage_roles=True)
@@ -435,6 +491,23 @@ async def unmute(
 
         deactivated = await deactivate_user_mutes(session, interaction.guild.id, user.id)
         await session.commit()
+
+    if settings.mod_log_channel_id:
+        content = build_unmute_log_message(
+            target_user_id=user.id,
+            target_display=user.display_name,
+            moderator_user_id=interaction.user.id,
+            moderator_display=interaction.user.display_name,
+            reason=note,
+            removed_role=removed_role,
+            closed_actions=deactivated,
+            is_auto=False,
+        )
+        await send_mod_log_message(
+            guild=interaction.guild,
+            mod_log_channel_id=settings.mod_log_channel_id,
+            content=content,
+        )
 
     await interaction.followup.send(
         f"{user.mention} unmuted. Removed role: `{removed_role}`. Closed active mute actions: `{deactivated}`.",

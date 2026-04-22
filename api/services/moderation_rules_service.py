@@ -4,10 +4,16 @@ from typing import Iterable
 from uuid import UUID
 
 from fastapi import HTTPException, status
+from sqlalchemy import func
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from api.models.moderation_rules import ModerationRuleReadModel, ParsedModerationRuleModel
+from api.models.moderation_rules import (
+    ModerationRuleMessageRefModel,
+    ModerationRuleParseGuideModel,
+    ModerationRuleReadModel,
+    ParsedModerationRuleModel,
+)
 from api.services.discord_guilds import fetch_channel_message
 from api.services.moderation_core import naive_utcnow
 from src.db.models import ModerationRule, Server
@@ -195,6 +201,18 @@ async def _deactivate_existing_rules(session: AsyncSession, server_id: int):
         session.add(rule)
 
 
+async def _active_rules_max_sort_order(session: AsyncSession, server_id: int) -> int:
+    max_sort_order = (
+        await session.exec(
+            select(func.max(ModerationRule.sort_order)).where(
+                ModerationRule.server_id == server_id,
+                ModerationRule.is_active == True,
+            )
+        )
+    ).one()
+    return int(max_sort_order or 0)
+
+
 async def import_rules(
     session: AsyncSession,
     server_id: int,
@@ -214,6 +232,9 @@ async def import_rules(
     await _get_or_create_server(session, server_id)
     if replace_existing:
         await _deactivate_existing_rules(session, server_id)
+        sort_offset = 0
+    else:
+        sort_offset = await _active_rules_max_sort_order(session=session, server_id=server_id)
 
     now = naive_utcnow()
     created: list[ModerationRule] = []
@@ -223,10 +244,77 @@ async def import_rules(
             code=item.code,
             title=item.title,
             description=item.description,
-            sort_order=item.sort_order,
+            sort_order=sort_offset + item.sort_order,
             source_channel_id=source_channel_id,
             source_message_id=source_message_id,
             source_marker=item.marker,
+            is_active=True,
+            created_by_user_id=created_by_user_id,
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(rule)
+        created.append(rule)
+
+    await session.flush()
+    for item in created:
+        await session.refresh(item)
+    return created
+
+
+async def import_rules_from_messages(
+    session: AsyncSession,
+    server_id: int,
+    message_refs: list[ModerationRuleMessageRefModel],
+    created_by_user_id: int | None,
+    replace_existing: bool,
+) -> list[ModerationRule]:
+    if not message_refs:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="messages cannot be empty",
+        )
+
+    parsed_chunks: list[tuple[ParsedRule, int, int]] = []
+    for ref in message_refs:
+        channel_id = int(ref.channel_id)
+        message_id = int(ref.message_id)
+        message = await fetch_channel_message(channel_id=channel_id, message_id=message_id)
+        message_guild_id = message.get("guild_id")
+        if message_guild_id is not None and str(message_guild_id).isdigit() and int(message_guild_id) != server_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Message {message_id} does not belong to target server",
+            )
+
+        for parsed in parse_rules_from_text(message.get("content", "")):
+            parsed_chunks.append((parsed, channel_id, message_id))
+
+    if not parsed_chunks:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No parseable rules found in provided messages",
+        )
+
+    await _get_or_create_server(session, server_id)
+    if replace_existing:
+        await _deactivate_existing_rules(session, server_id)
+        sort_offset = 0
+    else:
+        sort_offset = await _active_rules_max_sort_order(session=session, server_id=server_id)
+
+    now = naive_utcnow()
+    created: list[ModerationRule] = []
+    for index, (parsed, channel_id, message_id) in enumerate(parsed_chunks, start=1):
+        rule = ModerationRule(
+            server_id=server_id,
+            code=parsed.code,
+            title=parsed.title,
+            description=parsed.description,
+            sort_order=sort_offset + index,
+            source_channel_id=channel_id,
+            source_message_id=message_id,
+            source_marker=parsed.marker,
             is_active=True,
             created_by_user_id=created_by_user_id,
             created_at=now,
@@ -267,4 +355,23 @@ async def import_rules_from_message(
         replace_existing=replace_existing,
         source_channel_id=channel_id,
         source_message_id=message_id,
+    )
+
+
+def get_rule_parse_guide() -> ModerationRuleParseGuideModel:
+    return ModerationRuleParseGuideModel(
+        title="Moderation Rule Formatting Guide",
+        guidance=[
+            "Put one rule per numbered item starting with a number marker such as `1.` or `1️⃣`.",
+            "Keep the rule's first sentence concise; it becomes the short rule title.",
+            "Keep any details in the following lines right below the same numbered item.",
+            "Avoid mixing unrelated paragraphs between numbered rules.",
+            "If importing multiple messages, keep each message using the same numbering style.",
+        ],
+        example=(
+            "1. Harassment and insults are prohibited.\n"
+            "Includes threats, bullying, discrimination, and repeated personal attacks.\n\n"
+            "2. 18+ sexual content is prohibited.\n"
+            "Nudity, pornography, and shock sexual content are not allowed."
+        ),
     )

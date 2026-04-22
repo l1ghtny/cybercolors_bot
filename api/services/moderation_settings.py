@@ -6,7 +6,7 @@ from api.models.moderation_settings import (
     ServerModerationSettingsReadModel,
     ServerModerationSettingsUpdateModel,
 )
-from api.services.discord_guilds import create_guild_role, fetch_guild_roles
+from api.services.discord_guilds import TEXT_CHANNEL_TYPES, create_guild_role, fetch_channel, fetch_guild_roles
 from api.services.moderation_core import naive_utcnow
 from src.db.models import Server, ServerModerationSettings
 
@@ -86,7 +86,23 @@ async def update_server_moderation_settings(
     if body.auto_reconnect_voice_on_mute is not None:
         settings.auto_reconnect_voice_on_mute = body.auto_reconnect_voice_on_mute
     if body.mod_log_channel_id is not None:
-        settings.mod_log_channel_id = int(body.mod_log_channel_id) if body.mod_log_channel_id else None
+        if body.mod_log_channel_id:
+            requested_channel_id = int(body.mod_log_channel_id)
+            channel = await fetch_channel(server_id=server_id, channel_id=requested_channel_id)
+            if not channel:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="mod_log_channel_id is not a channel in this server",
+                )
+            channel_type = channel.get("type")
+            if channel_type not in TEXT_CHANNEL_TYPES:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="mod_log_channel_id must be a text or announcement channel",
+                )
+            settings.mod_log_channel_id = requested_channel_id
+        else:
+            settings.mod_log_channel_id = None
 
     settings.updated_at = naive_utcnow()
     session.add(settings)

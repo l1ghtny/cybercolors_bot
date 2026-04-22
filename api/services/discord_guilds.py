@@ -124,3 +124,16 @@ async def create_guild_role(server_id: int, name: str) -> dict:
     if isinstance(payload, dict):
         return payload
     return {}
+
+
+async def create_channel_message(channel_id: int, content: str) -> dict:
+    payload = await _discord_post(
+        f"/channels/{channel_id}/messages",
+        {
+            "content": content,
+            "allowed_mentions": {"parse": []},
+        },
+    )
+    if isinstance(payload, dict):
+        return payload
+    return {}

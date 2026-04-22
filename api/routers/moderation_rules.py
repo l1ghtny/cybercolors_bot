@@ -8,7 +8,9 @@ from api.models.moderation_rules import (
     ModerationRuleBulkUpsertResponseModel,
     ModerationRuleCreateModel,
     ModerationRuleImportMessageModel,
+    ModerationRuleImportMessagesModel,
     ModerationRuleImportTextModel,
+    ModerationRuleParseGuideModel,
     ModerationRuleParsePreviewModel,
     ModerationRuleReadModel,
     ParsedModerationRuleModel,
@@ -16,8 +18,10 @@ from api.models.moderation_rules import (
 from api.services.moderation_rules_service import (
     create_manual_rule,
     deactivate_rule,
+    get_rule_parse_guide,
     import_rules,
     import_rules_from_message,
+    import_rules_from_messages,
     list_rules,
     parse_rules_from_text,
     to_parsed_rule_model,
@@ -71,6 +75,12 @@ async def parse_server_moderation_rules(
     return [to_parsed_rule_model(item) for item in parsed]
 
 
+@moderation_rules_router.get("/{server_id}/parse-guide", response_model=ModerationRuleParseGuideModel)
+async def get_server_moderation_rules_parse_guide(server_id: int):
+    _ = server_id
+    return get_rule_parse_guide()
+
+
 @moderation_rules_router.post(
     "/{server_id}/import-text",
     response_model=ModerationRuleBulkUpsertResponseModel,
@@ -111,6 +121,28 @@ async def import_server_moderation_rules_from_message(
         server_id=server_id,
         channel_id=int(body.channel_id),
         message_id=int(body.message_id),
+        created_by_user_id=created_by_user_id,
+        replace_existing=body.replace_existing,
+    )
+    return ModerationRuleBulkUpsertResponseModel(imported=[to_rule_read_model(item) for item in imported])
+
+
+@moderation_rules_router.post(
+    "/{server_id}/import-messages",
+    response_model=ModerationRuleBulkUpsertResponseModel,
+    status_code=status.HTTP_201_CREATED,
+)
+async def import_server_moderation_rules_from_messages(
+    server_id: int,
+    body: ModerationRuleImportMessagesModel,
+    session: AsyncSession = Depends(get_session),
+    current_user_id: int | None = Depends(get_optional_current_discord_user_id),
+):
+    created_by_user_id = resolve_actor_user_id(body.created_by_user_id, current_user_id)
+    imported = await import_rules_from_messages(
+        session=session,
+        server_id=server_id,
+        message_refs=body.messages,
         created_by_user_id=created_by_user_id,
         replace_existing=body.replace_existing,
     )

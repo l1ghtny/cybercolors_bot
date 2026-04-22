@@ -20,13 +20,17 @@ from src.commands.moderation.security import (
 from src.commands.moderation.rules import (
     rule_add,
     rules_import_message,
+    rules_import_messages,
     rules_import_from_message_ctx,
     rules_list,
+    rules_parse_guide,
 )
 from src.commands.moderation.warn import warn
 from src.commands.moderation.mute import (
     moderation_settings,
     moderation_set_mute_role,
+    moderation_set_log_channel,
+    moderation_clear_log_channel,
     moderation_create_mute_role,
     moderation_set_mute_defaults,
     mute,
@@ -175,21 +179,51 @@ class Aclient(discord.AutoShardedClient):
 
 client = Aclient()
 tree = app_commands.CommandTree(client)
-tree.add_command(warn)
-tree.add_command(rule_add)
-tree.add_command(rules_import_message)
-tree.add_command(rules_list)
+
+moderation_group = app_commands.Group(
+    name="moderation",
+    description="Moderation commands",
+)
+moderation_rules_group = app_commands.Group(
+    name="rules",
+    description="Moderation rule management",
+    parent=moderation_group,
+)
+moderation_security_group = app_commands.Group(
+    name="security",
+    description="Server security moderation commands",
+    parent=moderation_group,
+)
+moderation_settings_group = app_commands.Group(
+    name="settings",
+    description="Moderation settings",
+    parent=moderation_group,
+)
+
+moderation_group.add_command(warn)
+moderation_group.add_command(mute)
+moderation_group.add_command(unmute)
+
+moderation_rules_group.add_command(rule_add)
+moderation_rules_group.add_command(rules_import_message)
+moderation_rules_group.add_command(rules_import_messages)
+moderation_rules_group.add_command(rules_list)
+moderation_rules_group.add_command(rules_parse_guide)
+
+moderation_security_group.add_command(security_set_verified_role)
+moderation_security_group.add_command(security_capture_permissions)
+moderation_security_group.add_command(security_lockdown)
+moderation_security_group.add_command(verify_member)
+
+moderation_settings_group.add_command(moderation_settings)
+moderation_settings_group.add_command(moderation_set_mute_role)
+moderation_settings_group.add_command(moderation_set_log_channel)
+moderation_settings_group.add_command(moderation_clear_log_channel)
+moderation_settings_group.add_command(moderation_create_mute_role)
+moderation_settings_group.add_command(moderation_set_mute_defaults)
+
+tree.add_command(moderation_group)
 tree.add_command(rules_import_from_message_ctx)
-tree.add_command(security_set_verified_role)
-tree.add_command(security_capture_permissions)
-tree.add_command(security_lockdown)
-tree.add_command(verify_member)
-tree.add_command(moderation_settings)
-tree.add_command(moderation_set_mute_role)
-tree.add_command(moderation_create_mute_role)
-tree.add_command(moderation_set_mute_defaults)
-tree.add_command(mute)
-tree.add_command(unmute)
 
 
 # Add birthdays to the database

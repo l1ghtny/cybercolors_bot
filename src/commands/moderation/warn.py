@@ -39,6 +39,28 @@ def _rule_label(rule: dict) -> str:
     return title or "Rule"
 
 
+def _validate_target_for_moderation(
+    interaction: discord.Interaction,
+    target: discord.Member,
+) -> str | None:
+    guild = interaction.guild
+    if guild is None:
+        return "This command can only be used in a server."
+    if target.id == interaction.user.id:
+        return "You cannot use this command on yourself."
+    if target.id == guild.owner_id:
+        return "You cannot moderate the server owner."
+
+    actor = interaction.user if isinstance(interaction.user, discord.Member) else None
+    if actor and guild.owner_id != actor.id and target.top_role >= actor.top_role:
+        return "You cannot moderate a member with equal or higher role."
+
+    me = guild.me
+    if me and target.top_role >= me.top_role:
+        return "I cannot moderate this member due to role hierarchy."
+    return None
+
+
 @app_commands.command(name="warn", description="Warns a user and logs the action.")
 async def warn(
     interaction: discord.Interaction,
@@ -68,6 +90,10 @@ async def warn(
 
     selected_rule_label = _rule_label(selected_rule)
     commentary_text = commentary.strip() if commentary else None
+    target_error = _validate_target_for_moderation(interaction, user)
+    if target_error:
+        await interaction.followup.send(target_error, ephemeral=True)
+        return
 
     # 1. Perform Discord-specific actions
     try:
@@ -83,6 +109,18 @@ async def warn(
             "Could not send a DM to the user, but the warning will still be logged.",
             ephemeral=True,
         )
+    except discord.HTTPException as error:
+        if getattr(error, "code", None) == 50007:
+            await interaction.followup.send(
+                "Cannot DM this user (privacy settings), but the warning will still be logged.",
+                ephemeral=True,
+            )
+        else:
+            await interaction.followup.send(
+                f"Could not send DM due to Discord API error ({error.status}), "
+                "but the warning will still be logged.",
+                ephemeral=True,
+            )
 
     # 2. Prepare data for the API POST request
     base_url = _bot_api_url()

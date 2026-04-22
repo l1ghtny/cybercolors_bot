@@ -1,4 +1,5 @@
 from datetime import datetime
+import logging
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -7,15 +8,81 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.models.moderation_actions import ModerationActionCreate, ModerationActionRead
 from api.models.moderation_cases import DeletedMessageCreateModel, DeletedMessageReadModel
-from api.services.discord_guilds import fetch_guild_channels
+from api.services.discord_guilds import create_channel_message, fetch_guild_channels
 from api.services.moderation_core import build_actor, naive_utcnow, to_deleted_message_read, to_moderation_history
 from api.services.moderation_queries import (
     query_deleted_messages,
     query_deleted_messages_for_action,
     query_moderation_actions,
 )
-from src.db.models import DeletedMessage, GlobalUser, ModerationAction, ModerationActionDeletedMessageLink, ModerationRule
+from src.db.models import (
+    DeletedMessage,
+    GlobalUser,
+    ModerationAction,
+    ModerationActionDeletedMessageLink,
+    ModerationRule,
+    ServerModerationSettings,
+)
 from src.modules.moderation.moderation_helpers import check_if_server_exists, check_if_user_exists
+
+logger = logging.getLogger("api.moderation")
+
+
+def _truncate(value: str, limit: int = 600) -> str:
+    if len(value) <= limit:
+        return value
+    return f"{value[: limit - 3]}..."
+
+
+def _format_dt(value: datetime | None) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value.isoformat()}Z"
+
+
+async def _resolve_username(session: AsyncSession, user_id: int) -> str | None:
+    user = await session.get(GlobalUser, user_id)
+    if not user:
+        return None
+    return user.username
+
+
+async def _send_action_to_mod_log(
+    session: AsyncSession,
+    action: ModerationAction,
+) -> None:
+    settings = await session.get(ServerModerationSettings, action.server_id)
+    if not settings or not settings.mod_log_channel_id:
+        return
+
+    moderator_username = await _resolve_username(session, action.moderator_user_id)
+    target_username = await _resolve_username(session, action.target_user_id)
+    lines = [
+        f"**Action:** `{action.action_type.value}`",
+        f"**Target:** <@{action.target_user_id}> (`{target_username or 'unknown'}`, `{action.target_user_id}`)",
+        f"**Moderator:** <@{action.moderator_user_id}> (`{moderator_username or 'unknown'}`, `{action.moderator_user_id}`)",
+        f"**Reason:** {_truncate(action.reason, limit=1000)}",
+    ]
+    if action.commentary:
+        lines.append(f"**Commentary:** {_truncate(action.commentary, limit=1000)}")
+    if action.rule_id:
+        lines.append(f"**Rule ID:** `{action.rule_id}`")
+    if action.expires_at:
+        lines.append(f"**Expires At:** `{_format_dt(action.expires_at)}`")
+    lines.append(f"**Action ID:** `{action.id}`")
+    message = "[MODERATION LOG]\n" + "\n".join(lines)
+    if len(message) > 1900:
+        message = _truncate(message, limit=1900)
+
+    try:
+        await create_channel_message(channel_id=settings.mod_log_channel_id, content=message)
+    except Exception as error:
+        logger.warning(
+            "Failed to send moderation action log to channel %s for server %s: %s",
+            settings.mod_log_channel_id,
+            action.server_id,
+            error,
+        )
 
 
 async def create_action(
@@ -72,6 +139,7 @@ async def create_action(
     session.add(db_action)
     await session.flush()
     await session.refresh(db_action)
+    await _send_action_to_mod_log(session=session, action=db_action)
     return db_action
 
 

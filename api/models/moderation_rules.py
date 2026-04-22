@@ -48,6 +48,17 @@ class ModerationRuleImportMessageModel(BaseModel):
     created_by_user_id: str | None = Field(default=None, pattern=r"^\d*$")
 
 
+class ModerationRuleMessageRefModel(BaseModel):
+    channel_id: str = Field(pattern=r"^\d+$")
+    message_id: str = Field(pattern=r"^\d+$")
+
+
+class ModerationRuleImportMessagesModel(BaseModel):
+    messages: list[ModerationRuleMessageRefModel] = Field(min_length=1, max_length=100)
+    replace_existing: bool = True
+    created_by_user_id: str | None = Field(default=None, pattern=r"^\d*$")
+
+
 class ParsedModerationRuleModel(BaseModel):
     marker: str | None = None
     code: str | None = None
@@ -62,3 +73,9 @@ class ModerationRuleParsePreviewModel(BaseModel):
 
 class ModerationRuleBulkUpsertResponseModel(BaseModel):
     imported: list[ModerationRuleReadModel]
+
+
+class ModerationRuleParseGuideModel(BaseModel):
+    title: str
+    guidance: list[str]
+    example: str
