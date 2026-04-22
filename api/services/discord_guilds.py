@@ -41,6 +41,18 @@ async def _discord_patch(path: str, payload: dict) -> list[dict] | dict:
     return response.json()
 
 
+async def _discord_post(path: str, payload: dict) -> list[dict] | dict:
+    headers = {"Authorization": f"Bot {_get_bot_token()}"}
+    async with httpx.AsyncClient() as client:
+        response = await client.post(f"{DISCORD_API_BASE_URL}{path}", headers=headers, json=payload)
+    if response.status_code >= 400:
+        raise HTTPException(
+            status_code=response.status_code,
+            detail=f"Discord API error: {response.text}",
+        )
+    return response.json()
+
+
 async def fetch_guild_channels(server_id: int) -> list[dict]:
     channels = await _discord_get(f"/guilds/{server_id}/channels")
     if isinstance(channels, list):
@@ -93,6 +105,21 @@ async def update_guild_role_permissions(server_id: int, role_id: int, permission
     payload = await _discord_patch(
         f"/guilds/{server_id}/roles/{role_id}",
         {"permissions": str(permissions)},
+    )
+    if isinstance(payload, dict):
+        return payload
+    return {}
+
+
+async def create_guild_role(server_id: int, name: str) -> dict:
+    payload = await _discord_post(
+        f"/guilds/{server_id}/roles",
+        {
+            "name": name,
+            "permissions": "0",
+            "mentionable": False,
+            "hoist": False,
+        },
     )
     if isinstance(payload, dict):
         return payload

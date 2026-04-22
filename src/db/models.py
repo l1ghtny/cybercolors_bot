@@ -36,6 +36,10 @@ class Server(SQLModel, table=True):
     dashboard_access_users: List["DashboardAccessUser"] = Relationship(back_populates="server")
     dashboard_access_roles: List["DashboardAccessRole"] = Relationship(back_populates="server")
     moderation_rules: List["ModerationRule"] = Relationship(back_populates="server")
+    moderation_settings: Optional["ServerModerationSettings"] = Relationship(
+        back_populates="server",
+        sa_relationship_kwargs={"uselist": False},
+    )
     security_settings: Optional["ServerSecuritySettings"] = Relationship(
         back_populates="server",
         sa_relationship_kwargs={"uselist": False},
@@ -209,6 +213,20 @@ class ServerSecuritySettings(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
 
     server: Server = Relationship(back_populates="security_settings")
+
+
+class ServerModerationSettings(SQLModel, table=True):
+    __tablename__ = "server_moderation_settings"
+
+    server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), primary_key=True))
+    mute_role_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
+    default_mute_minutes: int = Field(default=60, nullable=False)
+    max_mute_minutes: int = Field(default=10080, nullable=False)
+    auto_reconnect_voice_on_mute: bool = Field(default=True, nullable=False)
+    mod_log_channel_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
+    updated_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+
+    server: Server = Relationship(back_populates="moderation_settings")
 
 
 # --- New Models for Moderation ---

@@ -24,6 +24,14 @@ from src.commands.moderation.rules import (
     rules_list,
 )
 from src.commands.moderation.warn import warn
+from src.commands.moderation.mute import (
+    moderation_settings,
+    moderation_set_mute_role,
+    moderation_create_mute_role,
+    moderation_set_mute_defaults,
+    mute,
+    unmute,
+)
 from src.db.database import engine, get_async_session
 from src.modules.moderation.moderation_helpers import (
     check_if_server_exists,
@@ -45,6 +53,7 @@ from src.modules.on_message_processing.check_for_links import delete_server_link
 from src.modules.on_message_processing.gpt_bot_reply import look_for_bot_reply
 from src.modules.on_message_processing.replies import check_for_replies
 from src.modules.on_voice_state_processing.create_voice_channel import create_voice_channel
+from src.modules.moderation.mute_worker import process_expired_mutes
 from src.modules.twitter_link_fix.twitter_message_manager import manage_message
 from src.views.replies.delete_multiple_replies import DeleteReplyMultiple, DeleteReplyMultipleSelect
 from src.views.replies.delete_one_reply import DeleteOneReply
@@ -155,8 +164,12 @@ class Aclient(discord.AutoShardedClient):
             self.synced = True
         if not self.added:
             self.added = True
-        birthday.start()
-        check_users_with_birthdays.start()
+        if not birthday.is_running():
+            birthday.start()
+        if not check_users_with_birthdays.is_running():
+            check_users_with_birthdays.start()
+        if not auto_unmute_worker.is_running():
+            auto_unmute_worker.start()
         logger.info(f"We have logged in as {self.user}.")
 
 
@@ -171,6 +184,12 @@ tree.add_command(security_set_verified_role)
 tree.add_command(security_capture_permissions)
 tree.add_command(security_lockdown)
 tree.add_command(verify_member)
+tree.add_command(moderation_settings)
+tree.add_command(moderation_set_mute_role)
+tree.add_command(moderation_create_mute_role)
+tree.add_command(moderation_set_mute_defaults)
+tree.add_command(mute)
+tree.add_command(unmute)
 
 
 # Add birthdays to the database
@@ -464,6 +483,13 @@ async def birthday():
 async def check_users_with_birthdays():
     logger.info('validation process started')
     await main_validation_process(client)
+
+
+@tasks.loop(seconds=60)
+async def auto_unmute_worker():
+    processed, failed = await process_expired_mutes(client)
+    if processed or failed:
+        logger.info("Auto-unmute run finished. processed=%s failed=%s", processed, failed)
 
 
 @client.event
