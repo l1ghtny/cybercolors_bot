@@ -45,3 +45,11 @@ class ReplyDuplicateResponseModel(BaseModel):
     duplicated_triggers: int
     skipped_triggers: int
     missing_reply_ids: list[str] = Field(default_factory=list)
+
+
+class ReplyMutationResponseModel(BaseModel):
+    success: bool = True
+    processed: int = 0
+    created: int = 0
+    updated: int = 0
+    deleted: int = 0

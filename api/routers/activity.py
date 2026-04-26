@@ -9,6 +9,7 @@ from sqlalchemy import func
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from api.dependencies.server_access import require_server_dashboard_access
 from api.models.user_profiles import (
     UserActivityChannelCountModel,
     UserActivityLeaderboardItemModel,
@@ -19,7 +20,11 @@ from api.services.discord_guilds import TEXT_CHANNEL_TYPES, fetch_guild_channels
 from src.db.database import get_session
 from src.db.models import GlobalUser, MessageLog, Server, User, UserActivity
 
-activity = APIRouter(prefix="/activity", tags=["activity"])
+activity = APIRouter(
+    prefix="/activity",
+    tags=["activity"],
+    dependencies=[Depends(require_server_dashboard_access)],
+)
 logger = logging.getLogger("uvicorn")
 ACTIVITY_CHANNEL_CACHE_TTL_SECONDS = int(os.getenv("ACTIVITY_CHANNEL_CACHE_TTL_SECONDS", "120"))
 

@@ -6,6 +6,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.dependencies.current_user import get_current_discord_user_id
+from api.dependencies.server_access import require_server_admin_or_owner, require_server_dashboard_access
 from api.helpers.replies import enrich_user_data
 from api.models.bot_replies import (
     ReplyAddModel,
@@ -13,13 +14,18 @@ from api.models.bot_replies import (
     ReplyDuplicateResponseModel,
     ReplyEditModel,
     ReplyModel,
+    ReplyMutationResponseModel,
 )
 from api.services.dashboard_access_service import assert_dashboard_access
 from api.services.replies_service import duplicate_selected_replies
 from src.db.database import get_session
 from src.db.models import Replies, Triggers
 
-replies = APIRouter(prefix="/replies", tags=["replies"])
+replies = APIRouter(
+    prefix="/replies",
+    tags=["replies"],
+    dependencies=[Depends(require_server_dashboard_access)],
+)
 
 
 @replies.get('/{server_id}', response_model=List[ReplyModel])
@@ -52,12 +58,28 @@ async def get_replies_by_server_id(server_id: int, session: AsyncSession = Depen
     return list(grouped.values())
 
 
-@replies.post('/{server_id}/add_replies', status_code=201)
-async def add_replies(body: List[ReplyAddModel], session: AsyncSession = Depends(get_session)):
+@replies.post(
+    '/{server_id}/add_replies',
+    response_model=ReplyMutationResponseModel,
+    status_code=201,
+    dependencies=[Depends(require_server_admin_or_owner)],
+)
+async def add_replies(
+    server_id: int,
+    body: List[ReplyAddModel],
+    session: AsyncSession = Depends(get_session),
+):
     reply_cache: dict[tuple[int, str], Replies] = {}
+    created_replies = 0
+    created_triggers = 0
 
     for reply in body:
         server_id_int = int(reply.server_id)
+        if server_id_int != server_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Payload server_id must match path server_id",
+            )
         admin_id_int = int(reply.admin_id)
         reply_key = (server_id_int, reply.bot_reply)
 
@@ -79,6 +101,7 @@ async def add_replies(body: List[ReplyAddModel], session: AsyncSession = Depends
                 )
                 session.add(existing_reply)
                 await session.flush()
+                created_replies += 1
             reply_cache[reply_key] = existing_reply
 
         trigger = (
@@ -91,32 +114,77 @@ async def add_replies(body: List[ReplyAddModel], session: AsyncSession = Depends
         ).first()
         if not trigger:
             session.add(Triggers(message=reply.user_message, reply_id=existing_reply.id))
+            created_triggers += 1
 
     await session.commit()
-    return status.HTTP_201_CREATED
+    return ReplyMutationResponseModel(
+        processed=len(body),
+        created=created_replies + created_triggers,
+    )
 
 
-@replies.post('/{server_id}/delete_replies')
-async def delete_replies(body: List[UUID], session: AsyncSession = Depends(get_session)):
+@replies.post(
+    '/{server_id}/delete_replies',
+    response_model=ReplyMutationResponseModel,
+    dependencies=[Depends(require_server_admin_or_owner)],
+)
+async def delete_replies(
+    server_id: int,
+    body: List[UUID],
+    session: AsyncSession = Depends(get_session),
+):
+    deleted_replies = 0
+    deleted_triggers = 0
     for reply_id in body:
-        reply = (await session.exec(select(Replies).where(Replies.id == reply_id))).first()
+        reply = (
+            await session.exec(
+                select(Replies).where(
+                    Replies.id == reply_id,
+                    Replies.server_id == server_id,
+                )
+            )
+        ).first()
         if reply:
             triggers = (await session.exec(select(Triggers).where(Triggers.reply_id == reply.id))).all()
             for trigger in triggers:
                 await session.delete(trigger)
+                deleted_triggers += 1
             await session.delete(reply)
+            deleted_replies += 1
 
     await session.commit()
 
-    return status.HTTP_200_OK
+    return ReplyMutationResponseModel(
+        processed=len(body),
+        deleted=deleted_replies + deleted_triggers,
+    )
 
 
-@replies.post('/{server_id}/edit_replies')
-async def edit_replies(body: List[ReplyEditModel], session: AsyncSession = Depends(get_session)):
+@replies.post(
+    '/{server_id}/edit_replies',
+    response_model=ReplyMutationResponseModel,
+    dependencies=[Depends(require_server_admin_or_owner)],
+)
+async def edit_replies(
+    server_id: int,
+    body: List[ReplyEditModel],
+    session: AsyncSession = Depends(get_session),
+):
+    updated_replies = 0
+    created_triggers = 0
     for reply in body:
-        existing_reply = (await session.exec(select(Replies).where(Replies.id == reply.id))).first()
+        existing_reply = (
+            await session.exec(
+                select(Replies).where(
+                    Replies.id == reply.id,
+                    Replies.server_id == server_id,
+                )
+            )
+        ).first()
         if existing_reply:
-            existing_reply.bot_reply = reply.bot_reply
+            if existing_reply.bot_reply != reply.bot_reply:
+                existing_reply.bot_reply = reply.bot_reply
+                updated_replies += 1
 
             existing_trigger = (
                 await session.exec(
@@ -128,10 +196,15 @@ async def edit_replies(body: List[ReplyEditModel], session: AsyncSession = Depen
             ).first()
             if not existing_trigger:
                 session.add(Triggers(message=reply.user_message, reply_id=existing_reply.id))
+                created_triggers += 1
 
     await session.commit()
 
-    return status.HTTP_200_OK
+    return ReplyMutationResponseModel(
+        processed=len(body),
+        created=created_triggers,
+        updated=updated_replies,
+    )
 
 
 @replies.post("/{server_id}/duplicate-selected", response_model=ReplyDuplicateResponseModel)

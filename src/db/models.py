@@ -21,6 +21,10 @@ class Server(SQLModel, table=True):
     birthday_channel_name: Optional[str] = None
     birthday_role_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
     icon : Optional[str] = None
+    bot_active: bool = Field(default=False, nullable=False)
+    bot_joined_at: Optional[datetime] = None
+    bot_left_at: Optional[datetime] = None
+    bot_presence_updated_at: Optional[datetime] = None
 
     users: List["User"] = Relationship(back_populates="server")
     congratulations: List["Congratulation"] = Relationship(back_populates="server")

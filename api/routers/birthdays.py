@@ -5,6 +5,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.dependencies.current_user import get_optional_current_discord_user_id, resolve_actor_user_id
+from api.dependencies.server_access import require_server_admin_or_owner, require_server_dashboard_access
 from api.models.birthdays import (
     BirthdayCreateModel,
     BirthdayReadModel,
@@ -34,7 +35,11 @@ from api.services.birthdays_service import (
 from src.db.database import get_session
 from src.db.models import Birthday, Congratulation, GlobalUser, Server, User
 
-birthdays = APIRouter(prefix="/birthdays", tags=["birthdays"])
+birthdays = APIRouter(
+    prefix="/birthdays",
+    tags=["birthdays"],
+    dependencies=[Depends(require_server_dashboard_access)],
+)
 
 
 @birthdays.get("/{server_id}", response_model=list[BirthdayReadModel])
@@ -52,6 +57,7 @@ async def add_birthday_for_server(
     server_id: int,
     body: BirthdayCreateModel,
     session: AsyncSession = Depends(get_session),
+    _: None = Depends(require_server_admin_or_owner),
 ):
     user_id = int(body.user_id)
     member, global_user = await get_member_or_404(server_id, user_id, session)
@@ -81,6 +87,7 @@ async def update_birthday_for_server_user(
     user_id: int,
     body: BirthdayWriteModel,
     session: AsyncSession = Depends(get_session),
+    _: None = Depends(require_server_admin_or_owner),
 ):
     member, global_user = await get_member_or_404(server_id, user_id, session)
 
@@ -111,6 +118,7 @@ async def update_birthday_channel(
     server_id: int,
     body: BirthdayChannelUpdateModel,
     session: AsyncSession = Depends(get_session),
+    _: None = Depends(require_server_admin_or_owner),
 ):
     server = await get_or_create_server(server_id, session, body.server_name)
 
@@ -128,6 +136,7 @@ async def update_birthday_role(
     server_id: int,
     body: BirthdayRoleUpdateModel,
     session: AsyncSession = Depends(get_session),
+    _: None = Depends(require_server_admin_or_owner),
 ):
     server = await get_or_create_server(server_id, session, body.server_name)
     server.birthday_role_id = int(body.role_id) if body.role_id else None
@@ -153,6 +162,7 @@ async def create_celebration_message(
     body: CelebrationMessageCreateModel,
     session: AsyncSession = Depends(get_session),
     current_user_id: int | None = Depends(get_optional_current_discord_user_id),
+    _: None = Depends(require_server_admin_or_owner),
 ):
     validate_placeholder(body.message)
 
@@ -178,6 +188,7 @@ async def update_celebration_message(
     message_id: UUID,
     body: CelebrationMessageUpdateModel,
     session: AsyncSession = Depends(get_session),
+    _: None = Depends(require_server_admin_or_owner),
 ):
     validate_placeholder(body.message)
 
@@ -206,6 +217,7 @@ async def delete_celebration_message(
     server_id: int,
     message_id: UUID,
     session: AsyncSession = Depends(get_session),
+    _: None = Depends(require_server_admin_or_owner),
 ):
     message = await session.get(Congratulation, message_id)
     if not message or message.server_id != server_id:

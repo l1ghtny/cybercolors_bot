@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from api.dependencies.server_access import require_server_admin_or_owner, require_server_dashboard_access
 from api.models.server_security import (
     ServerSecurityLockdownUpdateModel,
     ServerSecurityPermissionsUpdateModel,
@@ -16,7 +17,10 @@ from api.services.server_security import (
 )
 from src.db.database import get_session
 
-server_security_router = APIRouter(prefix="/servers/{server_id}/security")
+server_security_router = APIRouter(
+    prefix="/servers/{server_id}/security",
+    dependencies=[Depends(require_server_dashboard_access)],
+)
 
 
 @server_security_router.get("", response_model=ServerSecuritySettingsReadModel)
@@ -33,6 +37,7 @@ async def set_server_verified_role(
     server_id: int,
     body: ServerSecurityVerifiedRoleUpdateModel,
     session: AsyncSession = Depends(get_session),
+    _: None = Depends(require_server_admin_or_owner),
 ):
     settings = await update_verified_role(session=session, server_id=server_id, body=body)
     return await to_server_security_read_model(server_id, settings)
@@ -43,6 +48,7 @@ async def set_server_security_permissions(
     server_id: int,
     body: ServerSecurityPermissionsUpdateModel,
     session: AsyncSession = Depends(get_session),
+    _: None = Depends(require_server_admin_or_owner),
 ):
     settings = await update_permission_templates(session=session, server_id=server_id, body=body)
     return await to_server_security_read_model(server_id, settings)
@@ -53,6 +59,7 @@ async def set_server_lockdown_state(
     server_id: int,
     body: ServerSecurityLockdownUpdateModel,
     session: AsyncSession = Depends(get_session),
+    _: None = Depends(require_server_admin_or_owner),
 ):
     settings = await apply_lockdown_state(session=session, server_id=server_id, body=body)
     return await to_server_security_read_model(server_id, settings)

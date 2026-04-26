@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.dependencies.current_user import get_current_discord_user_id
+from api.dependencies.server_access import require_server_dashboard_access
 from api.models.dashboard_access import (
     DashboardAccessAddRoleModel,
     DashboardAccessAddUserModel,
@@ -38,10 +39,13 @@ servers = APIRouter(prefix="/servers", tags=["servers"])
 
 @servers.get("/")
 async def get_servers():
-    return "get_servers"
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="Deprecated endpoint. Use /auth/guilds to fetch accessible servers.",
+    )
 
 
-@servers.get("/{server_id}", response_model=ServerMetadataModel)
+@servers.get("/{server_id}", response_model=ServerMetadataModel, dependencies=[Depends(require_server_dashboard_access)])
 async def get_server(server_id: int, session: AsyncSession = Depends(get_session)):
     server = await session.get(Server, server_id)
     metadata = await build_server_metadata(session, server_id)
@@ -50,7 +54,7 @@ async def get_server(server_id: int, session: AsyncSession = Depends(get_session
     return metadata
 
 
-@servers.get("/{server_id}/channels", response_model=list[ServerChannelModel])
+@servers.get("/{server_id}/channels", response_model=list[ServerChannelModel], dependencies=[Depends(require_server_dashboard_access)])
 async def get_server_channels(
     server_id: int,
     text_only: bool = Query(default=True),
@@ -58,7 +62,7 @@ async def get_server_channels(
     return await list_server_channels(server_id, text_only=text_only)
 
 
-@servers.get("/{server_id}/channels/{channel_id}", response_model=ServerChannelModel)
+@servers.get("/{server_id}/channels/{channel_id}", response_model=ServerChannelModel, dependencies=[Depends(require_server_dashboard_access)])
 async def get_server_channel(server_id: int, channel_id: int):
     channel = await get_server_channel_payload(server_id, channel_id)
     if not channel:
@@ -66,12 +70,12 @@ async def get_server_channel(server_id: int, channel_id: int):
     return channel
 
 
-@servers.get("/{server_id}/roles", response_model=list[ServerRoleModel])
+@servers.get("/{server_id}/roles", response_model=list[ServerRoleModel], dependencies=[Depends(require_server_dashboard_access)])
 async def get_server_roles(server_id: int):
     return await list_server_roles(server_id)
 
 
-@servers.get("/{server_id}/users", response_model=list[ServerUserModel])
+@servers.get("/{server_id}/users", response_model=list[ServerUserModel], dependencies=[Depends(require_server_dashboard_access)])
 async def get_server_users(
     server_id: int,
     search: str | None = Query(default=None),
@@ -81,7 +85,7 @@ async def get_server_users(
     return await query_server_users(session=session, server_id=server_id, search=search, limit=limit)
 
 
-@servers.post("/{server_id}/users/lookup", response_model=list[ServerUserModel])
+@servers.post("/{server_id}/users/lookup", response_model=list[ServerUserModel], dependencies=[Depends(require_server_dashboard_access)])
 async def lookup_server_users(
     server_id: int,
     body: ServerUsersLookupRequest,

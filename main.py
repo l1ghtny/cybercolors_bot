@@ -53,6 +53,7 @@ from src.modules.birthdays_module.hourly_check.check_birthday_redone import chec
 from src.modules.birthdays_module.hourly_check.check_roles import check_roles
 from src.modules.birthdays_module.hourly_check.check_time import check_time
 from src.modules.birthdays_module.user_validation.validation_main import main_validation_process
+from src.modules.guild_lifecycle import mark_guild_presence, sync_active_guild_presence
 from src.modules.logs_setup import logger
 from src.modules.on_message_processing.background_message_processing import process_background_tasks
 from src.modules.on_message_processing.check_for_links import delete_server_links
@@ -87,6 +88,7 @@ class Aclient(discord.AutoShardedClient):
 
         self.known_global_users = set()
         self.current_server_rules: dict[int, list[dict]] = {}
+        self.guild_presence_synced = False
 
     async def setup_hook(self):
         """
@@ -175,6 +177,9 @@ class Aclient(discord.AutoShardedClient):
             check_users_with_birthdays.start()
         if not auto_unmute_worker.is_running():
             auto_unmute_worker.start()
+        if not self.guild_presence_synced:
+            await sync_active_guild_presence(self.guilds)
+            self.guild_presence_synced = True
         logger.info(f"We have logged in as {self.user}.")
 
 
@@ -536,6 +541,16 @@ async def auto_unmute_worker():
 @client.event
 async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
     await create_voice_channel(member, before, after)
+
+
+@client.event
+async def on_guild_join(guild: discord.Guild):
+    await mark_guild_presence(guild, is_active=True)
+
+
+@client.event
+async def on_guild_remove(guild: discord.Guild):
+    await mark_guild_presence(guild, is_active=False)
 
 
 # def handle_uncaught_exception(exc_type, exc_value, exc_traceback):

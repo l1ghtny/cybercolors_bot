@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, status
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from api.dependencies.server_access import require_server_admin_or_owner, require_server_dashboard_access
 from api.models.moderation_settings import (
     ServerModerationCreateMuteRoleModel,
     ServerModerationSettingsReadModel,
@@ -14,7 +15,10 @@ from api.services.moderation_settings import (
 )
 from src.db.database import get_session
 
-server_moderation_settings_router = APIRouter(prefix="/servers/{server_id}/moderation-settings")
+server_moderation_settings_router = APIRouter(
+    prefix="/servers/{server_id}/moderation-settings",
+    dependencies=[Depends(require_server_dashboard_access)],
+)
 
 
 @server_moderation_settings_router.get("", response_model=ServerModerationSettingsReadModel)
@@ -31,6 +35,7 @@ async def set_server_moderation_settings(
     server_id: int,
     body: ServerModerationSettingsUpdateModel,
     session: AsyncSession = Depends(get_session),
+    _: None = Depends(require_server_admin_or_owner),
 ):
     settings = await update_server_moderation_settings(session=session, server_id=server_id, body=body)
     return await to_server_moderation_settings_read_model(server_id, settings)
@@ -45,6 +50,7 @@ async def create_server_mute_role(
     server_id: int,
     body: ServerModerationCreateMuteRoleModel,
     session: AsyncSession = Depends(get_session),
+    _: None = Depends(require_server_admin_or_owner),
 ):
     settings = await create_mute_role_and_attach(session=session, server_id=server_id, body=body)
     return await to_server_moderation_settings_read_model(server_id, settings)

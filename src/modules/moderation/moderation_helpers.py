@@ -30,18 +30,24 @@ async def ensure_message_foreign_keys(message: d.Message, session: AsyncSession)
 
     server_icon = getattr(guild, "icon", None)
     icon_url = str(server_icon.url) if server_icon else None
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     await session.exec(
         pg_insert(Server)
         .values(
             server_id=guild.id,
             server_name=guild.name,
             icon=icon_url,
+            bot_active=True,
+            bot_presence_updated_at=now,
         )
         .on_conflict_do_update(
             index_elements=[Server.server_id],
             set_={
                 "server_name": guild.name,
                 "icon": icon_url,
+                "bot_active": True,
+                "bot_left_at": None,
+                "bot_presence_updated_at": now,
             },
         )
     )
@@ -140,6 +146,7 @@ async def check_if_server_exists(server: d.Guild, session: AsyncSession):
 
     server_icon = getattr(server, "icon", None)
     icon_url = str(server_icon.url) if server_icon else None
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
 
     if not server_in_db:
         session.add(
@@ -147,6 +154,9 @@ async def check_if_server_exists(server: d.Guild, session: AsyncSession):
                 server_id=server.id,
                 server_name=server.name,
                 icon=icon_url,
+                bot_active=True,
+                bot_joined_at=now,
+                bot_presence_updated_at=now,
             )
         )
     else:
@@ -157,6 +167,14 @@ async def check_if_server_exists(server: d.Guild, session: AsyncSession):
         if server_in_db.icon != icon_url:
             server_in_db.icon = icon_url
             changed = True
+        if not server_in_db.bot_active:
+            server_in_db.bot_active = True
+            server_in_db.bot_left_at = None
+            if server_in_db.bot_joined_at is None:
+                server_in_db.bot_joined_at = now
+            changed = True
+        server_in_db.bot_presence_updated_at = now
+        changed = True
         if changed:
             session.add(server_in_db)
 

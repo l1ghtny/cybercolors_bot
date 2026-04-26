@@ -5,6 +5,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.dependencies.current_user import get_optional_current_discord_user_id, resolve_actor_user_id
+from api.dependencies.server_access import require_server_dashboard_access
 from api.models.monitoring import (
     MonitoredUserCommentCreateModel,
     MonitoredUserCommentReadModel,
@@ -46,7 +47,9 @@ from src.db.models import (
     PastNickname,
 )
 
-moderation_users_router = APIRouter()
+moderation_users_router = APIRouter(
+    dependencies=[Depends(require_server_dashboard_access)],
+)
 
 
 @moderation_users_router.post(

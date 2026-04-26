@@ -119,6 +119,10 @@ class ModerationEvidenceUploadUrlResponse(BaseModel):
     method: str = "PUT"
 
 
+class ModerationEvidenceUploadResult(BaseModel):
+    key: str
+
+
 class ModerationCaseActionLinkCreateModel(BaseModel):
     moderation_action_id: str
     linked_by_user_id: str | None = Field(default=None, pattern=r"^\d*$")
