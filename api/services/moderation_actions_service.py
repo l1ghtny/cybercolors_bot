@@ -3,6 +3,7 @@ import logging
 from uuid import UUID
 
 from fastapi import HTTPException, status
+from sqlalchemy.orm import selectinload
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -20,6 +21,10 @@ from src.db.models import (
     GlobalUser,
     ModerationAction,
     ModerationActionDeletedMessageLink,
+    ModerationActionRuleCitation,
+    ModerationCase,
+    ModerationCaseActionLink,
+    ModerationCaseRuleCitation,
     ModerationRule,
     ServerModerationSettings,
 )
@@ -47,6 +52,137 @@ async def _resolve_username(session: AsyncSession, user_id: int) -> str | None:
     return user.username
 
 
+def _parse_rule_id_list(raw_rule_ids: list[str]) -> list[UUID]:
+    parsed: list[UUID] = []
+    seen: set[UUID] = set()
+    for raw_id in raw_rule_ids:
+        if not raw_id:
+            continue
+        try:
+            parsed_id = UUID(str(raw_id))
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid rule id: {raw_id}",
+            )
+        if parsed_id in seen:
+            continue
+        seen.add(parsed_id)
+        parsed.append(parsed_id)
+    return parsed
+
+
+async def _resolve_rules_for_server(
+    session: AsyncSession,
+    server_id: int,
+    rule_ids: list[UUID],
+) -> list[ModerationRule]:
+    if not rule_ids:
+        return []
+    rules = (
+        await session.exec(
+            select(ModerationRule).where(
+                ModerationRule.server_id == server_id,
+                ModerationRule.id.in_(rule_ids),
+                ModerationRule.is_active.is_(True),
+            )
+        )
+    ).all()
+    by_id = {rule.id: rule for rule in rules}
+    missing = [rule_id for rule_id in rule_ids if rule_id not in by_id]
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Moderation rule not found",
+        )
+    return [by_id[rule_id] for rule_id in rule_ids]
+
+
+async def _upsert_action_rule_citations(
+    session: AsyncSession,
+    action: ModerationAction,
+    rules: list[ModerationRule],
+) -> None:
+    if not rules:
+        return
+
+    existing = (
+        await session.exec(
+            select(ModerationActionRuleCitation).where(
+                ModerationActionRuleCitation.action_id == action.id,
+                ModerationActionRuleCitation.rule_id.in_([rule.id for rule in rules]),
+            )
+        )
+    ).all()
+    existing_rule_ids = {item.rule_id for item in existing if item.rule_id is not None}
+
+    for rule in rules:
+        if rule.id in existing_rule_ids:
+            continue
+        session.add(
+            ModerationActionRuleCitation(
+                action_id=action.id,
+                rule_id=rule.id,
+                server_id=action.server_id,
+                rule_code_snapshot=rule.code,
+                rule_title_snapshot=rule.title,
+                cited_at=action.created_at,
+            )
+        )
+    await session.flush()
+
+
+async def _upsert_case_rule_citations(
+    session: AsyncSession,
+    case_id: UUID,
+    server_id: int,
+    rules: list[ModerationRule],
+    cited_at: datetime,
+) -> None:
+    if not rules:
+        return
+    existing = (
+        await session.exec(
+            select(ModerationCaseRuleCitation).where(
+                ModerationCaseRuleCitation.case_id == case_id,
+                ModerationCaseRuleCitation.rule_id.in_([rule.id for rule in rules]),
+            )
+        )
+    ).all()
+    existing_rule_ids = {item.rule_id for item in existing if item.rule_id is not None}
+    for rule in rules:
+        if rule.id in existing_rule_ids:
+            continue
+        session.add(
+            ModerationCaseRuleCitation(
+                case_id=case_id,
+                rule_id=rule.id,
+                server_id=server_id,
+                rule_code_snapshot=rule.code,
+                rule_title_snapshot=rule.title,
+                cited_at=cited_at,
+            )
+        )
+    await session.flush()
+
+
+async def _load_action_for_read(session: AsyncSession, action_id: UUID) -> ModerationAction:
+    action = (
+        await session.exec(
+            select(ModerationAction)
+            .where(ModerationAction.id == action_id)
+            .options(
+                selectinload(ModerationAction.global_user_moderator),
+                selectinload(ModerationAction.global_user_target),
+                selectinload(ModerationAction.rule),
+                selectinload(ModerationAction.case),
+                selectinload(ModerationAction.rule_citations).selectinload(ModerationActionRuleCitation.rule),
+            )
+        )
+    ).one()
+    return action
+
+
 async def _send_action_to_mod_log(
     session: AsyncSession,
     action: ModerationAction,
@@ -67,6 +203,8 @@ async def _send_action_to_mod_log(
         lines.append(f"**Commentary:** {_truncate(action.commentary, limit=1000)}")
     if action.rule_id:
         lines.append(f"**Rule ID:** `{action.rule_id}`")
+    if action.case_id:
+        lines.append(f"**Case ID:** `{action.case_id}`")
     if action.expires_at:
         lines.append(f"**Expires At:** `{_format_dt(action.expires_at)}`")
     lines.append(f"**Action ID:** `{action.id}`")
@@ -89,6 +227,7 @@ async def create_action(
     session: AsyncSession,
     action: ModerationActionCreate,
     moderator_user_id: int,
+    case_id: UUID | None = None,
 ) -> ModerationAction:
     mock_user = type(
         "MockUser",
@@ -107,17 +246,20 @@ async def create_action(
 
     resolved_commentary = action.commentary.strip() if action.commentary else None
     resolved_reason = action.reason.strip() if action.reason else None
-    resolved_rule_id = None
-
+    parsed_rule_ids = _parse_rule_id_list(action.rule_ids or [])
     if action.rule_id is not None:
-        rule = await session.get(ModerationRule, action.rule_id)
-        if not rule or not rule.is_active or rule.server_id != action.server_id:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Invalid moderation rule for this server",
-            )
-        resolved_rule_id = rule.id
-        base_reason = f"{rule.code} {rule.title}".strip() if rule.code else rule.title
+        parsed_rule_ids = [action.rule_id, *[item for item in parsed_rule_ids if item != action.rule_id]]
+
+    resolved_rules = await _resolve_rules_for_server(
+        session=session,
+        server_id=action.server_id,
+        rule_ids=parsed_rule_ids,
+    )
+    resolved_rule_id = resolved_rules[0].id if resolved_rules else None
+
+    if resolved_rules:
+        primary_rule = resolved_rules[0]
+        base_reason = f"{primary_rule.code} {primary_rule.title}".strip() if primary_rule.code else primary_rule.title
         resolved_reason = f"{base_reason}\nКомментарий: {resolved_commentary}" if resolved_commentary else base_reason
 
     if not resolved_reason:
@@ -126,11 +268,30 @@ async def create_action(
             detail="Either reason or rule_id must be provided",
         )
 
+    resolved_case_id: UUID | None = case_id
+    if resolved_case_id is None and action.case_id:
+        try:
+            resolved_case_id = UUID(str(action.case_id))
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Invalid case_id",
+            )
+
+    if resolved_case_id is not None:
+        linked_case = await session.get(ModerationCase, resolved_case_id)
+        if not linked_case or linked_case.server_id != action.server_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Moderation case not found",
+            )
+
     db_action = ModerationAction(
         action_type=action.action_type,
         moderator_user_id=moderator_user_id,
         reason=resolved_reason,
         rule_id=resolved_rule_id,
+        case_id=resolved_case_id,
         commentary=resolved_commentary,
         expires_at=action.expires_at,
         target_user_id=action.target_user_id,
@@ -138,7 +299,41 @@ async def create_action(
     )
     session.add(db_action)
     await session.flush()
-    await session.refresh(db_action)
+
+    await _upsert_action_rule_citations(
+        session=session,
+        action=db_action,
+        rules=resolved_rules,
+    )
+
+    if resolved_case_id is not None:
+        existing_link = (
+            await session.exec(
+                select(ModerationCaseActionLink).where(
+                    ModerationCaseActionLink.case_id == resolved_case_id,
+                    ModerationCaseActionLink.moderation_action_id == db_action.id,
+                )
+            )
+        ).first()
+        if not existing_link:
+            session.add(
+                ModerationCaseActionLink(
+                    case_id=resolved_case_id,
+                    moderation_action_id=db_action.id,
+                    linked_by_user_id=moderator_user_id,
+                    linked_at=db_action.created_at,
+                )
+            )
+            await session.flush()
+        await _upsert_case_rule_citations(
+            session=session,
+            case_id=resolved_case_id,
+            server_id=action.server_id,
+            rules=resolved_rules,
+            cited_at=db_action.created_at,
+        )
+
+    db_action = await _load_action_for_read(session=session, action_id=db_action.id)
     await _send_action_to_mod_log(session=session, action=db_action)
     return db_action
 

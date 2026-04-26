@@ -3,6 +3,7 @@ from typing import List, Optional
 from uuid import UUID, uuid4, uuid7
 from datetime import datetime, UTC, timezone
 
+import sqlalchemy as sa
 from sqlalchemy import BigInteger, Column, ForeignKey, TIMESTAMP, Text, UniqueConstraint
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -281,6 +282,8 @@ class ModerationRule(SQLModel, table=True):
     server: Server = Relationship(back_populates="moderation_rules")
     created_by: Optional[GlobalUser] = Relationship(back_populates="moderation_rules_created")
     moderation_actions: List["ModerationAction"] = Relationship(back_populates="rule")
+    action_citations: List["ModerationActionRuleCitation"] = Relationship(back_populates="rule")
+    case_citations: List["ModerationCaseRuleCitation"] = Relationship(back_populates="rule")
 
 
 class ModerationAction(SQLModel, table=True):
@@ -292,6 +295,15 @@ class ModerationAction(SQLModel, table=True):
     target_user_id: int = Field(sa_column=Column(BigInteger, (ForeignKey("global_users.discord_id"))))
     moderator_user_id: int = Field(sa_column=Column(BigInteger, (ForeignKey("global_users.discord_id"))))
     rule_id: Optional[UUID] = Field(default=None, foreign_key="moderation_rules.id")
+    case_id: Optional[UUID] = Field(
+        default=None,
+        sa_column=Column(
+            sa.Uuid(),
+            ForeignKey("moderation_cases.id", ondelete="SET NULL"),
+            nullable=True,
+            index=True,
+        ),
+    )
 
     reason: str
     commentary: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
@@ -310,8 +322,13 @@ class ModerationAction(SQLModel, table=True):
 
     server: Server = Relationship(back_populates="moderation_actions")
     rule: Optional[ModerationRule] = Relationship(back_populates="moderation_actions")
+    case: Optional["ModerationCase"] = Relationship(
+        back_populates="primary_actions",
+        sa_relationship_kwargs={"foreign_keys": "[ModerationAction.case_id]"},
+    )
     case_links: List["ModerationCaseActionLink"] = Relationship(back_populates="moderation_action")
     deleted_message_links: List["ModerationActionDeletedMessageLink"] = Relationship(back_populates="moderation_action")
+    rule_citations: List["ModerationActionRuleCitation"] = Relationship(back_populates="action")
 
 
 class CaseStatus(str, Enum):
@@ -461,8 +478,13 @@ class ModerationCase(SQLModel, table=True):
     )
     notes: List["ModerationCaseNote"] = Relationship(back_populates="moderation_case")
     evidence_items: List["ModerationCaseEvidence"] = Relationship(back_populates="moderation_case")
+    primary_actions: List["ModerationAction"] = Relationship(
+        back_populates="case",
+        sa_relationship_kwargs={"foreign_keys": "[ModerationAction.case_id]"},
+    )
     action_links: List["ModerationCaseActionLink"] = Relationship(back_populates="moderation_case")
     users: List["ModerationCaseUser"] = Relationship(back_populates="moderation_case")
+    rule_citations: List["ModerationCaseRuleCitation"] = Relationship(back_populates="moderation_case")
 
 
 class ModerationCaseUser(SQLModel, table=True):
@@ -500,18 +522,85 @@ class ModerationCaseActionLink(SQLModel, table=True):
     linked_by: GlobalUser = Relationship(back_populates="linked_mod_actions")
 
 
+class ModerationActionRuleCitation(SQLModel, table=True):
+    __tablename__ = "moderation_action_rules"
+    __table_args__ = (UniqueConstraint("action_id", "rule_id", name="uq_action_rule_citation"),)
+
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    action_id: UUID = Field(
+        sa_column=Column(
+            sa.Uuid(),
+            ForeignKey("moderation_actions.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        )
+    )
+    rule_id: Optional[UUID] = Field(
+        default=None,
+        sa_column=Column(
+            sa.Uuid(),
+            ForeignKey("moderation_rules.id", ondelete="SET NULL"),
+            nullable=True,
+            index=True,
+        ),
+    )
+    server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False, index=True))
+    rule_code_snapshot: Optional[str] = Field(default=None, nullable=True)
+    rule_title_snapshot: str = Field(nullable=False)
+    cited_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+    rule_deleted_at: Optional[datetime] = Field(default=None, nullable=True)
+
+    action: ModerationAction = Relationship(back_populates="rule_citations")
+    rule: Optional[ModerationRule] = Relationship(back_populates="action_citations")
+
+
+class ModerationCaseRuleCitation(SQLModel, table=True):
+    __tablename__ = "moderation_case_rules"
+    __table_args__ = (UniqueConstraint("case_id", "rule_id", name="uq_case_rule_citation"),)
+
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    case_id: UUID = Field(
+        sa_column=Column(
+            sa.Uuid(),
+            ForeignKey("moderation_cases.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        )
+    )
+    rule_id: Optional[UUID] = Field(
+        default=None,
+        sa_column=Column(
+            sa.Uuid(),
+            ForeignKey("moderation_rules.id", ondelete="SET NULL"),
+            nullable=True,
+            index=True,
+        ),
+    )
+    server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False, index=True))
+    rule_code_snapshot: Optional[str] = Field(default=None, nullable=True)
+    rule_title_snapshot: str = Field(nullable=False)
+    cited_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+    rule_deleted_at: Optional[datetime] = Field(default=None, nullable=True)
+
+    moderation_case: ModerationCase = Relationship(back_populates="rule_citations")
+    rule: Optional[ModerationRule] = Relationship(back_populates="case_citations")
+
+
 class ModerationCaseNote(SQLModel, table=True):
     __tablename__ = "moderation_case_notes"
 
     id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
     case_id: UUID = Field(foreign_key="moderation_cases.id", nullable=False, index=True)
-    author_user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False))
+    author_user_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=True),
+    )
     note: str = Field(sa_column=Column(Text, nullable=False))
     is_internal: bool = True
     created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
 
     moderation_case: ModerationCase = Relationship(back_populates="notes")
-    author: GlobalUser = Relationship(back_populates="moderation_case_notes")
+    author: Optional[GlobalUser] = Relationship(back_populates="moderation_case_notes")
 
 
 class ModerationCaseEvidence(SQLModel, table=True):

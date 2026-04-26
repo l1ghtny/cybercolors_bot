@@ -6,6 +6,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from api.dependencies.current_user import get_optional_current_discord_user_id, resolve_actor_user_id
 from api.dependencies.server_access import require_server_admin_or_owner, require_server_dashboard_access
 from api.models.moderation_rules import (
+    ModerationRuleUsageModel,
     ModerationRuleBulkUpsertResponseModel,
     ModerationRuleCreateModel,
     ModerationRuleImportMessageModel,
@@ -19,6 +20,8 @@ from api.models.moderation_rules import (
 from api.services.moderation_rules_service import (
     create_manual_rule,
     deactivate_rule,
+    get_rule_usage,
+    get_rule_usage_stats_for_server,
     get_rule_parse_guide,
     import_rules,
     import_rules_from_message,
@@ -40,10 +43,34 @@ moderation_rules_router = APIRouter(
 async def get_server_moderation_rules(
     server_id: int,
     include_inactive: bool = Query(default=False),
+    include_usage: bool = Query(default=False),
     session: AsyncSession = Depends(get_session),
 ):
     rules = await list_rules(session=session, server_id=server_id, include_inactive=include_inactive)
-    return [to_rule_read_model(item) for item in rules]
+    usage_map = await get_rule_usage_stats_for_server(session=session, server_id=server_id) if include_usage else {}
+    payload: list[ModerationRuleReadModel] = []
+    for item in rules:
+        usage_count = None
+        last_cited_at = None
+        if include_usage:
+            usage_count, last_cited_at = usage_map.get(item.id, (0, None))
+        payload.append(
+            to_rule_read_model(
+                item,
+                usage_count=usage_count,
+                last_cited_at=last_cited_at,
+            )
+        )
+    return payload
+
+
+@moderation_rules_router.get("/{server_id}/{rule_id}/usage", response_model=ModerationRuleUsageModel)
+async def get_server_moderation_rule_usage(
+    server_id: int,
+    rule_id: UUID,
+    session: AsyncSession = Depends(get_session),
+):
+    return await get_rule_usage(session=session, server_id=server_id, rule_id=rule_id)
 
 
 @moderation_rules_router.post(

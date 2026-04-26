@@ -5,6 +5,7 @@ from uuid import UUID
 
 from fastapi import HTTPException, status
 from sqlalchemy import or_
+from sqlalchemy.orm import selectinload
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -12,8 +13,10 @@ from api.models.moderation_actions import ModerationActionRead
 from api.models.moderation_cases import (
     DeletedMessageAttachmentModel,
     DeletedMessageReadModel,
+    ModerationActionSummaryModel,
     ModerationActorModel,
     ModerationCaseReadModel,
+    ModerationRuleRef,
     ModerationCaseUserReadModel,
 )
 from api.models.user_profiles import NicknameRecordModel
@@ -23,7 +26,9 @@ from src.db.models import (
     ModerationAction,
     ModerationCase,
     ModerationCaseActionLink,
+    ModerationCaseRuleCitation,
     ModerationCaseUser,
+    ModerationActionRuleCitation,
     PastNickname,
     Server,
     User,
@@ -32,6 +37,19 @@ from src.db.models import (
 
 def naive_utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+SYSTEM_ACTOR = ModerationActorModel(
+    user_id="system",
+    username="System",
+    server_nickname=None,
+    display_name="System",
+    avatar_hash=None,
+)
+
+
+def get_system_actor() -> ModerationActorModel:
+    return ModerationActorModel.model_validate(SYSTEM_ACTOR.model_dump())
 
 
 async def get_or_create_server_record(server_id: int, session: AsyncSession) -> Server:
@@ -196,6 +214,62 @@ async def build_optional_actor(
     )
 
 
+def _rule_ref_from_action_citation(citation: ModerationActionRuleCitation) -> ModerationRuleRef:
+    if citation.rule_id is not None and citation.rule is not None:
+        return ModerationRuleRef(
+            id=str(citation.rule.id),
+            code=citation.rule.code,
+            title=citation.rule.title,
+            deleted=False,
+        )
+
+    title = (citation.rule_title_snapshot or "Rule").strip() or "Rule"
+    if "(deleted)" not in title.lower():
+        title = f"{title} (deleted)"
+    return ModerationRuleRef(
+        id=None,
+        code=citation.rule_code_snapshot,
+        title=title,
+        deleted=True,
+    )
+
+
+def _rule_ref_from_case_citation(citation: ModerationCaseRuleCitation) -> ModerationRuleRef:
+    if citation.rule_id is not None and citation.rule is not None:
+        return ModerationRuleRef(
+            id=str(citation.rule.id),
+            code=citation.rule.code,
+            title=citation.rule.title,
+            deleted=False,
+        )
+
+    title = (citation.rule_title_snapshot or "Rule").strip() or "Rule"
+    if "(deleted)" not in title.lower():
+        title = f"{title} (deleted)"
+    return ModerationRuleRef(
+        id=None,
+        code=citation.rule_code_snapshot,
+        title=title,
+        deleted=True,
+    )
+
+
+async def _to_action_summary(
+    session: AsyncSession,
+    action: ModerationAction,
+) -> ModerationActionSummaryModel:
+    return ModerationActionSummaryModel(
+        id=str(action.id),
+        action_type=action.action_type.value if hasattr(action.action_type, "value") else str(action.action_type),
+        target_user=await build_actor(session, action.server_id, action.target_user_id),
+        moderator=await build_actor(session, action.server_id, action.moderator_user_id),
+        reason=action.reason,
+        created_at=action.created_at,
+        expires_at=action.expires_at,
+        is_active=action.is_active,
+    )
+
+
 async def to_case_read(moderation_case: ModerationCase, session: AsyncSession) -> ModerationCaseReadModel:
     target_user = await build_actor(session, moderation_case.server_id, moderation_case.target_user_id)
     opened_by = await build_actor(session, moderation_case.server_id, moderation_case.opened_by_user_id)
@@ -220,13 +294,42 @@ async def to_case_read(moderation_case: ModerationCase, session: AsyncSession) -
             )
         )
 
-    linked_actions = (
+    linked_action_ids_secondary = (
         await session.exec(
             select(ModerationCaseActionLink.moderation_action_id).where(
                 ModerationCaseActionLink.case_id == moderation_case.id
             )
         )
     ).all()
+    action_ids_secondary = list(linked_action_ids_secondary)
+    action_statement = select(ModerationAction).where(
+        ModerationAction.server_id == moderation_case.server_id,
+        ModerationAction.case_id == moderation_case.id,
+    )
+    if action_ids_secondary:
+        action_statement = select(ModerationAction).where(
+            ModerationAction.server_id == moderation_case.server_id,
+            or_(
+                ModerationAction.case_id == moderation_case.id,
+                ModerationAction.id.in_(action_ids_secondary),
+            ),
+        )
+    action_statement = action_statement.options(
+        selectinload(ModerationAction.rule_citations).selectinload(ModerationActionRuleCitation.rule),
+    ).order_by(ModerationAction.created_at.desc())
+    linked_actions = (await session.exec(action_statement)).all()
+    linked_action_summaries = [await _to_action_summary(session, action) for action in linked_actions]
+    linked_action_ids = [str(action.id) for action in linked_actions]
+
+    case_rule_citations = (
+        await session.exec(
+            select(ModerationCaseRuleCitation)
+            .where(ModerationCaseRuleCitation.case_id == moderation_case.id)
+            .options(selectinload(ModerationCaseRuleCitation.rule))
+            .order_by(ModerationCaseRuleCitation.cited_at.asc(), ModerationCaseRuleCitation.id.asc())
+        )
+    ).all()
+    case_rules = [_rule_ref_from_case_citation(item) for item in case_rule_citations]
 
     return ModerationCaseReadModel(
         id=str(moderation_case.id),
@@ -240,7 +343,9 @@ async def to_case_read(moderation_case: ModerationCase, session: AsyncSession) -
         opened_by=opened_by,
         closed_by=closed_by,
         users=case_users,
-        linked_action_ids=[str(action_id) for action_id in linked_actions],
+        rules=case_rules,
+        linked_actions=linked_action_summaries,
+        linked_action_ids=linked_action_ids,
     )
 
 
@@ -280,23 +385,54 @@ async def to_deleted_message_read(
 
 
 def to_moderation_history(result: Sequence[ModerationAction]) -> list[ModerationActionRead]:
-    return [
-        ModerationActionRead(
-            id=str(action.id),
-            action_type=action.action_type,
-            server_id=str(action.server_id),
-            target_user_id=str(action.target_user_id),
-            target_user_username=str(action.global_user_target.username),
-            moderator_user_id=str(action.moderator_user_id),
-            moderator_username=str(action.global_user_moderator.username),
-            reason=action.reason,
-            rule_id=str(action.rule_id) if action.rule_id is not None else None,
-            rule_code=action.rule.code if action.rule else None,
-            rule_title=action.rule.title if action.rule else None,
-            commentary=action.commentary,
-            created_at=action.created_at,
-            expires_at=action.expires_at,
-            is_active=action.is_active,
+    payload: list[ModerationActionRead] = []
+    for action in result:
+        rule_refs: list[ModerationRuleRef] = []
+        if action.rule_citations:
+            sorted_citations = sorted(
+                action.rule_citations,
+                key=lambda item: (item.cited_at or datetime.min.replace(tzinfo=None), str(item.id)),
+            )
+            rule_refs = [_rule_ref_from_action_citation(item) for item in sorted_citations]
+        elif action.rule is not None:
+            rule_refs = [
+                ModerationRuleRef(
+                    id=str(action.rule.id),
+                    code=action.rule.code,
+                    title=action.rule.title,
+                    deleted=False,
+                )
+            ]
+
+        primary_rule = rule_refs[0] if rule_refs else None
+        payload.append(
+            ModerationActionRead(
+                id=str(action.id),
+                action_type=action.action_type,
+                server_id=str(action.server_id),
+                target_user_id=str(action.target_user_id),
+                target_user_username=(
+                    action.global_user_target.username
+                    if action.global_user_target and action.global_user_target.username
+                    else str(action.target_user_id)
+                ),
+                moderator_user_id=str(action.moderator_user_id),
+                moderator_username=(
+                    action.global_user_moderator.username
+                    if action.global_user_moderator and action.global_user_moderator.username
+                    else str(action.moderator_user_id)
+                ),
+                reason=action.reason,
+                rule_id=primary_rule.id if primary_rule is not None else (str(action.rule_id) if action.rule_id else None),
+                rule_code=primary_rule.code if primary_rule is not None else (action.rule.code if action.rule else None),
+                rule_title=primary_rule.title if primary_rule is not None else (action.rule.title if action.rule else None),
+                rules=rule_refs,
+                case_id=str(action.case_id) if action.case_id is not None else None,
+                case_title=action.case.title if action.case is not None else None,
+                commentary=action.commentary,
+                created_at=action.created_at,
+                expires_at=action.expires_at,
+                is_active=action.is_active,
+            )
         )
-        for action in result
-    ]
+    return payload

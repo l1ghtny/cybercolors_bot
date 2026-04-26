@@ -1,24 +1,40 @@
 import re
 from dataclasses import dataclass
+from datetime import datetime
+from time import monotonic
 from typing import Iterable
 from uuid import UUID
 
 from fastapi import HTTPException, status
 from sqlalchemy import func
+from sqlalchemy.orm import selectinload
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.models.moderation_rules import (
+    ModerationRuleUsageModel,
     ModerationRuleMessageRefModel,
     ModerationRuleParseGuideModel,
     ModerationRuleReadModel,
+    RuleUsageActionSummaryModel,
+    RuleUsageCaseSummaryModel,
+    RuleUsageTopOffenderModel,
     ParsedModerationRuleModel,
 )
 from api.services.discord_guilds import fetch_channel_message
-from api.services.moderation_core import naive_utcnow
-from src.db.models import ModerationRule, Server
+from api.services.moderation_core import build_actor, naive_utcnow
+from src.db.models import (
+    ModerationAction,
+    ModerationActionRuleCitation,
+    ModerationCase,
+    ModerationCaseRuleCitation,
+    ModerationRule,
+    Server,
+)
 
 RULE_START_RE = re.compile(r"^\s*(?P<num>[1-9]\d?)(?P<marker>\s*[\W_]{0,4})\s*(?P<body>.+)$")
+RULE_USAGE_CACHE_TTL_SECONDS = 60
+_rule_usage_cache: dict[tuple[int, UUID], tuple[float, ModerationRuleUsageModel]] = {}
 
 
 @dataclass
@@ -108,7 +124,11 @@ async def _get_or_create_server(session: AsyncSession, server_id: int) -> Server
     return server
 
 
-def to_rule_read_model(rule: ModerationRule) -> ModerationRuleReadModel:
+def to_rule_read_model(
+    rule: ModerationRule,
+    usage_count: int | None = None,
+    last_cited_at: datetime | None = None,
+) -> ModerationRuleReadModel:
     return ModerationRuleReadModel(
         id=str(rule.id),
         server_id=str(rule.server_id),
@@ -123,6 +143,8 @@ def to_rule_read_model(rule: ModerationRule) -> ModerationRuleReadModel:
         created_by_user_id=str(rule.created_by_user_id) if rule.created_by_user_id is not None else None,
         created_at=rule.created_at,
         updated_at=rule.updated_at,
+        usage_count=usage_count,
+        last_cited_at=last_cited_at,
     )
 
 
@@ -146,6 +168,54 @@ async def list_rules(
         statement = statement.where(ModerationRule.is_active == True)
     statement = statement.order_by(ModerationRule.sort_order.asc(), ModerationRule.created_at.asc())
     return (await session.exec(statement)).all()
+
+
+async def get_rule_usage_stats_for_server(
+    session: AsyncSession,
+    server_id: int,
+) -> dict[UUID, tuple[int, datetime | None]]:
+    action_rows = (
+        await session.exec(
+            select(
+                ModerationActionRuleCitation.rule_id,
+                func.count().label("count"),
+                func.max(ModerationActionRuleCitation.cited_at).label("last_cited_at"),
+            )
+            .where(
+                ModerationActionRuleCitation.server_id == server_id,
+                ModerationActionRuleCitation.rule_id.is_not(None),
+            )
+            .group_by(ModerationActionRuleCitation.rule_id)
+        )
+    ).all()
+    case_rows = (
+        await session.exec(
+            select(
+                ModerationCaseRuleCitation.rule_id,
+                func.count().label("count"),
+                func.max(ModerationCaseRuleCitation.cited_at).label("last_cited_at"),
+            )
+            .where(
+                ModerationCaseRuleCitation.server_id == server_id,
+                ModerationCaseRuleCitation.rule_id.is_not(None),
+            )
+            .group_by(ModerationCaseRuleCitation.rule_id)
+        )
+    ).all()
+
+    usage_map: dict[UUID, tuple[int, datetime | None]] = {}
+    for row in [*action_rows, *case_rows]:
+        rule_id = row[0]
+        if rule_id is None:
+            continue
+        count = int(row[1] or 0)
+        last_cited_at = row[2]
+        existing_count, existing_last = usage_map.get(rule_id, (0, None))
+        resolved_last = existing_last
+        if resolved_last is None or (last_cited_at is not None and last_cited_at > resolved_last):
+            resolved_last = last_cited_at
+        usage_map[rule_id] = (existing_count + count, resolved_last)
+    return usage_map
 
 
 async def create_manual_rule(
@@ -173,6 +243,7 @@ async def create_manual_rule(
     session.add(rule)
     await session.flush()
     await session.refresh(rule)
+    _invalidate_rule_usage_cache(server_id=server_id)
     return rule
 
 
@@ -189,6 +260,7 @@ async def deactivate_rule(
     session.add(rule)
     await session.flush()
     await session.refresh(rule)
+    _invalidate_rule_usage_cache(server_id=server_id, rule_ids=[rule_id])
     return rule
 
 
@@ -259,6 +331,7 @@ async def import_rules(
     await session.flush()
     for item in created:
         await session.refresh(item)
+    _invalidate_rule_usage_cache(server_id=server_id)
     return created
 
 
@@ -326,6 +399,7 @@ async def import_rules_from_messages(
     await session.flush()
     for item in created:
         await session.refresh(item)
+    _invalidate_rule_usage_cache(server_id=server_id)
     return created
 
 
@@ -356,6 +430,190 @@ async def import_rules_from_message(
         source_channel_id=channel_id,
         source_message_id=message_id,
     )
+
+
+def _get_cached_rule_usage(server_id: int, rule_id: UUID) -> ModerationRuleUsageModel | None:
+    cached = _rule_usage_cache.get((server_id, rule_id))
+    if not cached:
+        return None
+    expires_at, payload = cached
+    if expires_at <= monotonic():
+        _rule_usage_cache.pop((server_id, rule_id), None)
+        return None
+    return payload
+
+
+def _store_cached_rule_usage(server_id: int, rule_id: UUID, payload: ModerationRuleUsageModel) -> None:
+    _rule_usage_cache[(server_id, rule_id)] = (monotonic() + RULE_USAGE_CACHE_TTL_SECONDS, payload)
+
+
+def _invalidate_rule_usage_cache(server_id: int, rule_ids: list[UUID] | None = None) -> None:
+    if rule_ids is None:
+        keys_to_delete = [key for key in _rule_usage_cache.keys() if key[0] == server_id]
+    else:
+        allowed_ids = set(rule_ids)
+        keys_to_delete = [key for key in _rule_usage_cache.keys() if key[0] == server_id and key[1] in allowed_ids]
+    for key in keys_to_delete:
+        _rule_usage_cache.pop(key, None)
+
+
+async def get_rule_usage(
+    session: AsyncSession,
+    server_id: int,
+    rule_id: UUID,
+) -> ModerationRuleUsageModel:
+    cached = _get_cached_rule_usage(server_id=server_id, rule_id=rule_id)
+    if cached is not None:
+        return cached
+
+    rule = await session.get(ModerationRule, rule_id)
+    if not rule or rule.server_id != server_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Moderation rule not found")
+
+    action_count = int(
+        (
+            await session.exec(
+                select(func.count())
+                .select_from(ModerationActionRuleCitation)
+                .where(
+                    ModerationActionRuleCitation.server_id == server_id,
+                    ModerationActionRuleCitation.rule_id == rule_id,
+                )
+            )
+        ).one()
+        or 0
+    )
+    case_count = int(
+        (
+            await session.exec(
+                select(func.count())
+                .select_from(ModerationCaseRuleCitation)
+                .where(
+                    ModerationCaseRuleCitation.server_id == server_id,
+                    ModerationCaseRuleCitation.rule_id == rule_id,
+                )
+            )
+        ).one()
+        or 0
+    )
+    action_last_cited = (
+        await session.exec(
+            select(func.max(ModerationActionRuleCitation.cited_at)).where(
+                ModerationActionRuleCitation.server_id == server_id,
+                ModerationActionRuleCitation.rule_id == rule_id,
+            )
+        )
+    ).one()
+    case_last_cited = (
+        await session.exec(
+            select(func.max(ModerationCaseRuleCitation.cited_at)).where(
+                ModerationCaseRuleCitation.server_id == server_id,
+                ModerationCaseRuleCitation.rule_id == rule_id,
+            )
+        )
+    ).one()
+    last_cited_at = action_last_cited
+    if last_cited_at is None or (case_last_cited is not None and case_last_cited > last_cited_at):
+        last_cited_at = case_last_cited
+
+    recent_actions = (
+        await session.exec(
+            select(ModerationAction)
+            .join(
+                ModerationActionRuleCitation,
+                ModerationActionRuleCitation.action_id == ModerationAction.id,
+            )
+            .where(
+                ModerationActionRuleCitation.server_id == server_id,
+                ModerationActionRuleCitation.rule_id == rule_id,
+            )
+            .options(
+                selectinload(ModerationAction.global_user_target),
+                selectinload(ModerationAction.global_user_moderator),
+            )
+            .order_by(ModerationAction.created_at.desc())
+            .limit(10)
+        )
+    ).all()
+
+    recent_cases = (
+        await session.exec(
+            select(ModerationCase)
+            .join(
+                ModerationCaseRuleCitation,
+                ModerationCaseRuleCitation.case_id == ModerationCase.id,
+            )
+            .where(
+                ModerationCaseRuleCitation.server_id == server_id,
+                ModerationCaseRuleCitation.rule_id == rule_id,
+            )
+            .order_by(ModerationCase.created_at.desc())
+            .limit(10)
+        )
+    ).all()
+
+    top_offender_rows = (
+        await session.exec(
+            select(
+                ModerationAction.target_user_id,
+                func.count(ModerationAction.id).label("action_count"),
+            )
+            .join(
+                ModerationActionRuleCitation,
+                ModerationActionRuleCitation.action_id == ModerationAction.id,
+            )
+            .where(
+                ModerationActionRuleCitation.server_id == server_id,
+                ModerationActionRuleCitation.rule_id == rule_id,
+            )
+            .group_by(ModerationAction.target_user_id)
+            .order_by(func.count(ModerationAction.id).desc(), ModerationAction.target_user_id.asc())
+            .limit(5)
+        )
+    ).all()
+
+    payload = ModerationRuleUsageModel(
+        rule=to_rule_read_model(
+            rule=rule,
+            usage_count=action_count + case_count,
+            last_cited_at=last_cited_at,
+        ),
+        action_count=action_count,
+        case_count=case_count,
+        last_cited_at=last_cited_at,
+        recent_actions=[
+            RuleUsageActionSummaryModel(
+                id=str(action.id),
+                action_type=action.action_type.value if hasattr(action.action_type, "value") else str(action.action_type),
+                target_user=await build_actor(session, server_id, action.target_user_id),
+                moderator=await build_actor(session, server_id, action.moderator_user_id),
+                reason=action.reason,
+                created_at=action.created_at,
+                expires_at=action.expires_at,
+                is_active=action.is_active,
+            )
+            for action in recent_actions
+        ],
+        recent_cases=[
+            RuleUsageCaseSummaryModel(
+                id=str(item.id),
+                title=item.title,
+                status=item.status,
+                created_at=item.created_at,
+                target_user=await build_actor(session, server_id, item.target_user_id),
+            )
+            for item in recent_cases
+        ],
+        top_offenders=[
+            RuleUsageTopOffenderModel(
+                user=await build_actor(session, server_id, int(row[0])),
+                action_count=int(row[1]),
+            )
+            for row in top_offender_rows
+        ],
+    )
+    _store_cached_rule_usage(server_id=server_id, rule_id=rule_id, payload=payload)
+    return payload
 
 
 def _get_rule_parse_guide_legacy() -> ModerationRuleParseGuideModel:

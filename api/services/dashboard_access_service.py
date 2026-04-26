@@ -265,15 +265,6 @@ async def remove_dashboard_access_role(
     return await get_dashboard_access(session, server_id)
 
 
-def _extract_access_token(authorization: str | None) -> str:
-    if not authorization:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authorization header missing")
-    token_type, _, access_token = authorization.partition(" ")
-    if token_type.lower() != "bearer" or not access_token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authorization header")
-    return access_token
-
-
 def _parse_guild_id(payload: dict) -> int | None:
     raw_id = payload.get("id")
     if raw_id is None or not str(raw_id).isdigit():
@@ -332,8 +323,7 @@ def _store_cached_member_role_ids(server_id: int, user_id: int, role_ids: set[in
     )
 
 
-async def _get_user_guild_payload(authorization: str | None, server_id: int) -> dict:
-    access_token = _extract_access_token(authorization)
+async def _get_user_guild_payload(access_token: str, server_id: int) -> dict:
     cached_payload = _get_cached_user_guild_payload(access_token, server_id)
     if cached_payload is not None:
         return cached_payload
@@ -391,9 +381,9 @@ def _guild_admin_or_owner(guild_payload: dict) -> bool:
 
 async def assert_server_admin_or_owner(
     server_id: int,
-    authorization: str | None,
+    access_token: str,
 ) -> None:
-    guild_payload = await _get_user_guild_payload(authorization=authorization, server_id=server_id)
+    guild_payload = await _get_user_guild_payload(access_token=access_token, server_id=server_id)
     if not _guild_admin_or_owner(guild_payload):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -405,9 +395,9 @@ async def assert_dashboard_access(
     session: AsyncSession,
     server_id: int,
     caller_user_id: int,
-    authorization: str | None,
+    access_token: str,
 ) -> None:
-    guild_payload = await _get_user_guild_payload(authorization=authorization, server_id=server_id)
+    guild_payload = await _get_user_guild_payload(access_token=access_token, server_id=server_id)
     if _guild_admin_or_owner(guild_payload):
         return
 

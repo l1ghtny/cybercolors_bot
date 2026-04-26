@@ -1,13 +1,27 @@
+from uuid import UUID
+
+from fastapi import HTTPException, status
+from sqlalchemy import func, or_
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.models.monitoring import (
+    MonitoredUserDetailsModel,
+    UserActionSummaryModel,
+    UserCaseSummaryModel,
     MonitoredUserCommentReadModel,
     MonitoredUserReadModel,
     MonitoredUserStatusEventReadModel,
 )
-from api.services.moderation_core import build_actor, naive_utcnow
-from src.db.models import MonitoredUser, MonitoredUserComment, MonitoredUserStatusEvent
+from api.services.moderation_core import build_actor, get_case_or_404, naive_utcnow
+from src.db.models import (
+    ModerationAction,
+    ModerationCase,
+    ModerationCaseUser,
+    MonitoredUser,
+    MonitoredUserComment,
+    MonitoredUserStatusEvent,
+)
 
 
 async def _to_monitored_user_read(session: AsyncSession, item: MonitoredUser) -> MonitoredUserReadModel:
@@ -79,6 +93,13 @@ def _append_status_event(
             from_is_active=from_is_active,
             to_is_active=to_is_active,
         )
+    )
+
+
+def _cases_for_user_clause(user_id: int):
+    return or_(
+        ModerationCase.target_user_id == user_id,
+        ModerationCase.id.in_(select(ModerationCaseUser.case_id).where(ModerationCaseUser.user_id == user_id)),
     )
 
 
@@ -272,3 +293,114 @@ async def list_monitored_user_status_events(
         changed_by = await build_actor(session, server_id, row.changed_by_user_id)
         payload.append(_to_monitored_user_status_event_read(row, changed_by))
     return payload
+
+
+async def get_monitored_user_details(
+    session: AsyncSession,
+    server_id: int,
+    user_id: int,
+) -> MonitoredUserDetailsModel:
+    monitored_user = await _get_monitored_user_or_none(session, server_id, user_id)
+    if not monitored_user:
+        raise LookupError("Monitored user not found")
+
+    base = await _to_monitored_user_read(session, monitored_user)
+
+    comment_count = int(
+        (
+            await session.exec(
+                select(func.count())
+                .select_from(MonitoredUserComment)
+                .where(MonitoredUserComment.monitored_user_id == monitored_user.id)
+            )
+        ).one()
+        or 0
+    )
+
+    related_cases_rows = (
+        await session.exec(
+            select(ModerationCase)
+            .where(
+                ModerationCase.server_id == server_id,
+                _cases_for_user_clause(user_id),
+            )
+            .order_by(ModerationCase.created_at.desc())
+            .limit(20)
+        )
+    ).all()
+    related_cases = [
+        UserCaseSummaryModel(
+            id=str(item.id),
+            title=item.title,
+            status=item.status,
+            created_at=item.created_at,
+        )
+        for item in related_cases_rows
+    ]
+
+    recent_actions_rows = (
+        await session.exec(
+            select(ModerationAction)
+            .where(
+                ModerationAction.server_id == server_id,
+                ModerationAction.target_user_id == user_id,
+            )
+            .order_by(ModerationAction.created_at.desc())
+            .limit(20)
+        )
+    ).all()
+    recent_actions = [
+        UserActionSummaryModel(
+            id=str(item.id),
+            action_type=item.action_type.value if hasattr(item.action_type, "value") else str(item.action_type),
+            reason=item.reason,
+            created_at=item.created_at,
+            moderator=await build_actor(session, server_id, item.moderator_user_id),
+        )
+        for item in recent_actions_rows
+    ]
+
+    return MonitoredUserDetailsModel(
+        **base.model_dump(),
+        related_cases=related_cases,
+        recent_actions=recent_actions,
+        comment_count=comment_count,
+    )
+
+
+async def add_monitored_user_from_case(
+    session: AsyncSession,
+    server_id: int,
+    case_id: UUID,
+    user_id: int,
+    reason: str | None,
+    added_by_user_id: int,
+) -> MonitoredUserReadModel:
+    moderation_case = await get_case_or_404(server_id, case_id, session)
+    valid_users = {moderation_case.target_user_id}
+    linked_users = (
+        await session.exec(
+            select(ModerationCaseUser.user_id).where(ModerationCaseUser.case_id == case_id)
+        )
+    ).all()
+    valid_users.update(int(item) for item in linked_users)
+    if user_id not in valid_users:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="user_id must belong to the referenced case",
+        )
+
+    existing = await _get_monitored_user_or_none(session, server_id, user_id)
+    if existing and existing.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="User is already actively monitored",
+        )
+
+    return await upsert_monitored_user(
+        session=session,
+        server_id=server_id,
+        user_id=user_id,
+        reason=reason if reason is not None else moderation_case.title,
+        added_by_user_id=added_by_user_id,
+    )

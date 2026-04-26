@@ -2,6 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator
 
+from api.models.moderation_cases import ModerationRuleRef
 from src.db.models import CaseStatus
 
 
@@ -88,6 +89,18 @@ class UserModerationCaseSummaryModel(BaseModel):
     created_at: datetime
 
 
+class MonitoredUserSummaryModel(BaseModel):
+    is_active: bool
+    reason: str | None = None
+    since: datetime
+    comment_count: int
+
+
+class TopRuleViolationModel(BaseModel):
+    rule: ModerationRuleRef
+    count: int
+
+
 class UserProfileCardModel(BaseModel):
     user_id: str
     username: str | None = None
@@ -103,3 +116,5 @@ class UserProfileCardModel(BaseModel):
     open_cases_count: int
     recent_actions: list[UserModerationActionSummaryModel]
     recent_cases: list[UserModerationCaseSummaryModel]
+    monitored: MonitoredUserSummaryModel | None = None
+    top_rules_violated: list[TopRuleViolationModel] = Field(default_factory=list)

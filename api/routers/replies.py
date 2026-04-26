@@ -1,10 +1,11 @@
-from typing import Annotated, List
+from typing import List
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Header, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from api.dependencies.auth import get_bearer_access_token
 from api.dependencies.current_user import get_current_discord_user_id
 from api.dependencies.server_access import require_server_admin_or_owner, require_server_dashboard_access
 from api.helpers.replies import enrich_user_data
@@ -26,6 +27,22 @@ replies = APIRouter(
     tags=["replies"],
     dependencies=[Depends(require_server_dashboard_access)],
 )
+
+
+async def require_duplicate_target_server_dashboard_access(
+    body: ReplyDuplicateRequestModel,
+    session: AsyncSession = Depends(get_session),
+    current_user_id: int = Depends(get_current_discord_user_id),
+    access_token: str = Depends(get_bearer_access_token),
+) -> int:
+    target_server_id = int(body.target_server_id)
+    await assert_dashboard_access(
+        session=session,
+        server_id=target_server_id,
+        caller_user_id=current_user_id,
+        access_token=access_token,
+    )
+    return target_server_id
 
 
 @replies.get('/{server_id}', response_model=List[ReplyModel])
@@ -213,27 +230,13 @@ async def duplicate_selected_replies_to_server(
     body: ReplyDuplicateRequestModel,
     session: AsyncSession = Depends(get_session),
     current_user_id: int = Depends(get_current_discord_user_id),
-    authorization: Annotated[str | None, Header()] = None,
+    target_server_id: int = Depends(require_duplicate_target_server_dashboard_access),
 ):
-    target_server_id = int(body.target_server_id)
     if target_server_id == server_id:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="target_server_id must be different from source server",
         )
-
-    await assert_dashboard_access(
-        session=session,
-        server_id=server_id,
-        caller_user_id=current_user_id,
-        authorization=authorization,
-    )
-    await assert_dashboard_access(
-        session=session,
-        server_id=target_server_id,
-        caller_user_id=current_user_id,
-        authorization=authorization,
-    )
 
     result = await duplicate_selected_replies(
         session=session,

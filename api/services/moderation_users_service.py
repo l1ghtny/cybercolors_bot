@@ -4,9 +4,12 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from api.models.moderation_cases import ModerationRuleRef
 from api.models.moderation_actions import ModerationActionRead
 from api.models.moderation_cases import ModerationCaseReadModel
 from api.models.user_profiles import (
+    MonitoredUserSummaryModel,
+    TopRuleViolationModel,
     UserActivitySummaryModel,
     UserModerationActionSummaryModel,
     UserModerationCaseSummaryModel,
@@ -19,8 +22,12 @@ from src.db.models import (
     GlobalUser,
     MessageLog,
     ModerationAction,
+    ModerationActionRuleCitation,
     ModerationCase,
     ModerationCaseUser,
+    ModerationRule,
+    MonitoredUser,
+    MonitoredUserComment,
     Server,
     User,
 )
@@ -137,6 +144,90 @@ async def build_user_profile_card(
         )
     ).one()
 
+    monitored_row = (
+        await session.exec(
+            select(MonitoredUser).where(
+                MonitoredUser.server_id == server_id,
+                MonitoredUser.user_id == user_id,
+            )
+        )
+    ).first()
+    monitored_summary = None
+    if monitored_row:
+        monitored_comment_count = int(
+            (
+                await session.exec(
+                    select(func.count())
+                    .select_from(MonitoredUserComment)
+                    .where(MonitoredUserComment.monitored_user_id == monitored_row.id)
+                )
+            ).one()
+            or 0
+        )
+        monitored_summary = MonitoredUserSummaryModel(
+            is_active=bool(monitored_row.is_active),
+            reason=monitored_row.reason,
+            since=monitored_row.created_at,
+            comment_count=monitored_comment_count,
+        )
+
+    top_rule_rows = (
+        await session.exec(
+            select(
+                ModerationActionRuleCitation.rule_id,
+                ModerationActionRuleCitation.rule_code_snapshot,
+                ModerationActionRuleCitation.rule_title_snapshot,
+                func.count(ModerationActionRuleCitation.id).label("count"),
+            )
+            .join(
+                ModerationAction,
+                ModerationAction.id == ModerationActionRuleCitation.action_id,
+            )
+            .where(
+                ModerationAction.server_id == server_id,
+                ModerationAction.target_user_id == user_id,
+            )
+            .group_by(
+                ModerationActionRuleCitation.rule_id,
+                ModerationActionRuleCitation.rule_code_snapshot,
+                ModerationActionRuleCitation.rule_title_snapshot,
+            )
+            .order_by(func.count(ModerationActionRuleCitation.id).desc())
+            .limit(3)
+        )
+    ).all()
+    top_rules_violated: list[TopRuleViolationModel] = []
+    for row in top_rule_rows:
+        citation_rule_id = row[0]
+        citation_rule_code = row[1]
+        citation_rule_title = row[2]
+        citation_count = int(row[3] or 0)
+
+        resolved_rule = await session.get(ModerationRule, citation_rule_id) if citation_rule_id is not None else None
+        if resolved_rule:
+            rule_ref = ModerationRuleRef(
+                id=str(resolved_rule.id),
+                code=resolved_rule.code,
+                title=resolved_rule.title,
+                deleted=False,
+            )
+        else:
+            title = (citation_rule_title or "Rule").strip() or "Rule"
+            if "(deleted)" not in title.lower():
+                title = f"{title} (deleted)"
+            rule_ref = ModerationRuleRef(
+                id=None,
+                code=citation_rule_code,
+                title=title,
+                deleted=True,
+            )
+        top_rules_violated.append(
+            TopRuleViolationModel(
+                rule=rule_ref,
+                count=citation_count,
+            )
+        )
+
     return UserProfileCardModel(
         user_id=str(user_id),
         username=global_user.username,
@@ -170,6 +261,8 @@ async def build_user_profile_card(
             )
             for case in cases
         ],
+        monitored=monitored_summary,
+        top_rules_violated=top_rules_violated,
     )
 
 

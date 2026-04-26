@@ -5,7 +5,12 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.db.models import DeletedMessage, ModerationAction, ModerationActionDeletedMessageLink
+from src.db.models import (
+    DeletedMessage,
+    ModerationAction,
+    ModerationActionDeletedMessageLink,
+    ModerationActionRuleCitation,
+)
 
 
 async def query_deleted_messages(
@@ -57,6 +62,8 @@ async def query_moderation_actions(
         selectinload(ModerationAction.global_user_moderator),
         selectinload(ModerationAction.global_user_target),
         selectinload(ModerationAction.rule),
+        selectinload(ModerationAction.case),
+        selectinload(ModerationAction.rule_citations).selectinload(ModerationActionRuleCitation.rule),
     ).order_by(ModerationAction.created_at.desc())
     if limit is not None:
         statement = statement.limit(limit)

@@ -3,15 +3,16 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from time import monotonic
-from typing import Annotated
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import APIRouter, HTTPException, Header, Query
+from fastapi import APIRouter, HTTPException, Query
 from fastapi import Depends
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from api.dependencies.auth import get_bearer_access_token
+from api.dependencies.current_user import get_current_discord_user_id
 from api.models.auth import (
     AuthGuildModel,
     AuthLoginRequestModel,
@@ -360,7 +361,8 @@ async def login(body: AuthLoginRequestModel, session: AsyncSession = Depends(get
 
 @auth.get("/guilds", response_model=list[AuthGuildModel])
 async def get_user_guilds(
-    authorization: Annotated[str | None, Header()] = None,
+    access_token: str = Depends(get_bearer_access_token),
+    current_user_id: int = Depends(get_current_discord_user_id),
     session: AsyncSession = Depends(get_session),
     refresh: bool = Query(default=False),
 ):
@@ -370,24 +372,12 @@ async def get_user_guilds(
     - the bot is currently present;
     - and the user is owner/admin or explicitly allowlisted for dashboard access.
     """
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Authorization header missing")
-
-    token_type, _, access_token = authorization.partition(' ')
-    if token_type.lower() != 'bearer' or not access_token:
-        raise HTTPException(status_code=401, detail="Invalid authorization header")
-
     headers = {"Authorization": f"Bearer {access_token}"}
     bot_headers = {"Authorization": f"Bot {_get_bot_token_for_auth()}"}
+    request_started_at = monotonic()
 
     async with httpx.AsyncClient() as client:
         try:
-            me_res = await client.get(f"{DISCORD_API_BASE_URL}/users/@me", headers=headers)
-            me_res.raise_for_status()
-            me_json = me_res.json()
-            current_user_id = int(me_json["id"])
-            request_started_at = monotonic()
-
             cached_payload = _get_cached_user_guilds(current_user_id, refresh=refresh)
             if cached_payload is not None:
                 cached_guild_ids = {

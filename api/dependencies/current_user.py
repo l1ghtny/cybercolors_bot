@@ -2,10 +2,11 @@ import asyncio
 import os
 from dataclasses import dataclass
 from time import monotonic
-from typing import Annotated
 
 import httpx
-from fastapi import Header, HTTPException, status
+from fastapi import Depends, HTTPException, status
+
+from api.dependencies.auth import get_bearer_access_token, get_optional_bearer_access_token
 
 DISCORD_API_BASE_URL = "https://discord.com/api/v10"
 CURRENT_USER_CACHE_TTL_SECONDS = int(os.getenv("CURRENT_USER_CACHE_TTL_SECONDS", "60"))
@@ -96,15 +97,8 @@ async def _fetch_current_user_id_from_discord(access_token: str) -> int:
 
 
 async def get_current_discord_user_id(
-    authorization: Annotated[str | None, Header()] = None,
+    access_token: str = Depends(get_bearer_access_token),
 ) -> int:
-    if not authorization:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authorization header missing")
-
-    token_type, _, access_token = authorization.partition(" ")
-    if token_type.lower() != "bearer" or not access_token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authorization header")
-
     cached_user_id = _get_cached_current_user_id(access_token)
     if cached_user_id is not None:
         return cached_user_id
@@ -121,12 +115,9 @@ async def get_current_discord_user_id(
 
 
 async def get_optional_current_discord_user_id(
-    authorization: Annotated[str | None, Header()] = None,
+    access_token: str | None = Depends(get_optional_bearer_access_token),
 ) -> int | None:
-    if not authorization:
-        return None
-    token_type, _, access_token = authorization.partition(" ")
-    if token_type.lower() != "bearer" or not access_token:
+    if access_token is None:
         return None
 
     cached_user_id = _get_cached_current_user_id(access_token)

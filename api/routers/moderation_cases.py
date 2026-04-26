@@ -6,7 +6,9 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.dependencies.current_user import get_optional_current_discord_user_id, resolve_actor_user_id
 from api.dependencies.server_access import require_server_dashboard_access
+from api.models.moderation_actions import ModerationActionRead
 from api.models.moderation_cases import (
+    ModerationCaseActionCreateFromCaseModel,
     ModerationCaseActionLinkCreateModel,
     ModerationCaseCreateModel,
     ModerationCaseDetailsModel,
@@ -15,6 +17,7 @@ from api.models.moderation_cases import (
     ModerationCaseNoteCreateModel,
     ModerationCaseNoteReadModel,
     ModerationCaseReadModel,
+    ModerationCaseRulesUpsertModel,
     ModerationCaseStatusUpdateModel,
     ModerationCaseUserAddModel,
     ModerationCaseUserReadModel,
@@ -26,14 +29,17 @@ from api.services.moderation_cases_service import (
     add_case_evidence as add_case_evidence_service,
     add_case_note as add_case_note_service,
     add_user_to_case as add_user_to_case_service,
+    create_action_from_case as create_action_from_case_service,
     create_case as create_case_service,
     get_case_details as get_case_details_service,
     link_action_to_case as link_action_to_case_service,
     list_case_users as list_case_users_service,
     list_cases as list_cases_service,
     remove_user_from_case as remove_user_from_case_service,
+    remove_case_rule as remove_case_rule_service,
     safe_upload_key,
     store_evidence_blob,
+    upsert_case_rules as upsert_case_rules_service,
     update_case_status as update_case_status_service,
 )
 from api.services.moderation_core import get_case_or_404
@@ -268,4 +274,65 @@ async def link_action_to_moderation_case(
         case_id=case_id,
         moderation_action_id=body.moderation_action_id,
         linked_by_user_id=linked_by_user_id,
+    )
+
+
+@moderation_cases_router.post(
+    "/cases/{server_id}/{case_id}/rules",
+    response_model=ModerationCaseReadModel,
+    dependencies=[Depends(require_server_dashboard_access)],
+)
+async def upsert_moderation_case_rules(
+    server_id: int,
+    case_id: UUID,
+    body: ModerationCaseRulesUpsertModel,
+    session: AsyncSession = Depends(get_session),
+):
+    return await upsert_case_rules_service(
+        session=session,
+        server_id=server_id,
+        case_id=case_id,
+        body=body,
+    )
+
+
+@moderation_cases_router.delete(
+    "/cases/{server_id}/{case_id}/rules/{rule_id}",
+    response_model=ModerationCaseReadModel,
+    dependencies=[Depends(require_server_dashboard_access)],
+)
+async def delete_moderation_case_rule(
+    server_id: int,
+    case_id: UUID,
+    rule_id: UUID,
+    session: AsyncSession = Depends(get_session),
+):
+    return await remove_case_rule_service(
+        session=session,
+        server_id=server_id,
+        case_id=case_id,
+        rule_id=rule_id,
+    )
+
+
+@moderation_cases_router.post(
+    "/cases/{server_id}/{case_id}/actions/create",
+    response_model=ModerationActionRead,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_server_dashboard_access)],
+)
+async def create_moderation_action_from_case(
+    server_id: int,
+    case_id: UUID,
+    body: ModerationCaseActionCreateFromCaseModel,
+    session: AsyncSession = Depends(get_session),
+    current_user_id: int | None = Depends(get_optional_current_discord_user_id),
+):
+    actor_user_id = resolve_actor_user_id(None, current_user_id)
+    return await create_action_from_case_service(
+        session=session,
+        server_id=server_id,
+        case_id=case_id,
+        body=body,
+        actor_user_id=actor_user_id,
     )

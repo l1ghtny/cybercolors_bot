@@ -3,6 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from api.models.moderation_cases import ModerationActorModel
+from src.db.models import CaseStatus
 
 
 class MonitoredUserCreateModel(BaseModel):
@@ -62,3 +63,30 @@ class MonitoredUserStatusEventReadModel(BaseModel):
     to_is_active: bool
     changed_at: datetime
     changed_by: ModerationActorModel
+
+
+class UserCaseSummaryModel(BaseModel):
+    id: str
+    title: str
+    status: CaseStatus
+    created_at: datetime
+
+
+class UserActionSummaryModel(BaseModel):
+    id: str
+    action_type: str
+    reason: str
+    created_at: datetime
+    moderator: ModerationActorModel
+
+
+class MonitoredUserDetailsModel(MonitoredUserReadModel):
+    related_cases: list[UserCaseSummaryModel] = Field(default_factory=list)
+    recent_actions: list[UserActionSummaryModel] = Field(default_factory=list)
+    comment_count: int = 0
+
+
+class MonitoredUserFromCaseModel(BaseModel):
+    user_id: str = Field(pattern=r"^\d+$")
+    reason: str | None = Field(default=None, max_length=5000)
+    added_by_user_id: str | None = Field(default=None, pattern=r"^\d*$")

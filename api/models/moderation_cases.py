@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator
 
-from src.db.models import CaseStatus, CaseUserRole, EvidenceType
+from src.db.models import ActionType, CaseStatus, CaseUserRole, EvidenceType
 
 
 class ModerationActorModel(BaseModel):
@@ -13,11 +13,31 @@ class ModerationActorModel(BaseModel):
     avatar_hash: str | None = None
 
 
+class ModerationRuleRef(BaseModel):
+    id: str | None = None
+    code: str | None = None
+    title: str
+    deleted: bool = False
+
+
+class ModerationActionSummaryModel(BaseModel):
+    id: str
+    action_type: str
+    target_user: "ModerationActorModel"
+    moderator: "ModerationActorModel"
+    reason: str
+    created_at: datetime
+    expires_at: datetime | None = None
+    is_active: bool
+
+
 class ModerationCaseCreateModel(BaseModel):
     target_user_id: str = Field(pattern=r"^\d+$")
     opened_by_user_id: str | None = Field(default=None, pattern=r"^\d*$")
     title: str = Field(min_length=1, max_length=300)
     summary: str | None = Field(default=None, max_length=5000)
+    rule_ids: list[str] = Field(default_factory=list)
+    users: list[str] = Field(default_factory=list)
 
     @field_validator("title")
     @classmethod
@@ -50,6 +70,8 @@ class ModerationCaseReadModel(BaseModel):
     opened_by: ModerationActorModel
     closed_by: ModerationActorModel | None = None
     users: list["ModerationCaseUserReadModel"] = Field(default_factory=list)
+    rules: list[ModerationRuleRef] = Field(default_factory=list)
+    linked_actions: list[ModerationActionSummaryModel] = Field(default_factory=list)
     linked_action_ids: list[str] = Field(default_factory=list)
 
 
@@ -128,6 +150,18 @@ class ModerationCaseActionLinkCreateModel(BaseModel):
     linked_by_user_id: str | None = Field(default=None, pattern=r"^\d*$")
 
 
+class ModerationCaseRulesUpsertModel(BaseModel):
+    rule_ids: list[str] = Field(default_factory=list)
+
+
+class ModerationCaseActionCreateFromCaseModel(BaseModel):
+    action_type: ActionType
+    reason: str | None = None
+    target_user_id: str | None = Field(default=None, pattern=r"^\d*$")
+    rule_ids: list[str] | None = None
+    expires_at: datetime | None = None
+
+
 class ModerationCaseUserAddModel(BaseModel):
     user_id: str = Field(pattern=r"^\d+$")
     role: CaseUserRole = CaseUserRole.RELATED
@@ -190,6 +224,10 @@ class ModerationCaseDetailsModel(BaseModel):
     notes: list[ModerationCaseNoteReadModel]
     evidence: list[ModerationCaseEvidenceReadModel]
     linked_actions: list[str]
+    linked_action_ids: list[str] = Field(default_factory=list)
+    linked_action_summaries: list[ModerationActionSummaryModel] = Field(default_factory=list)
 
 
+ModerationActionSummaryModel.model_rebuild()
 ModerationCaseReadModel.model_rebuild()
+ModerationCaseDetailsModel.model_rebuild()

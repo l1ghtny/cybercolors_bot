@@ -2,6 +2,9 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator
 
+from api.models.moderation_cases import ModerationActorModel
+from src.db.models import CaseStatus
+
 
 class ModerationRuleCreateModel(BaseModel):
     code: str | None = Field(default=None, max_length=32)
@@ -33,6 +36,8 @@ class ModerationRuleReadModel(BaseModel):
     created_by_user_id: str | None = None
     created_at: datetime
     updated_at: datetime
+    usage_count: int | None = None
+    last_cited_at: datetime | None = None
 
 
 class ModerationRuleImportTextModel(BaseModel):
@@ -79,3 +84,37 @@ class ModerationRuleParseGuideModel(BaseModel):
     title: str
     guidance: list[str]
     example: str
+
+
+class RuleUsageActionSummaryModel(BaseModel):
+    id: str
+    action_type: str
+    target_user: ModerationActorModel
+    moderator: ModerationActorModel
+    reason: str
+    created_at: datetime
+    expires_at: datetime | None = None
+    is_active: bool
+
+
+class RuleUsageCaseSummaryModel(BaseModel):
+    id: str
+    title: str
+    status: CaseStatus
+    created_at: datetime
+    target_user: ModerationActorModel
+
+
+class RuleUsageTopOffenderModel(BaseModel):
+    user: ModerationActorModel
+    action_count: int
+
+
+class ModerationRuleUsageModel(BaseModel):
+    rule: ModerationRuleReadModel
+    action_count: int
+    case_count: int
+    last_cited_at: datetime | None = None
+    recent_actions: list[RuleUsageActionSummaryModel] = Field(default_factory=list)
+    recent_cases: list[RuleUsageCaseSummaryModel] = Field(default_factory=list)
+    top_offenders: list[RuleUsageTopOffenderModel] = Field(default_factory=list)

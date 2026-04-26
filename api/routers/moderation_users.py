@@ -1,4 +1,5 @@
 from typing import List
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel import select
@@ -8,6 +9,8 @@ from api.dependencies.current_user import get_optional_current_discord_user_id, 
 from api.dependencies.server_access import require_server_dashboard_access
 from api.models.monitoring import (
     MonitoredUserCommentCreateModel,
+    MonitoredUserDetailsModel,
+    MonitoredUserFromCaseModel,
     MonitoredUserCommentReadModel,
     MonitoredUserCreateModel,
     MonitoredUserReadModel,
@@ -22,7 +25,9 @@ from api.models.user_profiles import (
     UserProfileCardModel,
 )
 from api.services.monitoring_service import (
+    add_monitored_user_from_case,
     add_monitored_user_comment,
+    get_monitored_user_details,
     list_monitored_users as list_monitored_users_service,
     list_monitored_user_comments,
     list_monitored_user_status_events,
@@ -166,6 +171,25 @@ async def get_monitored_users(
     return await list_monitored_users_service(session=session, server_id=server_id, active_only=active_only)
 
 
+@moderation_users_router.get(
+    "/users/{server_id}/monitored/{user_id}",
+    response_model=MonitoredUserDetailsModel,
+)
+async def get_monitored_user_details_by_id(
+    server_id: int,
+    user_id: int,
+    session: AsyncSession = Depends(get_session),
+):
+    try:
+        return await get_monitored_user_details(
+            session=session,
+            server_id=server_id,
+            user_id=user_id,
+        )
+    except LookupError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Monitored user not found")
+
+
 @moderation_users_router.post(
     "/users/{server_id}/monitored",
     response_model=MonitoredUserReadModel,
@@ -207,6 +231,29 @@ async def patch_monitored_user(
         )
     except LookupError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Monitored user not found")
+
+
+@moderation_users_router.post(
+    "/users/{server_id}/monitored/from-case/{case_id}",
+    response_model=MonitoredUserReadModel,
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_monitored_user_from_case_route(
+    server_id: int,
+    case_id: UUID,
+    body: MonitoredUserFromCaseModel,
+    session: AsyncSession = Depends(get_session),
+    current_user_id: int | None = Depends(get_optional_current_discord_user_id),
+):
+    added_by_user_id = resolve_actor_user_id(body.added_by_user_id, current_user_id)
+    return await add_monitored_user_from_case(
+        session=session,
+        server_id=server_id,
+        case_id=case_id,
+        user_id=int(body.user_id),
+        reason=body.reason,
+        added_by_user_id=added_by_user_id,
+    )
 
 
 @moderation_users_router.get(

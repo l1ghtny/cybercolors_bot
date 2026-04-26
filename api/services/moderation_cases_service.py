@@ -8,6 +8,7 @@ from sqlalchemy import or_
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from api.models.moderation_actions import ModerationActionCreate, ModerationActionRead
 from api.models.moderation_cases import (
     ModerationCaseCreateModel,
     ModerationCaseDetailsModel,
@@ -16,20 +17,36 @@ from api.models.moderation_cases import (
     ModerationCaseNoteCreateModel,
     ModerationCaseNoteReadModel,
     ModerationCaseReadModel,
+    ModerationCaseRulesUpsertModel,
+    ModerationCaseActionCreateFromCaseModel,
     ModerationCaseStatusUpdateModel,
     ModerationCaseUserReadModel,
 )
-from api.services.moderation_core import build_actor, get_case_or_404, naive_utcnow, to_case_read
+from api.services.moderation_actions_service import create_action
+from api.services.moderation_core import (
+    build_actor,
+    get_case_or_404,
+    get_system_actor,
+    naive_utcnow,
+    to_case_read,
+    to_moderation_history,
+)
 from src.db.models import (
     CaseStatus,
     CaseUserRole,
     ModerationAction,
+    ModerationActionRuleCitation,
     ModerationCase,
     ModerationCaseActionLink,
     ModerationCaseEvidence,
     ModerationCaseNote,
+    ModerationCaseRuleCitation,
     ModerationCaseUser,
+    MonitoredUser,
+    User,
     Server,
+    GlobalUser,
+    ModerationRule,
 )
 
 EVIDENCE_UPLOAD_ROOT = Path("logs") / "moderation_evidence"
@@ -40,6 +57,138 @@ def safe_upload_key(server_id: int, case_id: UUID, filename: str) -> str:
     if "." in filename:
         ext = "." + filename.rsplit(".", 1)[-1].lower()[:10]
     return f"{server_id}_{case_id}_{uuid4().hex}{ext}"
+
+
+def _parse_rule_ids(rule_ids: list[str]) -> list[UUID]:
+    parsed: list[UUID] = []
+    seen: set[UUID] = set()
+    for raw_rule_id in rule_ids:
+        if not raw_rule_id:
+            continue
+        try:
+            parsed_rule_id = UUID(str(raw_rule_id))
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid rule id: {raw_rule_id}",
+            )
+        if parsed_rule_id in seen:
+            continue
+        seen.add(parsed_rule_id)
+        parsed.append(parsed_rule_id)
+    return parsed
+
+
+async def _resolve_case_rules(
+    session: AsyncSession,
+    server_id: int,
+    rule_ids: list[UUID],
+) -> list[ModerationRule]:
+    if not rule_ids:
+        return []
+    rules = (
+        await session.exec(
+            select(ModerationRule).where(
+                ModerationRule.server_id == server_id,
+                ModerationRule.id.in_(rule_ids),
+                ModerationRule.is_active.is_(True),
+            )
+        )
+    ).all()
+    by_id = {rule.id: rule for rule in rules}
+    missing = [rule_id for rule_id in rule_ids if rule_id not in by_id]
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Moderation rule not found",
+        )
+    return [by_id[rule_id] for rule_id in rule_ids]
+
+
+async def _upsert_case_rule_citations(
+    session: AsyncSession,
+    moderation_case: ModerationCase,
+    rules: list[ModerationRule],
+    cited_at: datetime | None = None,
+) -> None:
+    if not rules:
+        return
+
+    existing = (
+        await session.exec(
+            select(ModerationCaseRuleCitation).where(
+                ModerationCaseRuleCitation.case_id == moderation_case.id,
+                ModerationCaseRuleCitation.rule_id.in_([rule.id for rule in rules]),
+            )
+        )
+    ).all()
+    existing_rule_ids = {item.rule_id for item in existing if item.rule_id is not None}
+    citation_time = cited_at or moderation_case.created_at
+
+    for rule in rules:
+        if rule.id in existing_rule_ids:
+            continue
+        session.add(
+            ModerationCaseRuleCitation(
+                case_id=moderation_case.id,
+                rule_id=rule.id,
+                server_id=moderation_case.server_id,
+                rule_code_snapshot=rule.code,
+                rule_title_snapshot=rule.title,
+                cited_at=citation_time,
+            )
+        )
+    await session.flush()
+
+
+async def _add_case_system_note_for_monitored_subjects(
+    session: AsyncSession,
+    moderation_case: ModerationCase,
+    subject_user_ids: set[int] | None = None,
+) -> None:
+    scoped_user_ids = subject_user_ids if subject_user_ids else {moderation_case.target_user_id}
+    monitored_subjects = (
+        await session.exec(
+            select(MonitoredUser, GlobalUser)
+            .join(GlobalUser, GlobalUser.discord_id == MonitoredUser.user_id)
+            .where(
+                MonitoredUser.server_id == moderation_case.server_id,
+                MonitoredUser.user_id.in_(list(scoped_user_ids)),
+                MonitoredUser.is_active.is_(True),
+            )
+            .order_by(MonitoredUser.created_at.asc())
+        )
+    ).all()
+    for monitored_user, global_user in monitored_subjects:
+        display_name = global_user.username or str(monitored_user.user_id)
+        reason = monitored_user.reason or "no reason given"
+        note_text = (
+            f"Subject {display_name} is on the watchlist since "
+            f"{monitored_user.created_at:%Y-%m-%d} - reason: {reason}"
+        )
+        session.add(
+            ModerationCaseNote(
+                case_id=moderation_case.id,
+                author_user_id=None,
+                note=note_text,
+                is_internal=True,
+            )
+        )
+    if monitored_subjects:
+        await session.flush()
+
+
+async def _list_case_rule_ids(session: AsyncSession, case_id: UUID) -> list[str]:
+    rows = (
+        await session.exec(
+            select(ModerationCaseRuleCitation.rule_id)
+            .where(
+                ModerationCaseRuleCitation.case_id == case_id,
+                ModerationCaseRuleCitation.rule_id.is_not(None),
+            )
+        )
+    ).all()
+    return [str(rule_id) for rule_id in rows if rule_id is not None]
 
 
 async def create_case(
@@ -74,6 +223,38 @@ async def create_case(
             added_by_user_id=opened_by_user_id,
         )
     )
+
+    additional_user_ids: set[int] = set()
+    for raw_user_id in body.users:
+        if raw_user_id and raw_user_id.isdigit():
+            parsed_user_id = int(raw_user_id)
+            if parsed_user_id != target_user_id:
+                additional_user_ids.add(parsed_user_id)
+    for related_user_id in additional_user_ids:
+        await build_actor(session, server_id, related_user_id)
+        session.add(
+            ModerationCaseUser(
+                case_id=moderation_case.id,
+                user_id=related_user_id,
+                role=CaseUserRole.RELATED,
+                added_by_user_id=opened_by_user_id,
+            )
+        )
+
+    parsed_rule_ids = _parse_rule_ids(body.rule_ids or [])
+    resolved_rules = await _resolve_case_rules(session=session, server_id=server_id, rule_ids=parsed_rule_ids)
+    await _upsert_case_rule_citations(
+        session=session,
+        moderation_case=moderation_case,
+        rules=resolved_rules,
+    )
+
+    await _add_case_system_note_for_monitored_subjects(
+        session=session,
+        moderation_case=moderation_case,
+        subject_user_ids={target_user_id, *additional_user_ids},
+    )
+
     await session.flush()
     await session.refresh(moderation_case)
     return await to_case_read(moderation_case, session)
@@ -124,7 +305,11 @@ async def get_case_details(
     ).all()
     note_rows: list[ModerationCaseNoteReadModel] = []
     for note in notes:
-        author = await build_actor(session, server_id, note.author_user_id)
+        author = (
+            await build_actor(session, server_id, note.author_user_id)
+            if note.author_user_id is not None
+            else get_system_actor()
+        )
         note_rows.append(
             ModerationCaseNoteReadModel(
                 id=str(note.id),
@@ -164,6 +349,8 @@ async def get_case_details(
         notes=note_rows,
         evidence=evidence_rows,
         linked_actions=case_data.linked_action_ids,
+        linked_action_ids=case_data.linked_action_ids,
+        linked_action_summaries=case_data.linked_actions,
     )
 
 
@@ -376,6 +563,13 @@ async def link_action_to_case(
     if not action or action.server_id != server_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Moderation action not found")
 
+    if action.case_id is None:
+        action.case_id = case_id
+        session.add(action)
+    elif action.case_id != case_id:
+        # Keep existing canonical link and persist this one as secondary.
+        pass
+
     existing_link = (
         await session.exec(
             select(ModerationCaseActionLink).where(
@@ -394,8 +588,149 @@ async def link_action_to_case(
         )
         await session.flush()
 
+    action_rule_ids = (
+        await session.exec(
+            select(ModerationActionRuleCitation.rule_id).where(
+                ModerationActionRuleCitation.action_id == action_id,
+                ModerationActionRuleCitation.rule_id.is_not(None),
+            )
+        )
+    ).all()
+    parsed_action_rule_ids = [rule_id for rule_id in action_rule_ids if rule_id is not None]
+    if not parsed_action_rule_ids and action.rule_id is not None:
+        parsed_action_rule_ids = [action.rule_id]
+    if parsed_action_rule_ids:
+        resolved_rules = await _resolve_case_rules(
+            session=session,
+            server_id=server_id,
+            rule_ids=list(dict.fromkeys(parsed_action_rule_ids)),
+        )
+        await _upsert_case_rule_citations(
+            session=session,
+            moderation_case=moderation_case,
+            rules=resolved_rules,
+            cited_at=naive_utcnow(),
+        )
+
     await session.refresh(moderation_case)
     return await to_case_read(moderation_case, session)
+
+
+async def upsert_case_rules(
+    session: AsyncSession,
+    server_id: int,
+    case_id: UUID,
+    body: ModerationCaseRulesUpsertModel,
+) -> ModerationCaseReadModel:
+    moderation_case = await get_case_or_404(server_id, case_id, session)
+    parsed_rule_ids = _parse_rule_ids(body.rule_ids or [])
+    rules = await _resolve_case_rules(session=session, server_id=server_id, rule_ids=parsed_rule_ids)
+    await _upsert_case_rule_citations(
+        session=session,
+        moderation_case=moderation_case,
+        rules=rules,
+        cited_at=naive_utcnow(),
+    )
+    await session.refresh(moderation_case)
+    return await to_case_read(moderation_case, session)
+
+
+async def remove_case_rule(
+    session: AsyncSession,
+    server_id: int,
+    case_id: UUID,
+    rule_id: UUID,
+) -> ModerationCaseReadModel:
+    moderation_case = await get_case_or_404(server_id, case_id, session)
+    citation = (
+        await session.exec(
+            select(ModerationCaseRuleCitation).where(
+                ModerationCaseRuleCitation.case_id == case_id,
+                ModerationCaseRuleCitation.rule_id == rule_id,
+            )
+        )
+    ).first()
+    if not citation:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case rule citation not found")
+    await session.delete(citation)
+    await session.flush()
+    await session.refresh(moderation_case)
+    return await to_case_read(moderation_case, session)
+
+
+async def create_action_from_case(
+    session: AsyncSession,
+    server_id: int,
+    case_id: UUID,
+    body: ModerationCaseActionCreateFromCaseModel,
+    actor_user_id: int,
+) -> ModerationActionRead:
+    moderation_case = await get_case_or_404(server_id, case_id, session)
+    await build_actor(session, server_id, actor_user_id, require_membership=True)
+
+    target_user_id = int(body.target_user_id) if body.target_user_id and body.target_user_id.isdigit() else moderation_case.target_user_id
+    case_users = (
+        await session.exec(
+            select(ModerationCaseUser.user_id).where(ModerationCaseUser.case_id == case_id)
+        )
+    ).all()
+    allowed_targets = {moderation_case.target_user_id, *[int(item) for item in case_users]}
+    if target_user_id not in allowed_targets:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="target_user_id must belong to case users",
+        )
+
+    target_global_user = await session.get(GlobalUser, target_user_id)
+    target_membership = (
+        await session.exec(
+            select(User).where(
+                User.server_id == server_id,
+                User.user_id == target_user_id,
+            )
+        )
+    ).first()
+    if not target_global_user or not target_membership:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target user not found")
+
+    server = await session.get(Server, server_id)
+    if not server:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Server not found")
+
+    case_rule_ids = await _list_case_rule_ids(session=session, case_id=case_id)
+    resolved_rule_ids = body.rule_ids if body.rule_ids is not None else case_rule_ids
+
+    action_payload = ModerationActionCreate(
+        action_type=body.action_type,
+        moderator_user_id=actor_user_id,
+        reason=body.reason or moderation_case.title,
+        rule_ids=resolved_rule_ids,
+        expires_at=body.expires_at,
+        target_user_id=target_user_id,
+        target_user_name=target_global_user.username or str(target_user_id),
+        target_user_joined_at=target_global_user.joined_discord or moderation_case.created_at,
+        target_user_server_nickname=target_membership.server_nickname,
+        server_id=server_id,
+        server_name=server.server_name or str(server_id),
+    )
+    created_action = await create_action(
+        session=session,
+        action=action_payload,
+        moderator_user_id=actor_user_id,
+        case_id=case_id,
+    )
+
+    session.add(
+        ModerationCaseNote(
+            case_id=case_id,
+            author_user_id=None,
+            note=f"System linked action {created_action.id} to this case.",
+            is_internal=True,
+        )
+    )
+    await session.flush()
+
+    return to_moderation_history([created_action])[0]
 
 
 def store_evidence_blob(
