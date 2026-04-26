@@ -1,13 +1,21 @@
 ﻿import logging
 import os
+from dataclasses import dataclass
+from time import monotonic
 from typing import Annotated
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import APIRouter, HTTPException, Request, Header
+from fastapi import APIRouter, HTTPException, Header, Query
 from fastapi import Depends
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from api.models.auth import (
+    AuthGuildModel,
+    AuthLoginRequestModel,
+    AuthLoginResponseModel,
+    AuthUserModel,
+)
 from api.services.dashboard_access_service import load_dashboard_access_maps
 from src.db.database import get_session
 from src.db.models import GlobalUser
@@ -27,6 +35,27 @@ DISCORD_TEST_CLIENT_ID = os.getenv("DISCORD_TEST_CLIENT_ID")
 DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET")
 DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI")
 DISCORD_API_BASE_URL = "https://discord.com/api/v10"
+AUTH_GUILDS_CACHE_TTL_SECONDS = int(os.getenv("AUTH_GUILDS_CACHE_TTL_SECONDS", "120"))
+AUTH_GUILDS_CACHE_MAX_ENTRIES = int(os.getenv("AUTH_GUILDS_CACHE_MAX_ENTRIES", "1000"))
+BOT_GUILDS_CACHE_TTL_SECONDS = int(os.getenv("BOT_GUILDS_CACHE_TTL_SECONDS", "120"))
+
+
+@dataclass
+class _UserGuildsCacheEntry:
+    payload: list[dict]
+    expires_at: float
+
+
+_user_guilds_cache: dict[int, _UserGuildsCacheEntry] = {}
+
+
+@dataclass
+class _BotGuildsCacheEntry:
+    guild_ids: set[int]
+    expires_at: float
+
+
+_bot_guilds_cache: _BotGuildsCacheEntry | None = None
 
 
 def _get_bot_token_for_auth() -> str:
@@ -36,13 +65,136 @@ def _get_bot_token_for_auth() -> str:
     return token
 
 
-@auth.post("/login")
-async def login(request: Request, session: AsyncSession = Depends(get_session)):
+def _get_cached_user_guilds(user_id: int, refresh: bool) -> list[dict] | None:
+    if refresh or AUTH_GUILDS_CACHE_TTL_SECONDS <= 0:
+        return None
+
+    cached = _user_guilds_cache.get(user_id)
+    if not cached:
+        return None
+
+    if cached.expires_at <= monotonic():
+        _user_guilds_cache.pop(user_id, None)
+        return None
+
+    # Return a shallow copy so downstream code doesn't mutate shared cache state.
+    return [dict(item) for item in cached.payload]
+
+
+def _store_cached_user_guilds(user_id: int, payload: list[dict]) -> None:
+    if AUTH_GUILDS_CACHE_TTL_SECONDS <= 0:
+        return
+
+    now = monotonic()
+    expired_user_ids = [
+        cached_user_id
+        for cached_user_id, cached_value in _user_guilds_cache.items()
+        if cached_value.expires_at <= now
+    ]
+    for expired_user_id in expired_user_ids:
+        _user_guilds_cache.pop(expired_user_id, None)
+
+    if len(_user_guilds_cache) >= AUTH_GUILDS_CACHE_MAX_ENTRIES:
+        _user_guilds_cache.clear()
+
+    _user_guilds_cache[user_id] = _UserGuildsCacheEntry(
+        payload=[dict(item) for item in payload],
+        expires_at=now + AUTH_GUILDS_CACHE_TTL_SECONDS,
+    )
+
+
+def _get_cached_bot_guild_ids(refresh: bool) -> set[int] | None:
+    if refresh or BOT_GUILDS_CACHE_TTL_SECONDS <= 0:
+        return None
+    if _bot_guilds_cache is None:
+        return None
+    if _bot_guilds_cache.expires_at <= monotonic():
+        return None
+    return set(_bot_guilds_cache.guild_ids)
+
+
+def _store_cached_bot_guild_ids(guild_ids: set[int]) -> None:
+    global _bot_guilds_cache
+    if BOT_GUILDS_CACHE_TTL_SECONDS <= 0:
+        return
+    _bot_guilds_cache = _BotGuildsCacheEntry(
+        guild_ids=set(guild_ids),
+        expires_at=monotonic() + BOT_GUILDS_CACHE_TTL_SECONDS,
+    )
+
+
+async def _fetch_bot_guild_ids(client: httpx.AsyncClient, bot_headers: dict[str, str]) -> set[int]:
+    guild_ids: set[int] = set()
+    after: str | None = None
+    seen_cursors: set[str] = set()
+
+    while True:
+        params: dict[str, str | int] = {"limit": 200}
+        if after is not None:
+            params["after"] = after
+
+        response = await client.get(
+            f"{DISCORD_API_BASE_URL}/users/@me/guilds",
+            headers=bot_headers,
+            params=params,
+        )
+        if response.status_code >= 400:
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=f"Error fetching bot guilds from Discord: {response.text}",
+            )
+
+        payload = response.json()
+        if not isinstance(payload, list) or not payload:
+            break
+
+        page_ids = [int(g["id"]) for g in payload if str(g.get("id", "")).isdigit()]
+        guild_ids.update(page_ids)
+
+        if len(payload) < 200 or not page_ids:
+            break
+
+        next_after = str(max(page_ids))
+        if next_after in seen_cursors:
+            break
+        seen_cursors.add(next_after)
+        after = next_after
+
+    return guild_ids
+
+
+async def _get_bot_guild_ids(
+    client: httpx.AsyncClient,
+    bot_headers: dict[str, str],
+    refresh: bool,
+) -> set[int]:
+    cached = _get_cached_bot_guild_ids(refresh=refresh)
+    if cached is not None:
+        return cached
+    guild_ids = await _fetch_bot_guild_ids(client=client, bot_headers=bot_headers)
+    _store_cached_bot_guild_ids(guild_ids)
+    return guild_ids
+
+
+def _to_auth_guild_payload(guild: dict) -> dict:
+    payload = dict(guild)
+    payload["id"] = str(guild.get("id", ""))
+    payload["name"] = str(guild.get("name", ""))
+    payload["icon"] = guild.get("icon")
+    payload["owner"] = bool(guild.get("owner", False))
+    permissions = guild.get("permissions", "0")
+    payload["permissions"] = str(permissions) if permissions is not None else "0"
+    payload["bot_present"] = True
+    payload["dashboard_access"] = True
+    return payload
+
+
+@auth.post("/login", response_model=AuthLoginResponseModel)
+async def login(body: AuthLoginRequestModel, session: AsyncSession = Depends(get_session)):
     try:
-        body = await request.json()
-        code = body.get("code")
+        code = body.code
         # Get the redirect URI from the frontend request
-        client_redirect_uri = body.get("redirect_uri")
+        client_redirect_uri = body.redirect_uri
 
         if not code:
             raise HTTPException(status_code=400, detail="Authorization code is required.")
@@ -89,13 +241,14 @@ async def login(request: Request, session: AsyncSession = Depends(get_session)):
             # The session will be committed automatically by the dependency
 
         # --- 4. Return the access token and user info to the frontend ---
-        user_dump = db_user.model_dump()
-        user_dump['discord_id'] = str(user_dump["discord_id"])
-
-
+        user_payload = AuthUserModel(
+            discord_id=str(db_user.discord_id),
+            username=db_user.username,
+            avatar_hash=db_user.avatar_hash,
+        )
         return {
             "message": "Login successful",
-            "user": user_dump,
+            "user": user_payload,
             "access_token": access_token,
             "token_type": "Bearer"
         }
@@ -111,14 +264,17 @@ async def login(request: Request, session: AsyncSession = Depends(get_session)):
         raise HTTPException(status_code=500, detail=f"An internal server error occurred: {str(e)}")
 
 
-@auth.get("/guilds")
+@auth.get("/guilds", response_model=list[AuthGuildModel])
 async def get_user_guilds(
     authorization: Annotated[str | None, Header()] = None,
     session: AsyncSession = Depends(get_session),
+    refresh: bool = Query(default=False),
 ):
     """
     Fetches the guilds for the authenticated user from Discord and filters them.
-    Returns only guilds where the user is an owner or has administrator permissions.
+    Returns only guilds where:
+    - the bot is currently present;
+    - and the user is owner/admin or explicitly allowlisted for dashboard access.
     """
     if not authorization:
         raise HTTPException(status_code=401, detail="Authorization header missing")
@@ -137,21 +293,56 @@ async def get_user_guilds(
             me_json = me_res.json()
             current_user_id = int(me_json["id"])
 
+            cached_payload = _get_cached_user_guilds(current_user_id, refresh=refresh)
+            if cached_payload is not None:
+                return cached_payload
+
+            bot_guild_ids = await _get_bot_guild_ids(client=client, bot_headers=bot_headers, refresh=refresh)
             guilds_res = await client.get(f"{DISCORD_API_BASE_URL}/users/@me/guilds", headers=headers)
             guilds_res.raise_for_status()
             guilds_json = guilds_res.json()
-            guild_ids = [int(guild["id"]) for guild in guilds_json if str(guild.get("id", "")).isdigit()]
-            access_users_map, access_roles_map = await load_dashboard_access_maps(session, guild_ids)
 
             # The permissions integer is a bitfield. 8 is the administrator flag.
             ADMINISTRATOR_FLAG = 1 << 3
 
-            authorized_guilds: list[dict] = []
+            authorized_guild_ids: set[int] = set()
+            candidate_guilds: list[dict] = []
+            candidate_guild_ids: list[int] = []
             for guild in guilds_json:
-                guild_id = int(guild["id"])
+                raw_guild_id = guild.get("id")
+                if not str(raw_guild_id).isdigit():
+                    continue
+                guild_id = int(raw_guild_id)
+                if guild_id not in bot_guild_ids:
+                    logger.info(
+                        'Skipping guild "%s" (%s): bot not present',
+                        guild.get("name", "unknown"),
+                        guild_id,
+                    )
+                    continue
                 is_owner = bool(guild.get("owner"))
                 permissions = int(guild.get("permissions", 0))
                 is_admin = bool(permissions & ADMINISTRATOR_FLAG)
+
+                if is_owner or is_admin:
+                    authorized_guild_ids.add(guild_id)
+                    continue
+
+                candidate_guilds.append(guild)
+                candidate_guild_ids.append(guild_id)
+
+            access_users_map, access_roles_map = await load_dashboard_access_maps(session, candidate_guild_ids)
+
+            for guild in candidate_guilds:
+                guild_id = int(guild["id"])
+                allowed_users = access_users_map.get(guild_id, set())
+                if current_user_id in allowed_users:
+                    authorized_guild_ids.add(guild_id)
+                    continue
+
+                allowed_roles = access_roles_map.get(guild_id, set())
+                if not allowed_roles:
+                    continue
 
                 member_res = await client.get(
                     f"{DISCORD_API_BASE_URL}/guilds/{guild_id}/members/{current_user_id}",
@@ -169,13 +360,16 @@ async def get_user_guilds(
                 member_role_ids = {
                     int(role_id) for role_id in member_json.get("roles", []) if str(role_id).isdigit()
                 }
-                allowed_users = access_users_map.get(guild_id, set())
-                allowed_roles = access_roles_map.get(guild_id, set())
-                allowlisted = (current_user_id in allowed_users) or bool(member_role_ids.intersection(allowed_roles))
+                if member_role_ids.intersection(allowed_roles):
+                    authorized_guild_ids.add(guild_id)
 
-                if is_owner or is_admin or allowlisted:
-                    authorized_guilds.append(guild)
+            authorized_guilds = [
+                _to_auth_guild_payload(guild)
+                for guild in guilds_json
+                if str(guild.get("id", "")).isdigit() and int(guild["id"]) in authorized_guild_ids
+            ]
 
+            _store_cached_user_guilds(current_user_id, authorized_guilds)
             return authorized_guilds
 
         except httpx.HTTPStatusError as e:

@@ -17,12 +17,12 @@ from api.services.moderation_queries import query_moderation_actions
 from src.db.models import (
     CaseStatus,
     GlobalUser,
+    MessageLog,
     ModerationAction,
     ModerationCase,
     ModerationCaseUser,
     Server,
     User,
-    UserActivity,
 )
 
 
@@ -52,16 +52,39 @@ async def build_user_profile_card(
     membership = (await session.exec(select(User).where(User.server_id == server_id, User.user_id == user_id))).first()
     display_name = membership.server_nickname if membership and membership.server_nickname else (global_user.username or str(user_id))
 
-    activity = await session.get(UserActivity, (user_id, server_id))
+    activity_totals = (
+        await session.exec(
+            select(
+                func.count().label("message_count"),
+                func.max(MessageLog.created_at).label("last_message_at"),
+            ).where(
+                MessageLog.server_id == server_id,
+                MessageLog.user_id == user_id,
+            )
+        )
+    ).one()
+    activity_message_count = int(activity_totals[0] or 0)
+    activity_last_message_at = activity_totals[1]
+    latest_channel_id = (
+        await session.exec(
+            select(MessageLog.channel_id)
+            .where(
+                MessageLog.server_id == server_id,
+                MessageLog.user_id == user_id,
+            )
+            .order_by(MessageLog.created_at.desc(), MessageLog.message_id.desc())
+            .limit(1)
+        )
+    ).first()
     activity_payload = (
         UserActivitySummaryModel(
-            user_id=str(activity.user_id),
-            server_id=str(activity.server_id),
-            channel_id=str(activity.channel_id),
-            message_count=activity.message_count,
-            last_message_at=activity.last_message_at,
+            user_id=str(user_id),
+            server_id=str(server_id),
+            channel_id=str(latest_channel_id) if latest_channel_id is not None else None,
+            message_count=activity_message_count,
+            last_message_at=activity_last_message_at,
         )
-        if activity
+        if activity_message_count > 0
         else None
     )
 

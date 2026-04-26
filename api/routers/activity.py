@@ -1,4 +1,8 @@
 from datetime import date, datetime, time, timedelta, timezone
+import logging
+import os
+from dataclasses import dataclass
+from time import monotonic
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func
@@ -11,10 +15,22 @@ from api.models.user_profiles import (
     UserActivitySummaryModel,
     UserActivityUpsertModel,
 )
+from api.services.discord_guilds import TEXT_CHANNEL_TYPES, fetch_guild_channels
 from src.db.database import get_session
 from src.db.models import GlobalUser, MessageLog, Server, User, UserActivity
 
 activity = APIRouter(prefix="/activity", tags=["activity"])
+logger = logging.getLogger("uvicorn")
+ACTIVITY_CHANNEL_CACHE_TTL_SECONDS = int(os.getenv("ACTIVITY_CHANNEL_CACHE_TTL_SECONDS", "120"))
+
+
+@dataclass
+class _ActivityChannelCacheEntry:
+    channel_ids: set[int]
+    expires_at: float
+
+
+_activity_channels_cache: dict[int, _ActivityChannelCacheEntry] = {}
 
 
 def _naive_utcnow() -> datetime:
@@ -27,6 +43,51 @@ def _as_naive_utc(value: datetime | None) -> datetime | None:
     if value.tzinfo is not None:
         return value.astimezone(timezone.utc).replace(tzinfo=None)
     return value
+
+
+def _get_cached_activity_channel_ids(server_id: int) -> set[int] | None:
+    if ACTIVITY_CHANNEL_CACHE_TTL_SECONDS <= 0:
+        return None
+    cached = _activity_channels_cache.get(server_id)
+    if not cached:
+        return None
+    if cached.expires_at <= monotonic():
+        _activity_channels_cache.pop(server_id, None)
+        return None
+    return set(cached.channel_ids)
+
+
+def _store_cached_activity_channel_ids(server_id: int, channel_ids: set[int]) -> None:
+    if ACTIVITY_CHANNEL_CACHE_TTL_SECONDS <= 0:
+        return
+    _activity_channels_cache[server_id] = _ActivityChannelCacheEntry(
+        channel_ids=set(channel_ids),
+        expires_at=monotonic() + ACTIVITY_CHANNEL_CACHE_TTL_SECONDS,
+    )
+
+
+async def _get_server_rendered_text_channel_ids(server_id: int, refresh: bool = False) -> set[int] | None:
+    cached = None if refresh else _get_cached_activity_channel_ids(server_id)
+    if cached is not None:
+        return cached
+
+    try:
+        channels = await fetch_guild_channels(server_id)
+    except Exception as exc:
+        logger.warning(
+            "Failed to fetch server channels for activity filtering (server_id=%s): %s",
+            server_id,
+            exc,
+        )
+        return None
+
+    channel_ids = {
+        int(channel["id"])
+        for channel in channels
+        if str(channel.get("id", "")).isdigit() and int(channel.get("type", -1)) in TEXT_CHANNEL_TYPES
+    }
+    _store_cached_activity_channel_ids(server_id, channel_ids)
+    return channel_ids
 
 
 def _resolve_period_bounds(
@@ -55,6 +116,7 @@ def _build_activity_filters(
     user_id: int | None = None,
     period_start: datetime | None = None,
     period_end_exclusive: datetime | None = None,
+    channel_ids: set[int] | None = None,
 ) -> list:
     conditions = [MessageLog.server_id == server_id]
     if user_id is not None:
@@ -63,6 +125,8 @@ def _build_activity_filters(
         conditions.append(MessageLog.created_at >= period_start)
     if period_end_exclusive is not None:
         conditions.append(MessageLog.created_at < period_end_exclusive)
+    if channel_ids is not None:
+        conditions.append(MessageLog.channel_id.in_(channel_ids))
     return conditions
 
 
@@ -131,12 +195,16 @@ async def _fetch_user_channel_counts(
     user_id: int,
     period_start: datetime | None,
     period_end_exclusive: datetime | None,
+    channel_ids: set[int] | None = None,
 ) -> list[tuple[int, int]]:
+    if channel_ids is not None and not channel_ids:
+        return []
     conditions = _build_activity_filters(
         server_id=server_id,
         user_id=user_id,
         period_start=period_start,
         period_end_exclusive=period_end_exclusive,
+        channel_ids=channel_ids,
     )
     rows = (
         await session.exec(
@@ -158,12 +226,16 @@ async def _fetch_user_last_message_metadata(
     user_id: int,
     period_start: datetime | None,
     period_end_exclusive: datetime | None,
+    channel_ids: set[int] | None = None,
 ) -> tuple[int | None, datetime | None]:
+    if channel_ids is not None and not channel_ids:
+        return None, None
     conditions = _build_activity_filters(
         server_id=server_id,
         user_id=user_id,
         period_start=period_start,
         period_end_exclusive=period_end_exclusive,
+        channel_ids=channel_ids,
     )
     row = (
         await session.exec(
@@ -229,12 +301,14 @@ async def get_user_activity(
     date_from: date | None = Query(default=None, description="Inclusive UTC date (YYYY-MM-DD)."),
     date_to: date | None = Query(default=None, description="Inclusive UTC date (YYYY-MM-DD)."),
     channels_limit: int = Query(default=20, ge=1, le=100, description="Max channels to include in breakdown."),
+    refresh_channels: bool = Query(default=False, description="Bypass server channel cache for this request."),
     session: AsyncSession = Depends(get_session),
 ):
     period_start, period_end_exclusive, period_start_out, period_end_out = _resolve_period_bounds(
         date_from,
         date_to,
     )
+    active_channel_ids = await _get_server_rendered_text_channel_ids(server_id, refresh=refresh_channels)
 
     # Date-filtered activity is computed from raw message logs.
     if period_start is not None or period_end_exclusive is not None:
@@ -244,6 +318,7 @@ async def get_user_activity(
             user_id=user_id,
             period_start=period_start,
             period_end_exclusive=period_end_exclusive,
+            channel_ids=active_channel_ids,
         )
         latest_channel_id, latest_message_at = await _fetch_user_last_message_metadata(
             session=session,
@@ -251,6 +326,7 @@ async def get_user_activity(
             user_id=user_id,
             period_start=period_start,
             period_end_exclusive=period_end_exclusive,
+            channel_ids=active_channel_ids,
         )
         channels = [
             UserActivityChannelCountModel(channel_id=str(channel_id), message_count=message_count)
@@ -267,16 +343,16 @@ async def get_user_activity(
             period_end=period_end_out,
         )
 
-    activity_row = await session.get(UserActivity, (user_id, server_id))
     channel_rows = await _fetch_user_channel_counts(
         session=session,
         server_id=server_id,
         user_id=user_id,
         period_start=None,
         period_end_exclusive=None,
+        channel_ids=active_channel_ids,
     )
 
-    if not activity_row and not channel_rows:
+    if not channel_rows:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Activity not found")
 
     latest_channel_id, latest_message_at = await _fetch_user_last_message_metadata(
@@ -285,6 +361,7 @@ async def get_user_activity(
         user_id=user_id,
         period_start=None,
         period_end_exclusive=None,
+        channel_ids=active_channel_ids,
     )
 
     channels = [
@@ -295,21 +372,9 @@ async def get_user_activity(
     return UserActivitySummaryModel(
         user_id=str(user_id),
         server_id=str(server_id),
-        message_count=(
-            sum(message_count for _, message_count in channel_rows)
-            if channel_rows
-            else activity_row.message_count
-        ),
-        last_message_at=(
-            latest_message_at
-            if latest_message_at is not None
-            else activity_row.last_message_at
-        ),
-        channel_id=(
-            str(latest_channel_id)
-            if latest_channel_id is not None
-            else str(activity_row.channel_id)
-        ),
+        message_count=sum(message_count for _, message_count in channel_rows),
+        last_message_at=latest_message_at,
+        channel_id=str(latest_channel_id) if latest_channel_id is not None else None,
         channels=channels,
     )
 
@@ -321,16 +386,22 @@ async def get_server_activity_leaderboard(
     date_from: date | None = Query(default=None, description="Inclusive UTC date (YYYY-MM-DD)."),
     date_to: date | None = Query(default=None, description="Inclusive UTC date (YYYY-MM-DD)."),
     channels_limit: int = Query(default=5, ge=1, le=20, description="Max channels per user in breakdown."),
+    refresh_channels: bool = Query(default=False, description="Bypass server channel cache for this request."),
     session: AsyncSession = Depends(get_session),
 ):
     period_start, period_end_exclusive, period_start_out, period_end_out = _resolve_period_bounds(
         date_from,
         date_to,
     )
+    active_channel_ids = await _get_server_rendered_text_channel_ids(server_id, refresh=refresh_channels)
+    if active_channel_ids is not None and not active_channel_ids:
+        return []
+
     conditions = _build_activity_filters(
         server_id=server_id,
         period_start=period_start,
         period_end_exclusive=period_end_exclusive,
+        channel_ids=active_channel_ids,
     )
 
     leaderboard_rows = (
