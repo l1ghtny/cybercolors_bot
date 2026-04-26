@@ -1,4 +1,9 @@
+import asyncio
 from collections import defaultdict
+from dataclasses import dataclass
+import logging
+import os
+from time import monotonic
 
 import httpx
 from fastapi import HTTPException, status
@@ -14,6 +19,48 @@ from api.models.dashboard_access import (
 from api.services.discord_guilds import fetch_guild_member, fetch_guild_metadata, fetch_guild_roles
 from api.services.moderation_core import build_optional_actor
 from src.db.models import DashboardAccessRole, DashboardAccessUser, GlobalUser, Server
+
+logger = logging.getLogger("api.dashboard_access")
+DASHBOARD_ACCESS_USER_GUILDS_CACHE_TTL_SECONDS = int(os.getenv("DASHBOARD_ACCESS_USER_GUILDS_CACHE_TTL_SECONDS", "90"))
+DASHBOARD_ACCESS_MEMBER_ROLES_CACHE_TTL_SECONDS = int(os.getenv("DASHBOARD_ACCESS_MEMBER_ROLES_CACHE_TTL_SECONDS", "60"))
+
+
+@dataclass
+class _UserGuildsCacheEntry:
+    payload_by_server_id: dict[int, dict]
+    expires_at: float
+
+
+@dataclass
+class _MemberRolesCacheEntry:
+    role_ids: set[int]
+    expires_at: float
+
+
+_user_guild_payload_cache: dict[str, _UserGuildsCacheEntry] = {}
+_member_roles_cache: dict[tuple[int, int], _MemberRolesCacheEntry] = {}
+_user_guild_payload_locks: dict[str, asyncio.Lock] = {}
+_member_roles_locks: dict[tuple[int, int], asyncio.Lock] = {}
+_dashboard_access_locks_guard = asyncio.Lock()
+
+
+async def _get_user_guild_payload_lock(access_token: str) -> asyncio.Lock:
+    async with _dashboard_access_locks_guard:
+        lock = _user_guild_payload_locks.get(access_token)
+        if lock is None:
+            lock = asyncio.Lock()
+            _user_guild_payload_locks[access_token] = lock
+        return lock
+
+
+async def _get_member_roles_lock(server_id: int, user_id: int) -> asyncio.Lock:
+    key = (server_id, user_id)
+    async with _dashboard_access_locks_guard:
+        lock = _member_roles_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            _member_roles_locks[key] = lock
+        return lock
 
 
 async def assert_server_owner(server_id: int, caller_user_id: int) -> None:
@@ -227,19 +274,109 @@ def _extract_access_token(authorization: str | None) -> str:
     return access_token
 
 
+def _parse_guild_id(payload: dict) -> int | None:
+    raw_id = payload.get("id")
+    if raw_id is None or not str(raw_id).isdigit():
+        return None
+    return int(raw_id)
+
+
+def _get_cached_user_guild_payload(access_token: str, server_id: int) -> dict | None:
+    if DASHBOARD_ACCESS_USER_GUILDS_CACHE_TTL_SECONDS <= 0:
+        return None
+    cached = _user_guild_payload_cache.get(access_token)
+    if not cached:
+        return None
+    if cached.expires_at <= monotonic():
+        _user_guild_payload_cache.pop(access_token, None)
+        return None
+    payload = cached.payload_by_server_id.get(server_id)
+    if payload is None:
+        return None
+    return dict(payload)
+
+
+def _store_cached_user_guild_payloads(access_token: str, guilds: list[dict]) -> None:
+    if DASHBOARD_ACCESS_USER_GUILDS_CACHE_TTL_SECONDS <= 0:
+        return
+    payload_by_server_id: dict[int, dict] = {}
+    for payload in guilds:
+        guild_id = _parse_guild_id(payload)
+        if guild_id is None:
+            continue
+        payload_by_server_id[guild_id] = dict(payload)
+    _user_guild_payload_cache[access_token] = _UserGuildsCacheEntry(
+        payload_by_server_id=payload_by_server_id,
+        expires_at=monotonic() + DASHBOARD_ACCESS_USER_GUILDS_CACHE_TTL_SECONDS,
+    )
+
+
+def _get_cached_member_role_ids(server_id: int, user_id: int) -> set[int] | None:
+    if DASHBOARD_ACCESS_MEMBER_ROLES_CACHE_TTL_SECONDS <= 0:
+        return None
+    cached = _member_roles_cache.get((server_id, user_id))
+    if not cached:
+        return None
+    if cached.expires_at <= monotonic():
+        _member_roles_cache.pop((server_id, user_id), None)
+        return None
+    return set(cached.role_ids)
+
+
+def _store_cached_member_role_ids(server_id: int, user_id: int, role_ids: set[int]) -> None:
+    if DASHBOARD_ACCESS_MEMBER_ROLES_CACHE_TTL_SECONDS <= 0:
+        return
+    _member_roles_cache[(server_id, user_id)] = _MemberRolesCacheEntry(
+        role_ids=set(role_ids),
+        expires_at=monotonic() + DASHBOARD_ACCESS_MEMBER_ROLES_CACHE_TTL_SECONDS,
+    )
+
+
 async def _get_user_guild_payload(authorization: str | None, server_id: int) -> dict:
     access_token = _extract_access_token(authorization)
-    headers = {"Authorization": f"Bearer {access_token}"}
+    cached_payload = _get_cached_user_guild_payload(access_token, server_id)
+    if cached_payload is not None:
+        return cached_payload
 
-    async with httpx.AsyncClient() as client:
-        guilds_response = await client.get(f"{DISCORD_API_BASE_URL}/users/@me/guilds", headers=headers)
-    if guilds_response.status_code >= 400:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired access token")
+    payload_lock = await _get_user_guild_payload_lock(access_token)
+    async with payload_lock:
+        cached_payload = _get_cached_user_guild_payload(access_token, server_id)
+        if cached_payload is not None:
+            return cached_payload
 
-    guilds = guilds_response.json()
+        headers = {"Authorization": f"Bearer {access_token}"}
+
+        async with httpx.AsyncClient() as client:
+            guilds_response = await client.get(f"{DISCORD_API_BASE_URL}/users/@me/guilds", headers=headers)
+        if guilds_response.status_code == status.HTTP_401_UNAUTHORIZED:
+            _user_guild_payload_cache.pop(access_token, None)
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired access token")
+        if guilds_response.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Discord API rate limited while validating dashboard access",
+            )
+        if guilds_response.status_code >= 500:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Discord API unavailable while validating dashboard access",
+            )
+        if guilds_response.status_code >= 400:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Discord API error while validating dashboard access: {guilds_response.status_code}",
+            )
+
+        guilds = guilds_response.json()
+        if isinstance(guilds, list):
+            _store_cached_user_guild_payloads(access_token, guilds)
+        else:
+            logger.warning("Unexpected /users/@me/guilds payload type: %s", type(guilds))
+            guilds = []
+
     for item in guilds:
-        raw_id = item.get("id")
-        if raw_id is not None and str(raw_id).isdigit() and int(raw_id) == server_id:
+        guild_id = _parse_guild_id(item)
+        if guild_id is not None and guild_id == server_id:
             return item
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No dashboard access to this server")
 
@@ -294,12 +431,19 @@ async def assert_dashboard_access(
     if not allowed_role_ids:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No dashboard access to this server")
 
-    member_payload = await fetch_guild_member(server_id=server_id, user_id=caller_user_id)
-    if not member_payload:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No dashboard access to this server")
+    user_role_ids = _get_cached_member_role_ids(server_id=server_id, user_id=caller_user_id)
+    if user_role_ids is None:
+        member_roles_lock = await _get_member_roles_lock(server_id=server_id, user_id=caller_user_id)
+        async with member_roles_lock:
+            user_role_ids = _get_cached_member_role_ids(server_id=server_id, user_id=caller_user_id)
+            if user_role_ids is None:
+                member_payload = await fetch_guild_member(server_id=server_id, user_id=caller_user_id)
+                if not member_payload:
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No dashboard access to this server")
+                user_role_ids = {
+                    int(role_id) for role_id in member_payload.get("roles", []) if str(role_id).isdigit()
+                }
+                _store_cached_member_role_ids(server_id=server_id, user_id=caller_user_id, role_ids=user_role_ids)
 
-    user_role_ids = {
-        int(role_id) for role_id in member_payload.get("roles", []) if str(role_id).isdigit()
-    }
     if not user_role_ids.intersection(allowed_role_ids):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No dashboard access to this server")

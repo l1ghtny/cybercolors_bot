@@ -1,6 +1,7 @@
 ﻿import logging
 import os
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from time import monotonic
 from typing import Annotated
 
@@ -8,6 +9,7 @@ import httpx
 from dotenv import load_dotenv
 from fastapi import APIRouter, HTTPException, Header, Query
 from fastapi import Depends
+from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.models.auth import (
@@ -18,7 +20,7 @@ from api.models.auth import (
 )
 from api.services.dashboard_access_service import load_dashboard_access_maps
 from src.db.database import get_session
-from src.db.models import GlobalUser
+from src.db.models import GlobalUser, Server
 
 load_dotenv()
 
@@ -63,6 +65,43 @@ def _get_bot_token_for_auth() -> str:
     if not token:
         raise HTTPException(status_code=500, detail="Discord bot token is not configured")
     return token
+
+
+def _naive_utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _extract_guild_id(guild: dict) -> int | None:
+    raw_id = guild.get("id")
+    if raw_id is None or not str(raw_id).isdigit():
+        return None
+    return int(raw_id)
+
+
+async def _get_db_active_bot_guild_ids(
+    session: AsyncSession,
+    guild_ids: set[int],
+) -> set[int]:
+    if not guild_ids:
+        return set()
+    rows = (
+        await session.exec(
+            select(Server.server_id).where(
+                Server.server_id.in_(list(guild_ids)),
+                Server.bot_active == True,  # noqa: E712
+            )
+        )
+    ).all()
+    return {int(server_id) for server_id in rows}
+
+
+async def _has_any_active_bot_guilds(session: AsyncSession) -> bool:
+    row = (
+        await session.exec(
+            select(Server.server_id).where(Server.bot_active == True).limit(1)  # noqa: E712
+        )
+    ).first()
+    return row is not None
 
 
 def _get_cached_user_guilds(user_id: int, refresh: bool) -> list[dict] | None:
@@ -174,6 +213,61 @@ async def _get_bot_guild_ids(
     guild_ids = await _fetch_bot_guild_ids(client=client, bot_headers=bot_headers)
     _store_cached_bot_guild_ids(guild_ids)
     return guild_ids
+
+
+async def _apply_bot_presence_snapshot(
+    session: AsyncSession,
+    bot_guild_ids: set[int],
+) -> None:
+    now = _naive_utcnow()
+
+    existing_rows = (
+        await session.exec(select(Server).where(Server.server_id.in_(list(bot_guild_ids))))
+    ).all() if bot_guild_ids else []
+    existing_by_id = {int(item.server_id): item for item in existing_rows}
+
+    for guild_id in bot_guild_ids:
+        server = existing_by_id.get(guild_id)
+        if not server:
+            session.add(
+                Server(
+                    server_id=guild_id,
+                    server_name=str(guild_id),
+                    bot_active=True,
+                    bot_joined_at=now,
+                    bot_presence_updated_at=now,
+                )
+            )
+            continue
+
+        server.bot_active = True
+        server.bot_left_at = None
+        server.bot_presence_updated_at = now
+        if server.bot_joined_at is None:
+            server.bot_joined_at = now
+        session.add(server)
+
+    currently_active_rows = (await session.exec(select(Server).where(Server.bot_active == True))).all()  # noqa: E712
+    for server in currently_active_rows:
+        if int(server.server_id) in bot_guild_ids:
+            continue
+        server.bot_active = False
+        server.bot_left_at = now
+        server.bot_presence_updated_at = now
+        session.add(server)
+
+    await session.flush()
+
+
+async def _sync_bot_presence_from_discord(
+    client: httpx.AsyncClient,
+    bot_headers: dict[str, str],
+    session: AsyncSession,
+) -> set[int]:
+    bot_guild_ids = await _fetch_bot_guild_ids(client=client, bot_headers=bot_headers)
+    _store_cached_bot_guild_ids(bot_guild_ids)
+    await _apply_bot_presence_snapshot(session=session, bot_guild_ids=bot_guild_ids)
+    return bot_guild_ids
 
 
 def _to_auth_guild_payload(guild: dict) -> dict:
@@ -292,15 +386,68 @@ async def get_user_guilds(
             me_res.raise_for_status()
             me_json = me_res.json()
             current_user_id = int(me_json["id"])
+            request_started_at = monotonic()
 
             cached_payload = _get_cached_user_guilds(current_user_id, refresh=refresh)
             if cached_payload is not None:
-                return cached_payload
+                cached_guild_ids = {
+                    guild_id
+                    for guild in cached_payload
+                    for guild_id in [_extract_guild_id(guild)]
+                    if guild_id is not None
+                }
+                active_cached_ids = await _get_db_active_bot_guild_ids(session, cached_guild_ids)
+                filtered_cached_payload = [
+                    guild
+                    for guild in cached_payload
+                    if (guild_id := _extract_guild_id(guild)) is not None and guild_id in active_cached_ids
+                ]
 
-            bot_guild_ids = await _get_bot_guild_ids(client=client, bot_headers=bot_headers, refresh=refresh)
+                if len(filtered_cached_payload) != len(cached_payload):
+                    _store_cached_user_guilds(current_user_id, filtered_cached_payload)
+
+                logger.info(
+                    "auth.guilds cache hit user=%s guilds=%s filtered=%s refresh=%s duration_ms=%s",
+                    current_user_id,
+                    len(cached_payload),
+                    len(filtered_cached_payload),
+                    refresh,
+                    int((monotonic() - request_started_at) * 1000),
+                )
+                return filtered_cached_payload
+
             guilds_res = await client.get(f"{DISCORD_API_BASE_URL}/users/@me/guilds", headers=headers)
             guilds_res.raise_for_status()
             guilds_json = guilds_res.json()
+            user_guild_ids = {
+                guild_id
+                for guild in guilds_json
+                for guild_id in [_extract_guild_id(guild)]
+                if guild_id is not None
+            }
+
+            if refresh:
+                active_bot_guild_ids = await _sync_bot_presence_from_discord(
+                    client=client,
+                    bot_headers=bot_headers,
+                    session=session,
+                )
+                active_bot_guild_ids = active_bot_guild_ids.intersection(user_guild_ids)
+            else:
+                active_bot_guild_ids = await _get_db_active_bot_guild_ids(session, user_guild_ids)
+                if not active_bot_guild_ids and user_guild_ids and not await _has_any_active_bot_guilds(session):
+                    fallback_bot_guild_ids = await _get_bot_guild_ids(
+                        client=client,
+                        bot_headers=bot_headers,
+                        refresh=False,
+                    )
+                    if fallback_bot_guild_ids:
+                        await _apply_bot_presence_snapshot(session=session, bot_guild_ids=fallback_bot_guild_ids)
+                        active_bot_guild_ids = fallback_bot_guild_ids.intersection(user_guild_ids)
+                        logger.info(
+                            "auth.guilds bootstrapped bot presence from Discord snapshot guilds=%s",
+                            len(fallback_bot_guild_ids),
+                        )
 
             # The permissions integer is a bitfield. 8 is the administrator flag.
             ADMINISTRATOR_FLAG = 1 << 3
@@ -309,11 +456,10 @@ async def get_user_guilds(
             candidate_guilds: list[dict] = []
             candidate_guild_ids: list[int] = []
             for guild in guilds_json:
-                raw_guild_id = guild.get("id")
-                if not str(raw_guild_id).isdigit():
+                guild_id = _extract_guild_id(guild)
+                if guild_id is None:
                     continue
-                guild_id = int(raw_guild_id)
-                if guild_id not in bot_guild_ids:
+                if guild_id not in active_bot_guild_ids:
                     logger.info(
                         'Skipping guild "%s" (%s): bot not present',
                         guild.get("name", "unknown"),
@@ -370,6 +516,16 @@ async def get_user_guilds(
             ]
 
             _store_cached_user_guilds(current_user_id, authorized_guilds)
+            logger.info(
+                "auth.guilds cache miss user=%s refresh=%s user_guilds=%s bot_active_overlap=%s candidates=%s authorized=%s duration_ms=%s",
+                current_user_id,
+                refresh,
+                len(guilds_json),
+                len(active_bot_guild_ids),
+                len(candidate_guilds),
+                len(authorized_guilds),
+                int((monotonic() - request_started_at) * 1000),
+            )
             return authorized_guilds
 
         except httpx.HTTPStatusError as e:
