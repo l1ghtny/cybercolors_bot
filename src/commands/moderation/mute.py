@@ -6,6 +6,8 @@ from discord import app_commands
 import httpx
 
 from src.db.database import get_async_session
+from src.modules.localization.catalog import SUPPORTED_LOCALES
+from src.modules.localization.service import get_server_locale, is_supported_locale, set_server_locale, tr
 from src.modules.moderation.mute_management import (
     deactivate_user_mutes,
     get_or_create_moderation_settings,
@@ -44,28 +46,33 @@ def _rule_label(rule: dict) -> str:
     title = (rule.get("title") or "").strip()
     if code:
         return f"{code} {title}".strip()
-    return title or "Rule"
+    return title or tr(None, "common.rule_fallback")
+
+
+def _localized_bool(locale: str, value: bool) -> str:
+    return tr(locale, "common.bool_true" if value else "common.bool_false")
 
 
 def _validate_target_for_moderation(
     interaction: discord.Interaction,
     target: discord.Member,
+    locale: str,
 ) -> str | None:
     guild = interaction.guild
     if guild is None:
-        return "This command can only be used in a server."
+        return tr(locale, "common.server_only")
     if target.id == interaction.user.id:
-        return "You cannot use this command on yourself."
+        return tr(locale, "common.target_self")
     if target.id == guild.owner_id:
-        return "You cannot moderate the server owner."
+        return tr(locale, "common.target_owner")
 
     actor = interaction.user if isinstance(interaction.user, discord.Member) else None
     if actor and guild.owner_id != actor.id and target.top_role >= actor.top_role:
-        return "You cannot moderate a member with equal or higher role."
+        return tr(locale, "common.target_hierarchy")
 
     me = guild.me
     if me and target.top_role >= me.top_role:
-        return "I cannot moderate this member due to role hierarchy."
+        return tr(locale, "common.target_bot_hierarchy")
     return None
 
 
@@ -142,6 +149,8 @@ async def _apply_mute_overwrites(guild: discord.Guild, role: discord.Role) -> tu
 )
 async def moderation_settings(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
+    locale = await get_server_locale(interaction.guild.id)
+    not_configured = tr(locale, "common.not_configured")
     async with get_async_session() as session:
         settings = await get_or_create_moderation_settings(
             session=session,
@@ -149,7 +158,7 @@ async def moderation_settings(interaction: discord.Interaction):
             server_name=interaction.guild.name,
         )
         mute_role = interaction.guild.get_role(settings.mute_role_id) if settings.mute_role_id else None
-        mute_role_name = mute_role.name if mute_role else "Not configured"
+        mute_role_name = mute_role.name if mute_role else not_configured
         mod_log_channel = (
             interaction.guild.get_channel(settings.mod_log_channel_id)
             if settings.mod_log_channel_id
@@ -159,20 +168,25 @@ async def moderation_settings(interaction: discord.Interaction):
             f"{mod_log_channel.mention} (`{settings.mod_log_channel_id}`)"
             if mod_log_channel is not None
             else (
-                f"`{settings.mod_log_channel_id}` (not found)"
+                tr(locale, "settings.channel_not_found", channel_id=settings.mod_log_channel_id)
                 if settings.mod_log_channel_id
-                else "Not configured"
+                else not_configured
             )
         )
         await session.commit()
 
     await interaction.followup.send(
-        "Moderation settings:\n"
-        f"- Mute role: `{mute_role_name}`\n"
-        f"- Mod log channel: {mod_log_channel_label}\n"
-        f"- Default mute minutes: `{settings.default_mute_minutes}`\n"
-        f"- Max mute minutes: `{settings.max_mute_minutes}`\n"
-        f"- Voice reconnect on mute: `{settings.auto_reconnect_voice_on_mute}`",
+        "\n".join(
+            [
+                tr(locale, "settings.show_title"),
+                tr(locale, "settings.mute_role", value=mute_role_name),
+                tr(locale, "settings.mod_log_channel", value=mod_log_channel_label),
+                tr(locale, "settings.language", value=locale),
+                tr(locale, "settings.default_mute_minutes", value=settings.default_mute_minutes),
+                tr(locale, "settings.max_mute_minutes", value=settings.max_mute_minutes),
+                tr(locale, "settings.auto_reconnect", value=_localized_bool(locale, settings.auto_reconnect_voice_on_mute)),
+            ]
+        ),
         ephemeral=True,
     )
 
@@ -195,7 +209,8 @@ async def moderation_set_mute_role(interaction: discord.Interaction, role: disco
         session.add(settings)
         await session.commit()
 
-    await interaction.followup.send(f'Mute role set to `{role.name}`.', ephemeral=True)
+    locale = await get_server_locale(interaction.guild.id)
+    await interaction.followup.send(tr(locale, "settings.mute_role_set", role_name=role.name), ephemeral=True)
 
 
 @app_commands.checks.has_permissions(manage_guild=True)
@@ -205,6 +220,7 @@ async def moderation_set_mute_role(interaction: discord.Interaction, role: disco
 )
 async def moderation_set_log_channel(interaction: discord.Interaction, channel: discord.TextChannel):
     await interaction.response.defer(ephemeral=True)
+    locale = await get_server_locale(interaction.guild.id)
     async with get_async_session() as session:
         settings = await get_or_create_moderation_settings(
             session=session,
@@ -215,7 +231,10 @@ async def moderation_set_log_channel(interaction: discord.Interaction, channel: 
         settings.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         session.add(settings)
         await session.commit()
-    await interaction.followup.send(f"Moderation log channel set to {channel.mention}.", ephemeral=True)
+    await interaction.followup.send(
+        tr(locale, "settings.log_channel_set", mention=channel.mention),
+        ephemeral=True,
+    )
 
 
 @app_commands.checks.has_permissions(manage_guild=True)
@@ -225,6 +244,7 @@ async def moderation_set_log_channel(interaction: discord.Interaction, channel: 
 )
 async def moderation_clear_log_channel(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
+    locale = await get_server_locale(interaction.guild.id)
     async with get_async_session() as session:
         settings = await get_or_create_moderation_settings(
             session=session,
@@ -235,7 +255,39 @@ async def moderation_clear_log_channel(interaction: discord.Interaction):
         settings.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         session.add(settings)
         await session.commit()
-    await interaction.followup.send("Moderation log channel cleared.", ephemeral=True)
+    await interaction.followup.send(tr(locale, "settings.log_channel_cleared"), ephemeral=True)
+
+
+@app_commands.checks.has_permissions(manage_guild=True)
+@app_commands.command(
+    name="moderation_set_language",
+    description="Set bot language for this server.",
+)
+@app_commands.choices(
+    language=[
+        app_commands.Choice(name="English", value="en"),
+        app_commands.Choice(name="Русский", value="ru"),
+    ]
+)
+async def moderation_set_language(interaction: discord.Interaction, language: app_commands.Choice[str]):
+    await interaction.response.defer(ephemeral=True)
+    current_locale = await get_server_locale(interaction.guild.id)
+    requested = language.value.lower().strip()
+    if not is_supported_locale(requested):
+        await interaction.followup.send(
+            tr(current_locale, "settings.language_not_supported", supported=", ".join(SUPPORTED_LOCALES)),
+            ephemeral=True,
+        )
+        return
+    updated = await set_server_locale(
+        server_id=interaction.guild.id,
+        server_name=interaction.guild.name,
+        locale_code=requested,
+    )
+    await interaction.followup.send(
+        tr(updated, "settings.language_updated", locale=updated),
+        ephemeral=True,
+    )
 
 
 @app_commands.checks.has_permissions(manage_roles=True)
@@ -263,9 +315,9 @@ async def moderation_create_mute_role(interaction: discord.Interaction, role_nam
         session.add(settings)
         await session.commit()
 
+    locale = await get_server_locale(interaction.guild.id)
     await interaction.followup.send(
-        f'Created mute role `{role.name}` and updated `{edited}` channel overwrites'
-        f' (failed: {failed}).',
+        tr(locale, "settings.mute_role_created", role_name=role.name, edited=edited, failed=failed),
         ephemeral=True,
     )
 
@@ -282,8 +334,9 @@ async def moderation_set_mute_defaults(
     auto_reconnect_on_mute: bool = True,
 ):
     await interaction.response.defer(ephemeral=True)
+    locale = await get_server_locale(interaction.guild.id)
     if default_minutes > max_minutes:
-        await interaction.followup.send("Default minutes cannot be greater than max minutes.", ephemeral=True)
+        await interaction.followup.send(tr(locale, "settings.default_over_max"), ephemeral=True)
         return
 
     async with get_async_session() as session:
@@ -300,14 +353,22 @@ async def moderation_set_mute_defaults(
         await session.commit()
 
     await interaction.followup.send(
-        f"Mute defaults updated: default={default_minutes}m, max={max_minutes}m, "
-        f"auto_reconnect={auto_reconnect_on_mute}.",
+        tr(
+            locale,
+            "settings.defaults_updated",
+            default_minutes=default_minutes,
+            max_minutes=max_minutes,
+            auto_reconnect=_localized_bool(locale, auto_reconnect_on_mute),
+        ),
         ephemeral=True,
     )
 
 
 @app_commands.checks.has_permissions(moderate_members=True)
-@app_commands.command(name="mute", description="Apply role-based mute with rule + optional commentary.")
+@app_commands.command(
+    name="mute",
+    description="Apply role-based mute with rule + optional commentary.",
+)
 async def mute(
     interaction: discord.Interaction,
     user: discord.Member,
@@ -316,19 +377,20 @@ async def mute(
     commentary: str | None = None,
 ):
     await interaction.response.defer(ephemeral=True)
+    locale = await get_server_locale(interaction.guild.id)
 
     try:
         rules = await _fetch_server_rules(interaction.guild.id)
     except Exception as error:
-        await interaction.followup.send(f"Could not fetch moderation rules: {error}", ephemeral=True)
+        await interaction.followup.send(tr(locale, "mute.fetch_rules_failed", error=error), ephemeral=True)
         return
     selected_rule = _find_rule(rules, rule)
     if not selected_rule:
-        await interaction.followup.send("Invalid rule selected.", ephemeral=True)
+        await interaction.followup.send(tr(locale, "mute.invalid_rule"), ephemeral=True)
         return
     selected_rule_label = _rule_label(selected_rule)
 
-    moderation_target_error = _validate_target_for_moderation(interaction, user)
+    moderation_target_error = _validate_target_for_moderation(interaction, user, locale)
     if moderation_target_error:
         await interaction.followup.send(moderation_target_error, ephemeral=True)
         return
@@ -341,20 +403,20 @@ async def mute(
         )
         if not settings.mute_role_id:
             await interaction.followup.send(
-                "Mute role is not configured. Use `/moderation_set_mute_role` or `/moderation_create_mute_role`.",
+                tr(locale, "mute.role_not_configured"),
                 ephemeral=True,
             )
             return
         mute_role = interaction.guild.get_role(settings.mute_role_id)
         if mute_role is None:
             await interaction.followup.send(
-                "Configured mute role is missing on this server. Reconfigure it.",
+                tr(locale, "mute.role_missing"),
                 ephemeral=True,
             )
             return
         if interaction.guild.me and mute_role >= interaction.guild.me.top_role:
             await interaction.followup.send(
-                "I cannot assign this mute role because it is above or equal to my highest role.",
+                tr(locale, "mute.role_too_high"),
                 ephemeral=True,
             )
             return
@@ -362,7 +424,7 @@ async def mute(
         effective_duration = duration_minutes or settings.default_mute_minutes
         if effective_duration > settings.max_mute_minutes:
             await interaction.followup.send(
-                f"Duration exceeds server max mute time ({settings.max_mute_minutes} minutes).",
+                tr(locale, "mute.duration_exceeds", max_minutes=settings.max_mute_minutes),
                 ephemeral=True,
             )
             return
@@ -378,13 +440,13 @@ async def mute(
                 )
             except discord.Forbidden:
                 await interaction.followup.send(
-                    "I do not have permission to assign the mute role.",
+                    tr(locale, "mute.assign_forbidden"),
                     ephemeral=True,
                 )
                 return
             except discord.HTTPException as error:
                 await interaction.followup.send(
-                    f"Failed to assign mute role: {error}",
+                    tr(locale, "mute.assign_failed", error=error),
                     ephemeral=True,
                 )
                 return
@@ -393,9 +455,9 @@ async def mute(
         if settings.auto_reconnect_voice_on_mute and user.voice and user.voice.channel:
             try:
                 await try_reconnect_voice_member(user, reason="Apply mute role changes")
-                reconnect_note = " Voice reconnect applied."
+                reconnect_note = tr(locale, "mute.reconnect_ok")
             except Exception:
-                reconnect_note = " Could not reconnect user in voice (check move permissions)."
+                reconnect_note = tr(locale, "mute.reconnect_failed")
 
         await session.commit()
 
@@ -410,16 +472,25 @@ async def mute(
             reason=None,
             expires_at=expires_at,
         )
+    except RuntimeError:
+        await interaction.followup.send(tr(locale, "common.api_missing"), ephemeral=True)
+        return
     except Exception as error:
         await interaction.followup.send(
-            f"User muted, but logging action failed: {error}",
+            tr(locale, "mute.log_failed", error=error),
             ephemeral=True,
         )
         return
 
     await interaction.followup.send(
-        f"{user.mention} muted for `{effective_duration}` minutes by rule `{selected_rule_label}`."
-        f"{reconnect_note}",
+        tr(
+            locale,
+            "mute.success",
+            mention=user.mention,
+            duration=effective_duration,
+            rule=selected_rule_label,
+            note=reconnect_note,
+        ),
         ephemeral=False,
     )
 
@@ -446,15 +517,19 @@ async def mute_rule_autocomplete(interaction: discord.Interaction, current: str)
 
 
 @app_commands.checks.has_permissions(moderate_members=True)
-@app_commands.command(name="unmute", description="Remove role-based mute and close active mute actions.")
+@app_commands.command(
+    name="unmute",
+    description="Remove role-based mute and close active mute actions.",
+)
 async def unmute(
     interaction: discord.Interaction,
     user: discord.Member,
     reason: str | None = None,
 ):
     await interaction.response.defer(ephemeral=True)
-    note = reason.strip() if reason else "Manual unmute"
-    moderation_target_error = _validate_target_for_moderation(interaction, user)
+    locale = await get_server_locale(interaction.guild.id)
+    note = reason.strip() if reason else tr(locale, "common.manual_unmute_reason")
+    moderation_target_error = _validate_target_for_moderation(interaction, user, locale)
     if moderation_target_error:
         await interaction.followup.send(moderation_target_error, ephemeral=True)
         return
@@ -477,13 +552,13 @@ async def unmute(
                     )
                 except discord.Forbidden:
                     await interaction.followup.send(
-                        "I do not have permission to remove the mute role.",
+                        tr(locale, "unmute.remove_forbidden"),
                         ephemeral=True,
                     )
                     return
                 except discord.HTTPException as error:
                     await interaction.followup.send(
-                        f"Failed to remove mute role: {error}",
+                        tr(locale, "unmute.remove_failed", error=error),
                         ephemeral=True,
                     )
                     return
@@ -502,6 +577,7 @@ async def unmute(
             removed_role=removed_role,
             closed_actions=deactivated,
             is_auto=False,
+            locale=locale,
         )
         await send_mod_log_message(
             guild=interaction.guild,
@@ -510,6 +586,12 @@ async def unmute(
         )
 
     await interaction.followup.send(
-        f"{user.mention} unmuted. Removed role: `{removed_role}`. Closed active mute actions: `{deactivated}`.",
+        tr(
+            locale,
+            "unmute.success",
+            mention=user.mention,
+            removed_role=_localized_bool(locale, removed_role),
+            deactivated=deactivated,
+        ),
         ephemeral=False,
     )

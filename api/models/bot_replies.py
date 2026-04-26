@@ -2,7 +2,7 @@
 from typing import List
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ReplyAddModel(BaseModel):
@@ -29,3 +29,19 @@ class ReplyModel(BaseModel):
     bot_reply: str
     created_at: datetime
     created_by: UserAvatarModel
+
+
+class ReplyDuplicateRequestModel(BaseModel):
+    target_server_id: str = Field(pattern=r"^\d+$")
+    reply_ids: list[UUID] = Field(min_length=1, max_length=500)
+
+
+class ReplyDuplicateResponseModel(BaseModel):
+    source_server_id: str
+    target_server_id: str
+    requested_replies: int
+    duplicated_replies: int
+    reused_replies: int
+    duplicated_triggers: int
+    skipped_triggers: int
+    missing_reply_ids: list[str] = Field(default_factory=list)

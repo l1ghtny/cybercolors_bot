@@ -1,15 +1,17 @@
 from collections import defaultdict
 
+import httpx
 from fastapi import HTTPException, status
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from api.dependencies.current_user import DISCORD_API_BASE_URL
 from api.models.dashboard_access import (
     DashboardAccessReadModel,
     DashboardAccessRoleReadModel,
     DashboardAccessUserReadModel,
 )
-from api.services.discord_guilds import fetch_guild_metadata, fetch_guild_roles
+from api.services.discord_guilds import fetch_guild_member, fetch_guild_metadata, fetch_guild_roles
 from api.services.moderation_core import build_optional_actor
 from src.db.models import DashboardAccessRole, DashboardAccessUser, GlobalUser, Server
 
@@ -214,3 +216,90 @@ async def remove_dashboard_access_role(
         await session.delete(existing)
         await session.flush()
     return await get_dashboard_access(session, server_id)
+
+
+def _extract_access_token(authorization: str | None) -> str:
+    if not authorization:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authorization header missing")
+    token_type, _, access_token = authorization.partition(" ")
+    if token_type.lower() != "bearer" or not access_token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authorization header")
+    return access_token
+
+
+async def _get_user_guild_payload(authorization: str | None, server_id: int) -> dict:
+    access_token = _extract_access_token(authorization)
+    headers = {"Authorization": f"Bearer {access_token}"}
+
+    async with httpx.AsyncClient() as client:
+        guilds_response = await client.get(f"{DISCORD_API_BASE_URL}/users/@me/guilds", headers=headers)
+    if guilds_response.status_code >= 400:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired access token")
+
+    guilds = guilds_response.json()
+    for item in guilds:
+        raw_id = item.get("id")
+        if raw_id is not None and str(raw_id).isdigit() and int(raw_id) == server_id:
+            return item
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No dashboard access to this server")
+
+
+def _guild_admin_or_owner(guild_payload: dict) -> bool:
+    is_owner = bool(guild_payload.get("owner"))
+    permissions = int(guild_payload.get("permissions", 0))
+    administrator_flag = 1 << 3
+    is_admin = bool(permissions & administrator_flag)
+    return is_owner or is_admin
+
+
+async def assert_server_admin_or_owner(
+    server_id: int,
+    authorization: str | None,
+) -> None:
+    guild_payload = await _get_user_guild_payload(authorization=authorization, server_id=server_id)
+    if not _guild_admin_or_owner(guild_payload):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only server owners or administrators can update this setting",
+        )
+
+
+async def assert_dashboard_access(
+    session: AsyncSession,
+    server_id: int,
+    caller_user_id: int,
+    authorization: str | None,
+) -> None:
+    guild_payload = await _get_user_guild_payload(authorization=authorization, server_id=server_id)
+    if _guild_admin_or_owner(guild_payload):
+        return
+
+    user_allowlisted = (
+        await session.exec(
+            select(DashboardAccessUser).where(
+                DashboardAccessUser.server_id == server_id,
+                DashboardAccessUser.user_id == caller_user_id,
+            )
+        )
+    ).first()
+    if user_allowlisted:
+        return
+
+    allowed_roles = (
+        await session.exec(
+            select(DashboardAccessRole.role_id).where(DashboardAccessRole.server_id == server_id)
+        )
+    ).all()
+    allowed_role_ids = {int(role_id) for role_id in allowed_roles}
+    if not allowed_role_ids:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No dashboard access to this server")
+
+    member_payload = await fetch_guild_member(server_id=server_id, user_id=caller_user_id)
+    if not member_payload:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No dashboard access to this server")
+
+    user_role_ids = {
+        int(role_id) for role_id in member_payload.get("roles", []) if str(role_id).isdigit()
+    }
+    if not user_role_ids.intersection(allowed_role_ids):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No dashboard access to this server")

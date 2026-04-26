@@ -2,10 +2,12 @@ import json
 from datetime import datetime, timezone
 
 import discord as d
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import selectinload
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from src.db.database import get_async_session
 from src.db.models import (
     AttachmentLog,
     DeletedMessage,
@@ -14,6 +16,55 @@ from src.db.models import (
     Server,
     User,
 )
+
+
+async def ensure_message_foreign_keys(message: d.Message, session: AsyncSession) -> None:
+    """
+    Ensure FK dependencies for message_log exist in the same transaction as claim insert.
+    This avoids race conditions where background user/server upserts happen too late.
+    """
+    guild = message.guild
+    author = message.author
+    if guild is None or author is None:
+        return
+
+    server_icon = getattr(guild, "icon", None)
+    icon_url = str(server_icon.url) if server_icon else None
+    await session.exec(
+        pg_insert(Server)
+        .values(
+            server_id=guild.id,
+            server_name=guild.name,
+            icon=icon_url,
+        )
+        .on_conflict_do_update(
+            index_elements=[Server.server_id],
+            set_={
+                "server_name": guild.name,
+                "icon": icon_url,
+            },
+        )
+    )
+
+    display_avatar = getattr(author, "display_avatar", None)
+    avatar_url = str(display_avatar.url) if display_avatar else None
+    joined_discord = getattr(author, "created_at", None) or getattr(author, "joined_at", None)
+    await session.exec(
+        pg_insert(GlobalUser)
+        .values(
+            discord_id=author.id,
+            username=author.name,
+            joined_discord=joined_discord,
+            avatar_hash=avatar_url,
+        )
+        .on_conflict_do_update(
+            index_elements=[GlobalUser.discord_id],
+            set_={
+                "username": author.name,
+                "avatar_hash": avatar_url,
+            },
+        )
+    )
 
 
 async def check_if_user_exists(user: d.Member | d.User, server: d.Guild, session: AsyncSession):
@@ -112,12 +163,9 @@ async def check_if_server_exists(server: d.Guild, session: AsyncSession):
 
 async def log_message(message: d.Message, session: AsyncSession):
     """Logs a message to the message_log table for later retrieval (e.g., if deleted)."""
-    existing = await session.get(MessageLog, message.id)
-    if existing:
-        return
-
-    session.add(
-        MessageLog(
+    insert_stmt = (
+        pg_insert(MessageLog)
+        .values(
             message_id=message.id,
             user_id=message.author.id,
             channel_id=message.channel.id,
@@ -126,9 +174,22 @@ async def log_message(message: d.Message, session: AsyncSession):
             reply_to_message_id=message.reference.message_id if message.reference else None,
             server_id=message.guild.id,
         )
+        .on_conflict_do_nothing(index_elements=[MessageLog.message_id])
+        .returning(MessageLog.message_id)
     )
+    created_row = (await session.exec(insert_stmt)).first()
+    message_created = created_row is not None
+
+    existing_storage_keys: set[str] = set()
+    if not message_created and message.attachments:
+        attachments_result = await session.exec(
+            select(AttachmentLog).where(AttachmentLog.message_id == message.id)
+        )
+        existing_storage_keys = {item.storage_key for item in attachments_result.all()}
 
     for attachment in message.attachments:
+        if attachment.url in existing_storage_keys:
+            continue
         session.add(
             AttachmentLog(
                 message_id=message.id,
@@ -137,6 +198,19 @@ async def log_message(message: d.Message, session: AsyncSession):
                 content_type=attachment.content_type or "application/octet-stream",
             )
         )
+    return message_created
+
+
+async def claim_message_for_processing(message: d.Message) -> bool:
+    """
+    Atomically claims a message for processing by inserting it into message_log.
+    Returns True only for the first worker that sees this message ID.
+    """
+    async with get_async_session() as session:
+        await ensure_message_foreign_keys(message, session)
+        claimed = await log_message(message, session)
+        await session.commit()
+    return claimed
 
 
 async def handle_message_deletion(message_id: int, guild_id: int | None, session: AsyncSession):

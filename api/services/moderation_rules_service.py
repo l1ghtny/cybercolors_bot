@@ -358,7 +358,44 @@ async def import_rules_from_message(
     )
 
 
-def get_rule_parse_guide() -> ModerationRuleParseGuideModel:
+def _get_rule_parse_guide_legacy() -> ModerationRuleParseGuideModel:
+    return ModerationRuleParseGuideModel(
+        title="Moderation Rule Formatting Guide",
+        guidance=[
+            "Put one rule per numbered item starting with a number marker such as `1.` or `1️⃣`.",
+            "Keep the rule's first sentence concise; it becomes the short rule title.",
+            "Keep any details in the following lines right below the same numbered item.",
+            "Avoid mixing unrelated paragraphs between numbered rules.",
+            "If importing multiple messages, keep each message using the same numbering style.",
+        ],
+        example=(
+            "1. Harassment and insults are prohibited.\n"
+            "Includes threats, bullying, discrimination, and repeated personal attacks.\n\n"
+            "2. 18+ sexual content is prohibited.\n"
+            "Nudity, pornography, and shock sexual content are not allowed."
+        ),
+    )
+
+
+def get_rule_parse_guide(locale: str | None = None) -> ModerationRuleParseGuideModel:
+    normalized = (locale or "en").strip().lower()
+    if normalized == "ru":
+        return ModerationRuleParseGuideModel(
+            title="Гайд по формату правил модерации",
+            guidance=[
+                "Каждое правило оформляйте отдельным нумерованным пунктом, например `1.` или `1️⃣`.",
+                "Первое предложение делайте кратким: оно станет коротким названием правила.",
+                "Детали пишите следующими строками сразу под тем же пунктом.",
+                "Не вставляйте между пунктами несвязанные абзацы.",
+                "При импорте из нескольких сообщений придерживайтесь одного стиля нумерации.",
+            ],
+            example=(
+                "1. Запрещены травля и оскорбления.\n"
+                "Сюда относятся угрозы, дискриминация и повторяющиеся личные нападки.\n\n"
+                "2. Запрещён сексуальный 18+ контент.\n"
+                "Нагота, порнография и шокирующий контент не допускаются."
+            ),
+        )
     return ModerationRuleParseGuideModel(
         title="Moderation Rule Formatting Guide",
         guidance=[

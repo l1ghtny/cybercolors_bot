@@ -29,6 +29,7 @@ from src.commands.moderation.warn import warn
 from src.commands.moderation.mute import (
     moderation_settings,
     moderation_set_mute_role,
+    moderation_set_language,
     moderation_set_log_channel,
     moderation_clear_log_channel,
     moderation_create_mute_role,
@@ -40,6 +41,7 @@ from src.db.database import engine, get_async_session
 from src.modules.moderation.moderation_helpers import (
     check_if_server_exists,
     check_if_user_exists,
+    claim_message_for_processing,
     handle_bulk_message_deletion,
     handle_message_deletion,
 )
@@ -58,7 +60,6 @@ from src.modules.on_message_processing.gpt_bot_reply import look_for_bot_reply
 from src.modules.on_message_processing.replies import check_for_replies
 from src.modules.on_voice_state_processing.create_voice_channel import create_voice_channel
 from src.modules.moderation.mute_worker import process_expired_mutes
-from src.modules.twitter_link_fix.twitter_message_manager import manage_message
 from src.views.replies.delete_multiple_replies import DeleteReplyMultiple, DeleteReplyMultipleSelect
 from src.views.replies.delete_one_reply import DeleteOneReply
 from src.views.pagination.pagination import PaginationView
@@ -216,6 +217,7 @@ moderation_security_group.add_command(security_lockdown)
 moderation_security_group.add_command(verify_member)
 
 moderation_settings_group.add_command(moderation_settings)
+moderation_settings_group.add_command(moderation_set_language)
 moderation_settings_group.add_command(moderation_set_mute_role)
 moderation_settings_group.add_command(moderation_set_log_channel)
 moderation_settings_group.add_command(moderation_clear_log_channel)
@@ -473,23 +475,28 @@ async def cat(interaction: discord.Interaction):
 @client.event
 async def on_message(message):
     user = message.author
-    message_content_base = message.content.lower()
     server = message.guild
+    if not user or not server:
+        return
+    if user == client.user:
+        return
+
+    try:
+        claimed = await claim_message_for_processing(message)
+    except Exception as error:
+        logger.warning("Failed to claim message %s for processing: %s", message.id, error)
+        claimed = True
+    if not claimed:
+        return
+
+    message_content_base = message.content.lower()
     link_deleted = await delete_server_links(message, message_content_base)
     if link_deleted is True:
         return
-    if user and server:
-        if user == client.user:
-            return
-        else:
-            if 'https://twitter.com/' in message_content_base:
-                await manage_message(message, user)
-            elif 'https://x.com/' in message_content_base:
-                await manage_message(message, user)
-            database_found, server_id = await check_for_replies(message)
-        if database_found is False:
-            await look_for_bot_reply(message, client)
-        asyncio.create_task(process_background_tasks(message, client.known_global_users))
+    database_found, server_id = await check_for_replies(message)
+    if database_found is False:
+        await look_for_bot_reply(message, client)
+    asyncio.create_task(process_background_tasks(message, client.known_global_users))
 
 
 @client.event

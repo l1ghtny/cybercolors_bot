@@ -4,7 +4,7 @@ from sqlmodel import select
 
 from src.db.database import get_async_session
 from src.db.models import UserActivity
-from src.modules.moderation.moderation_helpers import check_if_server_exists, check_if_user_exists, log_message
+from src.modules.moderation.moderation_helpers import check_if_server_exists, check_if_user_exists
 
 
 def _naive_utcnow() -> datetime:
@@ -24,10 +24,7 @@ async def process_background_tasks(message, known_global_users):
         await check_if_server_exists(guild, session)
         await check_if_user_exists(message.author, guild, session)
 
-        # 2. Log message for evidence
-        await log_message(message, session)
-
-        # 3. Track user activity (Phase 3 preview)
+        # 2. Track user activity (Phase 3 preview)
         activity_stmt = select(UserActivity).where(
             UserActivity.user_id == user_id,
             UserActivity.server_id == guild.id,

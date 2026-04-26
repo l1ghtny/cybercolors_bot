@@ -3,6 +3,7 @@ import discord
 from src.db.database import get_async_session
 from src.db.models import ServerModerationSettings
 from src.modules.logs_setup import logger
+from src.modules.localization.service import get_server_locale, tr
 from src.modules.moderation.mod_log import build_unmute_log_message, send_mod_log_message
 from src.modules.moderation.mute_management import get_expired_active_mutes
 
@@ -16,6 +17,7 @@ async def process_expired_mutes(client: discord.Client) -> tuple[int, int]:
     """
     processed = 0
     failed = 0
+    locale_cache: dict[int, str] = {}
 
     async with get_async_session() as session:
         expired_actions = await get_expired_active_mutes(session, limit=500)
@@ -72,15 +74,20 @@ async def process_expired_mutes(client: discord.Client) -> tuple[int, int]:
             processed += 1
 
             if settings.mod_log_channel_id:
+                locale = locale_cache.get(action.server_id)
+                if locale is None:
+                    locale = await get_server_locale(action.server_id)
+                    locale_cache[action.server_id] = locale
                 content = build_unmute_log_message(
                     target_user_id=action.target_user_id,
                     target_display=member.display_name if member else str(action.target_user_id),
                     moderator_user_id=None,
                     moderator_display=None,
-                    reason="Mute expired",
+                    reason=tr(locale, "modlog.reason_mute_expired"),
                     removed_role=removed_role,
                     closed_actions=1,
                     is_auto=True,
+                    locale=locale,
                 )
                 await send_mod_log_message(
                     guild=guild,

@@ -5,6 +5,7 @@ from discord import app_commands
 
 from src.db.database import get_async_session
 from src.db.models import Server, ServerSecuritySettings
+from src.modules.localization.service import get_server_locale, tr
 
 
 def _utcnow_naive() -> datetime:
@@ -36,7 +37,11 @@ async def _get_or_create_security_settings(server_id: int, server_name: str) -> 
     description="Set the role granted to members who finished onboarding.",
 )
 async def security_set_verified_role(interaction: discord.Interaction, role: discord.Role):
+    if interaction.guild is None:
+        await interaction.response.send_message(tr(None, "common.server_only"), ephemeral=True)
+        return
     await interaction.response.defer(ephemeral=True)
+    locale = await get_server_locale(interaction.guild.id)
     settings = await _get_or_create_security_settings(interaction.guild.id, interaction.guild.name)
 
     async with get_async_session() as session:
@@ -48,7 +53,7 @@ async def security_set_verified_role(interaction: discord.Interaction, role: dis
         session.add(settings)
         await session.flush()
     await interaction.followup.send(
-        f'Verified role set to "{role.name}".',
+        tr(locale, "security.verified_role_set", role_name=role.name),
         ephemeral=True,
     )
 
@@ -65,11 +70,15 @@ async def security_set_verified_role(interaction: discord.Interaction, role: dis
     ]
 )
 async def security_capture_permissions(interaction: discord.Interaction, mode: app_commands.Choice[str]):
+    if interaction.guild is None:
+        await interaction.response.send_message(tr(None, "common.server_only"), ephemeral=True)
+        return
     await interaction.response.defer(ephemeral=True)
+    locale = await get_server_locale(interaction.guild.id)
     settings = await _get_or_create_security_settings(interaction.guild.id, interaction.guild.name)
     role = interaction.guild.get_role(settings.verified_role_id) if settings.verified_role_id else None
     if not role:
-        await interaction.followup.send("Verified role is not configured or not found on this server.", ephemeral=True)
+        await interaction.followup.send(tr(locale, "security.verified_role_missing"), ephemeral=True)
         return
 
     async with get_async_session() as session:
@@ -83,7 +92,7 @@ async def security_capture_permissions(interaction: discord.Interaction, mode: a
         await session.flush()
 
     await interaction.followup.send(
-        f'Captured current "{role.name}" permissions into `{mode.value}` template.',
+        tr(locale, "security.permissions_captured", role_name=role.name, mode=mode.value),
         ephemeral=True,
     )
 
@@ -94,18 +103,22 @@ async def security_capture_permissions(interaction: discord.Interaction, mode: a
     description="Enable or disable lockdown permissions for the verified role.",
 )
 async def security_lockdown(interaction: discord.Interaction, enabled: bool):
+    if interaction.guild is None:
+        await interaction.response.send_message(tr(None, "common.server_only"), ephemeral=True)
+        return
     await interaction.response.defer(ephemeral=True)
+    locale = await get_server_locale(interaction.guild.id)
     settings = await _get_or_create_security_settings(interaction.guild.id, interaction.guild.name)
     role = interaction.guild.get_role(settings.verified_role_id) if settings.verified_role_id else None
     if not role:
-        await interaction.followup.send("Verified role is not configured or not found on this server.", ephemeral=True)
+        await interaction.followup.send(tr(locale, "security.verified_role_missing"), ephemeral=True)
         return
 
     target_permissions = settings.lockdown_permissions if enabled else settings.normal_permissions
     template_name = "lockdown" if enabled else "normal"
     if target_permissions is None:
         await interaction.followup.send(
-            f"No `{template_name}` permissions template configured yet. Use `/security_capture_permissions` first.",
+            tr(locale, "security.template_missing", template_name=template_name),
             ephemeral=True,
         )
         return
@@ -119,9 +132,15 @@ async def security_lockdown(interaction: discord.Interaction, enabled: bool):
         session.add(settings)
         await session.flush()
 
-    state = "enabled" if enabled else "disabled"
+    state = tr(locale, "security.state_enabled" if enabled else "security.state_disabled")
     await interaction.followup.send(
-        f"Lockdown {state}. Updated role `{role.name}` permissions from `{template_name}` template.",
+        tr(
+            locale,
+            "security.lockdown_updated",
+            state=state,
+            role_name=role.name,
+            template_name=template_name,
+        ),
         ephemeral=True,
     )
 
@@ -132,19 +151,26 @@ async def security_lockdown(interaction: discord.Interaction, enabled: bool):
     description="Grant the configured verified role to a member.",
 )
 async def verify_member(interaction: discord.Interaction, user: discord.Member):
+    if interaction.guild is None:
+        await interaction.response.send_message(tr(None, "common.server_only"), ephemeral=True)
+        return
     await interaction.response.defer(ephemeral=True)
+    locale = await get_server_locale(interaction.guild.id)
     settings = await _get_or_create_security_settings(interaction.guild.id, interaction.guild.name)
     role = interaction.guild.get_role(settings.verified_role_id) if settings.verified_role_id else None
     if not role:
-        await interaction.followup.send("Verified role is not configured or not found on this server.", ephemeral=True)
+        await interaction.followup.send(tr(locale, "security.verified_role_missing"), ephemeral=True)
         return
 
     if role in user.roles:
-        await interaction.followup.send(f"{user.mention} already has `{role.name}`.", ephemeral=True)
+        await interaction.followup.send(
+            tr(locale, "security.verify_already_has", mention=user.mention, role_name=role.name),
+            ephemeral=True,
+        )
         return
 
     await user.add_roles(role, reason=f"Verified by {interaction.user} ({interaction.user.id})")
     await interaction.followup.send(
-        f"Granted `{role.name}` to {user.mention}.",
+        tr(locale, "security.verify_granted", role_name=role.name, mention=user.mention),
         ephemeral=True,
     )

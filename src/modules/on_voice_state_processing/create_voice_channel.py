@@ -11,7 +11,7 @@ logger = logger.logging.getLogger("bot")
 async def create_voice_channel(member, before, after):
     server_id = member.guild.id
     async with get_async_session() as session:
-        temp_channels_info = await session.exec(select(VoiceChannel).where(VoiceChannel.server_id == member.guild.id)).all()
+        temp_channels_info = (await session.exec(select(VoiceChannel).where(VoiceChannel.server_id == member.guild.id))).all()
 
         temp_channels = []
         for i in temp_channels_info:

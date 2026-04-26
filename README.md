@@ -22,8 +22,6 @@ Also, there is a check for users who deleted their accounts or left the server. 
 
 ### Voice channels creation
 
-### Twitter links replacement
-
 ## In progress
 
 ### Admin features

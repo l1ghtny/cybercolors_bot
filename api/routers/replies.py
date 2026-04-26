@@ -1,12 +1,21 @@
-from typing import List
+from typing import Annotated, List
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Header, status
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from api.dependencies.current_user import get_current_discord_user_id
 from api.helpers.replies import enrich_user_data
-from api.models.bot_replies import ReplyAddModel, ReplyEditModel, ReplyModel
+from api.models.bot_replies import (
+    ReplyAddModel,
+    ReplyDuplicateRequestModel,
+    ReplyDuplicateResponseModel,
+    ReplyEditModel,
+    ReplyModel,
+)
+from api.services.dashboard_access_service import assert_dashboard_access
+from api.services.replies_service import duplicate_selected_replies
 from src.db.database import get_session
 from src.db.models import Replies, Triggers
 
@@ -123,3 +132,42 @@ async def edit_replies(body: List[ReplyEditModel], session: AsyncSession = Depen
     await session.commit()
 
     return status.HTTP_200_OK
+
+
+@replies.post("/{server_id}/duplicate-selected", response_model=ReplyDuplicateResponseModel)
+async def duplicate_selected_replies_to_server(
+    server_id: int,
+    body: ReplyDuplicateRequestModel,
+    session: AsyncSession = Depends(get_session),
+    current_user_id: int = Depends(get_current_discord_user_id),
+    authorization: Annotated[str | None, Header()] = None,
+):
+    target_server_id = int(body.target_server_id)
+    if target_server_id == server_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="target_server_id must be different from source server",
+        )
+
+    await assert_dashboard_access(
+        session=session,
+        server_id=server_id,
+        caller_user_id=current_user_id,
+        authorization=authorization,
+    )
+    await assert_dashboard_access(
+        session=session,
+        server_id=target_server_id,
+        caller_user_id=current_user_id,
+        authorization=authorization,
+    )
+
+    result = await duplicate_selected_replies(
+        session=session,
+        source_server_id=server_id,
+        target_server_id=target_server_id,
+        reply_ids=body.reply_ids,
+        actor_user_id=current_user_id,
+    )
+    await session.commit()
+    return result

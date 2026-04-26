@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 import discord
 
 from src.modules.logs_setup import logger
+from src.modules.localization.service import tr
 
 logger = logger.logging.getLogger("bot")
 
@@ -72,22 +73,25 @@ def build_unmute_log_message(
     removed_role: bool,
     closed_actions: int,
     is_auto: bool = False,
+    locale: str | None = None,
 ) -> str:
+    action_name = tr(locale, "modlog.action_auto_unmute") if is_auto else tr(locale, "modlog.action_unmute")
     lines = [
-        "**Action:** `auto-unmute`" if is_auto else "**Action:** `unmute`",
-        f"**Target:** <@{target_user_id}> (`{_truncate(target_display, 120)}`, `{target_user_id}`)",
+        f"**{tr(locale, 'modlog.action_label')}:** `{action_name}`",
+        f"**{tr(locale, 'modlog.target_label')}:** <@{target_user_id}> (`{_truncate(target_display, 120)}`, `{target_user_id}`)",
     ]
     if moderator_user_id is not None:
         lines.append(
-            f"**Moderator:** <@{moderator_user_id}> (`{_truncate(moderator_display or 'unknown', 120)}`, `{moderator_user_id}`)"
+            f"**{tr(locale, 'modlog.moderator_label')}:** <@{moderator_user_id}> "
+            f"(`{_truncate(moderator_display or tr(locale, 'modlog.unknown'), 120)}`, `{moderator_user_id}`)"
         )
     lines.extend(
         [
-            f"**Reason:** {_truncate(reason, 1000)}",
-            f"**Removed Mute Role:** `{removed_role}`",
-            f"**Closed Active Mutes:** `{closed_actions}`",
-            f"**Logged At:** `{_format_dt(datetime.now(timezone.utc).replace(tzinfo=None))}`",
+            f"**{tr(locale, 'modlog.reason_label')}:** {_truncate(reason, 1000)}",
+            f"**{tr(locale, 'modlog.removed_role_label')}:** `{removed_role}`",
+            f"**{tr(locale, 'modlog.closed_actions_label')}:** `{closed_actions}`",
+            f"**{tr(locale, 'modlog.logged_at_label')}:** `{_format_dt(datetime.now(timezone.utc).replace(tzinfo=None))}`",
         ]
     )
-    message = "[MODERATION LOG]\n" + "\n".join(lines)
+    message = tr(locale, "modlog.header") + "\n" + "\n".join(lines)
     return _truncate(message, 1900)

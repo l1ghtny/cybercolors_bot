@@ -76,9 +76,12 @@ async def parse_server_moderation_rules(
 
 
 @moderation_rules_router.get("/{server_id}/parse-guide", response_model=ModerationRuleParseGuideModel)
-async def get_server_moderation_rules_parse_guide(server_id: int):
+async def get_server_moderation_rules_parse_guide(
+    server_id: int,
+    locale: str | None = Query(default=None),
+):
     _ = server_id
-    return get_rule_parse_guide()
+    return get_rule_parse_guide(locale=locale)
 
 
 @moderation_rules_router.post(

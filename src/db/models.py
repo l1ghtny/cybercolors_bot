@@ -44,6 +44,10 @@ class Server(SQLModel, table=True):
         back_populates="server",
         sa_relationship_kwargs={"uselist": False},
     )
+    localization_settings: Optional["ServerLocalizationSettings"] = Relationship(
+        back_populates="server",
+        sa_relationship_kwargs={"uselist": False},
+    )
 
 
 class GlobalUser(SQLModel, table=True):
@@ -227,6 +231,16 @@ class ServerModerationSettings(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
 
     server: Server = Relationship(back_populates="moderation_settings")
+
+
+class ServerLocalizationSettings(SQLModel, table=True):
+    __tablename__ = "server_localization_settings"
+
+    server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), primary_key=True))
+    locale_code: str = Field(default="en", nullable=False, max_length=10)
+    updated_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+
+    server: Server = Relationship(back_populates="localization_settings")
 
 
 # --- New Models for Moderation ---
