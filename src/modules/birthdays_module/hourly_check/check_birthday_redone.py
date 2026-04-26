@@ -8,7 +8,7 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import select
 
 from src.db.database import get_async_session
-from src.db.models import Birthday, Congratulation, GlobalUser, User
+from src.db.models import Birthday, Congratulation, GlobalUser, User, utcnow_utc_tz
 from src.misc_files import basevariables
 from src.modules.logs_setup import logger
 
@@ -108,7 +108,7 @@ async def check_birthday_new(client: discord.Client):
                     birthday_role = guild.get_role(server.birthday_role_id)
                     if birthday_role:
                         await member.add_roles(birthday_role)
-                        birthday.role_added_at = datetime.datetime.now(datetime.timezone.utc)
+                        birthday.role_added_at = utcnow_utc_tz()
                         await session.merge(birthday)
                         await session.commit()
                         await session.refresh(birthday)

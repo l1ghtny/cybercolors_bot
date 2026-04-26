@@ -463,8 +463,15 @@ async def show_replies(interaction: discord.Interaction):
 @tree.command(name='force_validation',
               description='command for testing purposes to check if validation works fine or not')
 async def force_validation(interaction: discord.Interaction):
-    await check_users_with_birthdays()
-    await interaction.response.send_message('команда выполнена')
+    await interaction.response.defer(ephemeral=True)
+    try:
+        logger.info('validation process started (forced)')
+        await main_validation_process(client)
+    except Exception as error:
+        logger.exception("Forced validation failed: %s", error)
+        await interaction.followup.send(f'Ошибка при валидации: {error}', ephemeral=True)
+        return
+    await interaction.followup.send('команда выполнена', ephemeral=True)
 
 
 @tree.command(name='cat_text', description='Котя с текстом')

@@ -23,6 +23,7 @@ from api.models.server_directory import (
     ServerUserModel,
     ServerUsersLookupRequest,
 )
+from api.models.user_profiles import UserProfileCardModel
 from api.services.server_directory import (
     build_server_metadata,
     get_server_channel_payload,
@@ -31,6 +32,7 @@ from api.services.server_directory import (
     lookup_server_users_by_ids,
     query_server_users,
 )
+from api.services.moderation_users_service import build_user_profile_card
 from src.db.database import get_session
 from src.db.models import Server
 
@@ -96,6 +98,23 @@ async def lookup_server_users(
         if raw_id.isdigit():
             user_ids.append(int(raw_id))
     return await lookup_server_users_by_ids(session=session, server_id=server_id, user_ids=user_ids)
+
+
+@servers.get(
+    "/{server_id}/users/{user_id}/profile",
+    response_model=UserProfileCardModel,
+    dependencies=[Depends(require_server_dashboard_access)],
+)
+async def get_server_user_profile_card(
+    server_id: int,
+    user_id: int,
+    session: AsyncSession = Depends(get_session),
+):
+    return await build_user_profile_card(
+        session=session,
+        server_id=server_id,
+        user_id=user_id,
+    )
 
 
 @servers.get("/{server_id}/dashboard-access", response_model=DashboardAccessReadModel)
