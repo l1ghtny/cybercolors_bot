@@ -19,6 +19,7 @@ from api.models.moderation_rules import (
 )
 from api.services.moderation_rules_service import (
     create_manual_rule,
+    delete_rule_permanently,
     deactivate_rule,
     get_rule_usage,
     get_rule_usage_stats_for_server,
@@ -196,3 +197,13 @@ async def disable_server_moderation_rule(
 ):
     disabled = await deactivate_rule(session=session, server_id=server_id, rule_id=rule_id)
     return to_rule_read_model(disabled)
+
+
+@moderation_rules_router.delete("/{server_id}/{rule_id}/hard", status_code=status.HTTP_204_NO_CONTENT)
+async def hard_delete_server_moderation_rule(
+    server_id: int,
+    rule_id: UUID,
+    session: AsyncSession = Depends(get_session),
+    _: None = Depends(require_server_admin_or_owner),
+):
+    await delete_rule_permanently(session=session, server_id=server_id, rule_id=rule_id)

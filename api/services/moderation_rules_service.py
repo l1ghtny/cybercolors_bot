@@ -264,6 +264,60 @@ async def deactivate_rule(
     return rule
 
 
+async def delete_rule_permanently(
+    session: AsyncSession,
+    server_id: int,
+    rule_id: UUID,
+) -> None:
+    rule = await session.get(ModerationRule, rule_id)
+    if not rule or rule.server_id != server_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Moderation rule not found")
+
+    deleted_at = naive_utcnow()
+
+    action_citations = (
+        await session.exec(
+            select(ModerationActionRuleCitation).where(
+                ModerationActionRuleCitation.server_id == server_id,
+                ModerationActionRuleCitation.rule_id == rule_id,
+            )
+        )
+    ).all()
+    for citation in action_citations:
+        citation.rule_id = None
+        citation.rule_deleted_at = deleted_at
+        session.add(citation)
+
+    case_citations = (
+        await session.exec(
+            select(ModerationCaseRuleCitation).where(
+                ModerationCaseRuleCitation.server_id == server_id,
+                ModerationCaseRuleCitation.rule_id == rule_id,
+            )
+        )
+    ).all()
+    for citation in case_citations:
+        citation.rule_id = None
+        citation.rule_deleted_at = deleted_at
+        session.add(citation)
+
+    linked_actions = (
+        await session.exec(
+            select(ModerationAction).where(
+                ModerationAction.server_id == server_id,
+                ModerationAction.rule_id == rule_id,
+            )
+        )
+    ).all()
+    for action in linked_actions:
+        action.rule_id = None
+        session.add(action)
+
+    await session.delete(rule)
+    await session.flush()
+    _invalidate_rule_usage_cache(server_id=server_id, rule_ids=[rule_id])
+
+
 async def _deactivate_existing_rules(session: AsyncSession, server_id: int):
     existing_rules = await list_rules(session=session, server_id=server_id, include_inactive=False)
     now = naive_utcnow()
