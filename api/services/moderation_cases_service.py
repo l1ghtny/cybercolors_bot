@@ -4,7 +4,7 @@ from typing import List
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -14,13 +14,17 @@ from api.models.moderation_cases import (
     ModerationCaseDetailsModel,
     ModerationCaseEvidenceCreateModel,
     ModerationCaseEvidenceReadModel,
+    ModerationCaseLinkedUserSummaryModel,
+    ModerationCaseListStatsModel,
     ModerationCaseNoteCreateModel,
     ModerationCaseNoteReadModel,
     ModerationCaseReadModel,
+    ModerationCaseSummaryModel,
     ModerationCaseRulesUpsertModel,
     ModerationCaseActionCreateFromCaseModel,
     ModerationCaseStatusUpdateModel,
     ModerationCaseUserReadModel,
+    ModerationActorModel,
 )
 from api.services.moderation_actions_service import create_action
 from api.services.moderation_core import (
@@ -191,6 +195,136 @@ async def _list_case_rule_ids(session: AsyncSession, case_id: UUID) -> list[str]
     return [str(rule_id) for rule_id in rows if rule_id is not None]
 
 
+async def _build_actor_map(
+    session: AsyncSession,
+    server_id: int,
+    user_ids: set[int],
+) -> dict[int, ModerationActorModel]:
+    if not user_ids:
+        return {}
+
+    global_users = (
+        await session.exec(
+            select(GlobalUser).where(GlobalUser.discord_id.in_(list(user_ids)))
+        )
+    ).all()
+    memberships = (
+        await session.exec(
+            select(User).where(
+                User.server_id == server_id,
+                User.user_id.in_(list(user_ids)),
+            )
+        )
+    ).all()
+
+    global_by_id = {item.discord_id: item for item in global_users}
+    membership_by_id = {item.user_id: item for item in memberships}
+    actors: dict[int, ModerationActorModel] = {}
+
+    for user_id in user_ids:
+        global_user = global_by_id.get(user_id)
+        membership = membership_by_id.get(user_id)
+        display_name = (
+            membership.server_nickname
+            if membership and membership.server_nickname
+            else (global_user.username if global_user and global_user.username else str(user_id))
+        )
+        actors[user_id] = ModerationActorModel(
+            user_id=str(user_id),
+            username=global_user.username if global_user else None,
+            server_nickname=membership.server_nickname if membership else None,
+            display_name=display_name,
+            avatar_hash=global_user.avatar_hash if global_user else None,
+        )
+    return actors
+
+
+async def _count_case_actions(
+    session: AsyncSession,
+    server_id: int,
+    case_ids: list[UUID],
+) -> dict[UUID, int]:
+    if not case_ids:
+        return {}
+
+    action_ids_by_case: dict[UUID, set[UUID]] = {}
+
+    primary_pairs = (
+        await session.exec(
+            select(ModerationAction.case_id, ModerationAction.id).where(
+                ModerationAction.server_id == server_id,
+                ModerationAction.case_id.in_(case_ids),
+            )
+        )
+    ).all()
+    for case_id, action_id in primary_pairs:
+        if case_id is None:
+            continue
+        action_ids_by_case.setdefault(case_id, set()).add(action_id)
+
+    linked_pairs = (
+        await session.exec(
+            select(ModerationCaseActionLink.case_id, ModerationCaseActionLink.moderation_action_id)
+            .join(
+                ModerationAction,
+                ModerationAction.id == ModerationCaseActionLink.moderation_action_id,
+            )
+            .where(
+                ModerationCaseActionLink.case_id.in_(case_ids),
+                ModerationAction.server_id == server_id,
+            )
+        )
+    ).all()
+    for case_id, action_id in linked_pairs:
+        action_ids_by_case.setdefault(case_id, set()).add(action_id)
+
+    return {case_id: len(action_ids) for case_id, action_ids in action_ids_by_case.items()}
+
+
+async def _count_case_entities(
+    session: AsyncSession,
+    case_ids: list[UUID],
+) -> tuple[dict[UUID, int], dict[UUID, int], dict[UUID, int]]:
+    if not case_ids:
+        return {}, {}, {}
+
+    rule_counts_rows = (
+        await session.exec(
+            select(
+                ModerationCaseRuleCitation.case_id,
+                func.count(ModerationCaseRuleCitation.id),
+            )
+            .where(ModerationCaseRuleCitation.case_id.in_(case_ids))
+            .group_by(ModerationCaseRuleCitation.case_id)
+        )
+    ).all()
+    note_counts_rows = (
+        await session.exec(
+            select(
+                ModerationCaseNote.case_id,
+                func.count(ModerationCaseNote.id),
+            )
+            .where(ModerationCaseNote.case_id.in_(case_ids))
+            .group_by(ModerationCaseNote.case_id)
+        )
+    ).all()
+    evidence_counts_rows = (
+        await session.exec(
+            select(
+                ModerationCaseEvidence.case_id,
+                func.count(ModerationCaseEvidence.id),
+            )
+            .where(ModerationCaseEvidence.case_id.in_(case_ids))
+            .group_by(ModerationCaseEvidence.case_id)
+        )
+    ).all()
+
+    rule_counts = {case_id: int(count or 0) for case_id, count in rule_counts_rows}
+    note_counts = {case_id: int(count or 0) for case_id, count in note_counts_rows}
+    evidence_counts = {case_id: int(count or 0) for case_id, count in evidence_counts_rows}
+    return rule_counts, note_counts, evidence_counts
+
+
 async def create_case(
     session: AsyncSession,
     server_id: int,
@@ -266,7 +400,8 @@ async def list_cases(
     status_filter: CaseStatus | None = None,
     target_user_id: str | None = None,
     user_id: str | None = None,
-) -> list[ModerationCaseReadModel]:
+    limit: int | None = None,
+) -> list[ModerationCaseSummaryModel]:
     statement = select(ModerationCase).where(ModerationCase.server_id == server_id)
     if status_filter:
         statement = statement.where(ModerationCase.status == status_filter)
@@ -284,8 +419,73 @@ async def list_cases(
         )
 
     statement = statement.order_by(ModerationCase.created_at.desc())
+    if limit is not None:
+        statement = statement.limit(limit)
     cases = (await session.exec(statement)).all()
-    return [await to_case_read(item, session) for item in cases]
+    if not cases:
+        return []
+
+    case_ids = [item.id for item in cases if item.id is not None]
+    if not case_ids:
+        return []
+
+    case_user_links = (
+        await session.exec(
+            select(ModerationCaseUser)
+            .where(ModerationCaseUser.case_id.in_(case_ids))
+            .order_by(ModerationCaseUser.added_at.asc())
+        )
+    ).all()
+    links_by_case: dict[UUID, list[ModerationCaseUser]] = {}
+    all_actor_ids: set[int] = set()
+    for item in cases:
+        all_actor_ids.add(item.target_user_id)
+        all_actor_ids.add(item.opened_by_user_id)
+        if item.closed_by_user_id is not None:
+            all_actor_ids.add(item.closed_by_user_id)
+    for link in case_user_links:
+        links_by_case.setdefault(link.case_id, []).append(link)
+        all_actor_ids.add(link.user_id)
+
+    actors = await _build_actor_map(session=session, server_id=server_id, user_ids=all_actor_ids)
+    action_counts = await _count_case_actions(session=session, server_id=server_id, case_ids=case_ids)
+    rule_counts, note_counts, evidence_counts = await _count_case_entities(session=session, case_ids=case_ids)
+
+    summaries: list[ModerationCaseSummaryModel] = []
+    for item in cases:
+        if item.id is None:
+            continue
+        linked_users = [
+            ModerationCaseLinkedUserSummaryModel(
+                user=actors[link.user_id],
+                role=link.role,
+            )
+            for link in links_by_case.get(item.id, [])
+            if link.user_id in actors
+        ]
+        summaries.append(
+            ModerationCaseSummaryModel(
+                id=str(item.id),
+                server_id=str(item.server_id),
+                title=item.title,
+                summary=item.summary,
+                status=item.status,
+                created_at=item.created_at,
+                closed_at=item.closed_at,
+                target_user=actors[item.target_user_id],
+                opened_by=actors[item.opened_by_user_id],
+                closed_by=actors.get(item.closed_by_user_id) if item.closed_by_user_id is not None else None,
+                linked_users=linked_users,
+                stats=ModerationCaseListStatsModel(
+                    linked_users_count=len(linked_users),
+                    linked_actions_count=action_counts.get(item.id, 0),
+                    rules_count=rule_counts.get(item.id, 0),
+                    notes_count=note_counts.get(item.id, 0),
+                    evidence_count=evidence_counts.get(item.id, 0),
+                ),
+            )
+        )
+    return summaries
 
 
 async def get_case_details(

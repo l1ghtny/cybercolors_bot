@@ -3,11 +3,16 @@ import logging
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy.orm import selectinload
+from sqlalchemy import func
+from sqlalchemy.orm import aliased, selectinload
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from api.models.moderation_actions import ModerationActionCreate, ModerationActionRead
+from api.models.moderation_actions import (
+    ModerationActionCreate,
+    ModerationActionRead,
+    ModerationActionSummaryModel,
+)
 from api.models.moderation_cases import DeletedMessageCreateModel, DeletedMessageReadModel
 from api.services.discord_guilds import create_channel_message, fetch_guild_channels
 from api.services.moderation_core import build_actor, naive_utcnow, to_deleted_message_read, to_moderation_history
@@ -179,8 +184,44 @@ async def _load_action_for_read(session: AsyncSession, action_id: UUID) -> Moder
                 selectinload(ModerationAction.rule_citations).selectinload(ModerationActionRuleCitation.rule),
             )
         )
-    ).one()
+    ).one_or_none()
+    if action is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Moderation action not found")
     return action
+
+
+def _to_action_summary(
+    action_id: UUID,
+    action_type,
+    server_id: int,
+    target_user_id: int,
+    moderator_user_id: int,
+    reason: str,
+    case_id: UUID | None,
+    created_at: datetime,
+    expires_at: datetime | None,
+    is_active: bool,
+    target_username: str | None,
+    moderator_username: str | None,
+    rules_count: int,
+    deleted_messages_count: int,
+) -> ModerationActionSummaryModel:
+    return ModerationActionSummaryModel(
+        id=str(action_id),
+        action_type=action_type,
+        server_id=str(server_id),
+        target_user_id=str(target_user_id),
+        target_user_username=target_username or str(target_user_id),
+        moderator_user_id=str(moderator_user_id),
+        moderator_username=moderator_username or str(moderator_user_id),
+        reason=reason,
+        case_id=str(case_id) if case_id else None,
+        created_at=created_at,
+        expires_at=expires_at,
+        is_active=is_active,
+        rules_count=rules_count,
+        deleted_messages_count=deleted_messages_count,
+    )
 
 
 async def _send_action_to_mod_log(
@@ -338,6 +379,116 @@ async def create_action(
     return db_action
 
 
+async def list_action_summaries(
+    session: AsyncSession,
+    server_id: int,
+    target_user_id: int | None = None,
+    limit: int = 500,
+) -> list[ModerationActionSummaryModel]:
+    target_user = aliased(GlobalUser)
+    moderator_user = aliased(GlobalUser)
+
+    statement = (
+        select(
+            ModerationAction.id,
+            ModerationAction.action_type,
+            ModerationAction.server_id,
+            ModerationAction.target_user_id,
+            ModerationAction.moderator_user_id,
+            ModerationAction.reason,
+            ModerationAction.case_id,
+            ModerationAction.created_at,
+            ModerationAction.expires_at,
+            ModerationAction.is_active,
+            target_user.username.label("target_username"),
+            moderator_user.username.label("moderator_username"),
+            func.count(func.distinct(ModerationActionRuleCitation.id)).label("rules_count"),
+            func.count(func.distinct(ModerationActionDeletedMessageLink.id)).label("deleted_messages_count"),
+        )
+        .join(target_user, target_user.discord_id == ModerationAction.target_user_id, isouter=True)
+        .join(moderator_user, moderator_user.discord_id == ModerationAction.moderator_user_id, isouter=True)
+        .outerjoin(ModerationActionRuleCitation, ModerationActionRuleCitation.action_id == ModerationAction.id)
+        .outerjoin(
+            ModerationActionDeletedMessageLink,
+            ModerationActionDeletedMessageLink.moderation_action_id == ModerationAction.id,
+        )
+        .where(ModerationAction.server_id == server_id)
+    )
+    if target_user_id is not None:
+        statement = statement.where(ModerationAction.target_user_id == target_user_id)
+
+    statement = (
+        statement.group_by(
+            ModerationAction.id,
+            ModerationAction.action_type,
+            ModerationAction.server_id,
+            ModerationAction.target_user_id,
+            ModerationAction.moderator_user_id,
+            ModerationAction.reason,
+            ModerationAction.case_id,
+            ModerationAction.created_at,
+            ModerationAction.expires_at,
+            ModerationAction.is_active,
+            target_user.username,
+            moderator_user.username,
+        )
+        .order_by(ModerationAction.created_at.desc())
+        .limit(limit)
+    )
+    rows = (await session.exec(statement)).all()
+    return [
+        _to_action_summary(
+            action_id=row[0],
+            action_type=row[1],
+            server_id=row[2],
+            target_user_id=row[3],
+            moderator_user_id=row[4],
+            reason=row[5],
+            case_id=row[6],
+            created_at=row[7],
+            expires_at=row[8],
+            is_active=row[9],
+            target_username=row[10],
+            moderator_username=row[11],
+            rules_count=int(row[12] or 0),
+            deleted_messages_count=int(row[13] or 0),
+        )
+        for row in rows
+    ]
+
+
+async def get_action_details(
+    session: AsyncSession,
+    server_id: int,
+    action_id: UUID,
+) -> ModerationActionRead:
+    action = await _load_action_for_read(session=session, action_id=action_id)
+    if action.server_id != server_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Moderation action not found")
+    return to_moderation_history([action])[0]
+
+
+async def get_user_history_summary_by_search(
+    session: AsyncSession,
+    server_id: int,
+    search: str,
+    limit: int = 500,
+) -> list[ModerationActionSummaryModel]:
+    if search.isdigit():
+        target_user_id = int(search)
+    else:
+        user = (await session.exec(select(GlobalUser).where(GlobalUser.username == search))).one_or_none()
+        if not user:
+            return []
+        target_user_id = user.discord_id
+    return await list_action_summaries(
+        session=session,
+        server_id=server_id,
+        target_user_id=target_user_id,
+        limit=limit,
+    )
+
+
 async def get_user_history_by_search(
     session: AsyncSession,
     server_id: int,
@@ -372,6 +523,20 @@ async def get_server_history(
         limit=limit,
     )
     return to_moderation_history(actions)
+
+
+async def get_server_history_summary(
+    session: AsyncSession,
+    server_id: int,
+    target_user_id: str | None = None,
+    limit: int = 500,
+) -> list[ModerationActionSummaryModel]:
+    return await list_action_summaries(
+        session=session,
+        server_id=server_id,
+        target_user_id=int(target_user_id) if target_user_id else None,
+        limit=limit,
+    )
 
 
 async def _get_channel_names(server_id: int) -> dict[int, str]:

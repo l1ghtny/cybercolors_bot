@@ -13,16 +13,22 @@ from api.dependencies.current_user import (
 )
 from api.dependencies.server_access import require_server_dashboard_access
 from api.services.dashboard_access_service import assert_dashboard_access
-from api.models.moderation_actions import ModerationActionCreate, ModerationActionRead
+from api.models.moderation_actions import (
+    ModerationActionCreate,
+    ModerationActionRead,
+    ModerationActionSummaryModel,
+)
 from api.models.moderation_cases import DeletedMessageCreateModel, DeletedMessageLinkModel, DeletedMessageReadModel
 from api.services.moderation_core import to_moderation_history
 from api.services.moderation_actions_service import (
     add_deleted_message_for_action as add_deleted_message_for_action_service,
     browse_deleted_messages_for_server,
     create_action as create_action_service,
+    get_action_details as get_action_details_service,
     get_deleted_messages_for_action as get_deleted_messages_for_action_service,
-    get_server_history,
-    get_user_history_by_search,
+    get_server_history_summary,
+    get_user_history_summary_by_search,
+    list_action_summaries,
     link_existing_deleted_message_to_action as link_existing_deleted_message_to_action_service,
 )
 from src.db.database import get_session
@@ -134,34 +140,47 @@ async def create_moderation_action_v2(
 
 @moderation_actions_router.get(
     "/history/{server_id}/get_user_history",
-    response_model=List[ModerationActionRead],
+    response_model=List[ModerationActionSummaryModel],
     deprecated=True,
     dependencies=[Depends(require_server_dashboard_access)],
 )
 async def get_user_history(
     server_id: int,
     search: str = Query(..., description="The ID or username of the user to search for."),
+    limit: int = Query(default=500, ge=1, le=2000),
     session: AsyncSession = Depends(get_session),
 ):
-    return await get_user_history_by_search(session=session, server_id=server_id, search=search)
+    return await get_user_history_summary_by_search(
+        session=session,
+        server_id=server_id,
+        search=search,
+        limit=limit,
+    )
 
 
 @moderation_actions_router.get(
     "/history/{server_id}/users",
-    response_model=List[ModerationActionRead],
+    response_model=List[ModerationActionSummaryModel],
     dependencies=[Depends(require_server_dashboard_access)],
 )
 async def get_user_history_v2(
     server_id: int,
     search: str = Query(..., description="The ID or username of the user to search for."),
+    limit: int = Query(default=500, ge=1, le=2000),
     session: AsyncSession = Depends(get_session),
 ):
-    return await get_user_history_by_search(session=session, server_id=server_id, search=search)
+    return await get_user_history_summary_by_search(
+        session=session,
+        server_id=server_id,
+        search=search,
+        limit=limit,
+    )
 
 
 @moderation_actions_router.get(
     "/history/{server_id}/",
-    response_model=List[ModerationActionRead],
+    response_model=List[ModerationActionSummaryModel],
+    deprecated=True,
     dependencies=[Depends(require_server_dashboard_access)],
 )
 async def get_server_moderation_history(
@@ -170,7 +189,7 @@ async def get_server_moderation_history(
     limit: int = Query(default=500, ge=1, le=2000),
     session: AsyncSession = Depends(get_session),
 ):
-    return await get_server_history(
+    return await get_server_history_summary(
         session=session,
         server_id=server_id,
         target_user_id=target_user_id,
@@ -180,7 +199,8 @@ async def get_server_moderation_history(
 
 @moderation_actions_router.get(
     "/history/{server_id}",
-    response_model=List[ModerationActionRead],
+    response_model=List[ModerationActionSummaryModel],
+    deprecated=True,
     dependencies=[Depends(require_server_dashboard_access)],
 )
 async def get_server_moderation_history_v2(
@@ -189,12 +209,44 @@ async def get_server_moderation_history_v2(
     limit: int = Query(default=500, ge=1, le=2000),
     session: AsyncSession = Depends(get_session),
 ):
-    return await get_server_history(
+    return await get_server_history_summary(
         session=session,
         server_id=server_id,
         target_user_id=target_user_id,
         limit=limit,
     )
+
+
+@moderation_actions_router.get(
+    "/actions/{server_id}",
+    response_model=List[ModerationActionSummaryModel],
+    dependencies=[Depends(require_server_dashboard_access)],
+)
+async def list_moderation_actions(
+    server_id: int,
+    target_user_id: str | None = Query(default=None, pattern=r"^\d+$"),
+    limit: int = Query(default=500, ge=1, le=2000),
+    session: AsyncSession = Depends(get_session),
+):
+    return await list_action_summaries(
+        session=session,
+        server_id=server_id,
+        target_user_id=int(target_user_id) if target_user_id else None,
+        limit=limit,
+    )
+
+
+@moderation_actions_router.get(
+    "/actions/{server_id}/{action_id}",
+    response_model=ModerationActionRead,
+    dependencies=[Depends(require_server_dashboard_access)],
+)
+async def get_moderation_action_details(
+    server_id: int,
+    action_id: UUID,
+    session: AsyncSession = Depends(get_session),
+):
+    return await get_action_details_service(session=session, server_id=server_id, action_id=action_id)
 
 
 @moderation_actions_router.post(

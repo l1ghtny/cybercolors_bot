@@ -49,3 +49,20 @@ class ModerationActionRead(BaseModel):
     created_at: datetime
     expires_at: datetime | None = None
     is_active: bool
+
+
+class ModerationActionSummaryModel(BaseModel):
+    id: str
+    action_type: ActionType
+    server_id: str
+    target_user_id: str
+    target_user_username: str
+    moderator_user_id: str
+    moderator_username: str
+    reason: str
+    case_id: str | None = None
+    created_at: datetime
+    expires_at: datetime | None = None
+    is_active: bool
+    rules_count: int = 0
+    deleted_messages_count: int = 0

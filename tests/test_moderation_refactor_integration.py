@@ -9,15 +9,15 @@ from api.models.moderation_cases import (
     ModerationCaseActionCreateFromCaseModel,
     ModerationCaseCreateModel,
 )
-from api.services.moderation_actions_service import get_server_history
-from api.services.moderation_cases_service import create_action_from_case, create_case, get_case_details
+from api.services.moderation_actions_service import get_action_details, get_server_history, list_action_summaries
+from api.services.moderation_cases_service import create_action_from_case, create_case, get_case_details, list_cases
 from api.services.moderation_rules_service import create_manual_rule, delete_rule_permanently, get_rule_usage
 from api.services.monitoring_service import (
     add_monitored_user_from_case,
     get_monitored_user_details,
     upsert_monitored_user,
 )
-from api.services.moderation_users_service import build_user_profile_card
+from api.services.moderation_users_service import build_user_profile_card, list_actions_for_user, list_cases_for_user
 from src.db.database import get_async_session
 from src.db.models import (
     ActionType,
@@ -220,7 +220,7 @@ async def _scenario_monitoring_cross_refs_and_profile_rule_stats() -> None:
         )
         assert any(note.author.user_id == "system" for note in details.notes)
 
-        await create_action_from_case(
+        created_action = await create_action_from_case(
             session=session,
             server_id=server_id,
             case_id=UUID(moderation_case.id),
@@ -233,6 +233,54 @@ async def _scenario_monitoring_cross_refs_and_profile_rule_stats() -> None:
             ),
             actor_user_id=moderator_id,
         )
+
+        action_summaries = await list_action_summaries(
+            session=session,
+            server_id=server_id,
+            target_user_id=target_id,
+            limit=20,
+        )
+        assert action_summaries
+        action_summary = action_summaries[0]
+        assert action_summary.id == created_action.id
+        assert action_summary.rules_count >= 1
+        assert action_summary.case_id == moderation_case.id
+
+        per_user_actions = await list_actions_for_user(
+            session=session,
+            server_id=server_id,
+            user_id=target_id,
+            limit=20,
+        )
+        assert per_user_actions
+        assert per_user_actions[0].id == created_action.id
+
+        action_details = await get_action_details(
+            session=session,
+            server_id=server_id,
+            action_id=UUID(created_action.id),
+        )
+        assert action_details.id == created_action.id
+        assert action_details.rules
+
+        case_summaries = await list_cases(
+            session=session,
+            server_id=server_id,
+        )
+        assert case_summaries
+        summary = case_summaries[0]
+        assert summary.id == moderation_case.id
+        assert summary.stats.linked_actions_count >= 1
+        assert summary.stats.linked_users_count >= 2
+        assert any(item.user.user_id == str(target_id) for item in summary.linked_users)
+
+        related_summaries = await list_cases_for_user(
+            session=session,
+            server_id=server_id,
+            user_id=target_id,
+            limit=20,
+        )
+        assert any(item.id == moderation_case.id for item in related_summaries)
 
         monitored_details = await get_monitored_user_details(
             session=session,

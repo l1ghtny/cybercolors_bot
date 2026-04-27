@@ -17,6 +17,7 @@ from api.models.moderation_cases import (
     ModerationCaseNoteCreateModel,
     ModerationCaseNoteReadModel,
     ModerationCaseReadModel,
+    ModerationCaseSummaryModel,
     ModerationCaseRulesUpsertModel,
     ModerationCaseStatusUpdateModel,
     ModerationCaseUserAddModel,
@@ -72,7 +73,7 @@ async def create_moderation_case(
 
 @moderation_cases_router.get(
     "/cases/{server_id}",
-    response_model=List[ModerationCaseReadModel],
+    response_model=List[ModerationCaseSummaryModel],
     dependencies=[Depends(require_server_dashboard_access)],
 )
 async def list_moderation_cases(

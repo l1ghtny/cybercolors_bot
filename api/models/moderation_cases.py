@@ -75,6 +75,34 @@ class ModerationCaseReadModel(BaseModel):
     linked_action_ids: list[str] = Field(default_factory=list)
 
 
+class ModerationCaseLinkedUserSummaryModel(BaseModel):
+    user: ModerationActorModel
+    role: CaseUserRole
+
+
+class ModerationCaseListStatsModel(BaseModel):
+    linked_users_count: int = 0
+    linked_actions_count: int = 0
+    rules_count: int = 0
+    notes_count: int = 0
+    evidence_count: int = 0
+
+
+class ModerationCaseSummaryModel(BaseModel):
+    id: str
+    server_id: str
+    title: str
+    summary: str | None = None
+    status: CaseStatus
+    created_at: datetime
+    closed_at: datetime | None = None
+    target_user: ModerationActorModel
+    opened_by: ModerationActorModel
+    closed_by: ModerationActorModel | None = None
+    linked_users: list[ModerationCaseLinkedUserSummaryModel] = Field(default_factory=list)
+    stats: ModerationCaseListStatsModel = Field(default_factory=ModerationCaseListStatsModel)
+
+
 class ModerationCaseNoteCreateModel(BaseModel):
     author_user_id: str | None = Field(default=None, pattern=r"^\d*$")
     note: str = Field(min_length=1, max_length=10000)
@@ -230,4 +258,5 @@ class ModerationCaseDetailsModel(BaseModel):
 
 ModerationActionSummaryModel.model_rebuild()
 ModerationCaseReadModel.model_rebuild()
+ModerationCaseSummaryModel.model_rebuild()
 ModerationCaseDetailsModel.model_rebuild()

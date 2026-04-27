@@ -4,9 +4,8 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from api.models.moderation_cases import ModerationRuleRef
-from api.models.moderation_actions import ModerationActionRead
-from api.models.moderation_cases import ModerationCaseReadModel
+from api.models.moderation_actions import ModerationActionSummaryModel
+from api.models.moderation_cases import ModerationCaseSummaryModel, ModerationRuleRef
 from api.models.user_profiles import (
     MonitoredUserSummaryModel,
     TopRuleViolationModel,
@@ -15,8 +14,9 @@ from api.models.user_profiles import (
     UserModerationCaseSummaryModel,
     UserProfileCardModel,
 )
-from api.services.moderation_core import get_nickname_history, to_case_read, to_moderation_history, to_nickname_record
-from api.services.moderation_queries import query_moderation_actions
+from api.services.moderation_actions_service import list_action_summaries
+from api.services.moderation_cases_service import list_cases as list_cases_service
+from api.services.moderation_core import get_nickname_history, to_nickname_record
 from src.db.models import (
     CaseStatus,
     GlobalUser,
@@ -271,14 +271,13 @@ async def list_actions_for_user(
     server_id: int,
     user_id: int,
     limit: int = 200,
-) -> list[ModerationActionRead]:
-    actions = await query_moderation_actions(
+) -> list[ModerationActionSummaryModel]:
+    return await list_action_summaries(
         session=session,
         server_id=server_id,
         target_user_id=user_id,
         limit=limit,
     )
-    return to_moderation_history(actions)
 
 
 async def list_cases_for_user(
@@ -287,14 +286,11 @@ async def list_cases_for_user(
     user_id: int,
     status_filter: CaseStatus | None = None,
     limit: int = 200,
-) -> list[ModerationCaseReadModel]:
-    statement = select(ModerationCase).where(
-        ModerationCase.server_id == server_id,
-        _cases_for_user_clause(user_id),
+) -> list[ModerationCaseSummaryModel]:
+    return await list_cases_service(
+        session=session,
+        server_id=server_id,
+        status_filter=status_filter,
+        user_id=str(user_id),
+        limit=limit,
     )
-    if status_filter:
-        statement = statement.where(ModerationCase.status == status_filter)
-
-    statement = statement.order_by(ModerationCase.created_at.desc()).limit(limit)
-    cases = (await session.exec(statement)).all()
-    return [await to_case_read(case, session) for case in cases]

@@ -17,8 +17,8 @@ from api.models.monitoring import (
     MonitoredUserStatusEventReadModel,
     MonitoredUserUpdateModel,
 )
-from api.models.moderation_actions import ModerationActionRead
-from api.models.moderation_cases import ModerationCaseReadModel
+from api.models.moderation_actions import ModerationActionSummaryModel
+from api.models.moderation_cases import ModerationCaseSummaryModel
 from api.models.user_profiles import (
     NicknameLogModel,
     NicknameRecordModel,
@@ -135,7 +135,7 @@ async def get_user_profile_card(
     )
 
 
-@moderation_users_router.get("/users/{server_id}/{user_id}/actions", response_model=List[ModerationActionRead])
+@moderation_users_router.get("/users/{server_id}/{user_id}/actions", response_model=List[ModerationActionSummaryModel])
 async def get_actions_for_user(
     server_id: int,
     user_id: int,
@@ -145,7 +145,7 @@ async def get_actions_for_user(
     return await list_actions_for_user_service(session=session, server_id=server_id, user_id=user_id, limit=limit)
 
 
-@moderation_users_router.get("/users/{server_id}/{user_id}/cases", response_model=List[ModerationCaseReadModel])
+@moderation_users_router.get("/users/{server_id}/{user_id}/cases", response_model=List[ModerationCaseSummaryModel])
 async def get_cases_for_user(
     server_id: int,
     user_id: int,
