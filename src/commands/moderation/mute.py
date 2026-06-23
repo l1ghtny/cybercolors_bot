@@ -1,116 +1,35 @@
-import os
 from datetime import datetime, timedelta, timezone
 
 import discord
 from discord import app_commands
-import httpx
 
+from api.models.moderation_settings import ServerModerationSettingsUpdateModel
+from api.models.server_localization import ServerLocalizationSettingsUpdateModel
+from api.services.moderation_settings import (
+    get_or_create_server_moderation_settings,
+    update_server_moderation_settings,
+)
+from api.services.server_localization import update_server_localization_settings
 from src.db.database import get_async_session
+from src.db.models import ActionType
 from src.modules.localization.catalog import SUPPORTED_LOCALES
-from src.modules.localization.service import get_server_locale, is_supported_locale, set_server_locale, tr
+from src.modules.localization.service import get_server_locale, is_supported_locale, tr
+from src.modules.moderation.bot_services import (
+    create_bot_moderation_action,
+    fetch_active_rule_models,
+    find_rule,
+    rule_choices,
+    rule_label,
+    validate_target_for_moderation,
+)
 from src.modules.moderation.mute_management import (
     deactivate_user_mutes,
-    get_or_create_moderation_settings,
-    try_reconnect_voice_member,
 )
 from src.modules.moderation.mod_log import build_unmute_log_message, send_mod_log_message
 
 
-def _bot_api_url() -> str:
-    return os.getenv("BOT_API_URL", "").rstrip("/")
-
-
-async def _fetch_server_rules(server_id: int) -> list[dict]:
-    base_url = _bot_api_url()
-    if not base_url:
-        raise RuntimeError("BOT_API_URL is not configured")
-    api_url = f"{base_url}/moderation/rules/{server_id}"
-    async with httpx.AsyncClient() as client:
-        response = await client.get(api_url)
-        response.raise_for_status()
-        payload = response.json()
-    if isinstance(payload, list):
-        return payload
-    return []
-
-
-def _find_rule(rules: list[dict], rule_id: str) -> dict | None:
-    for rule in rules:
-        if str(rule.get("id")) == rule_id:
-            return rule
-    return None
-
-
-def _rule_label(rule: dict) -> str:
-    code = (rule.get("code") or "").strip()
-    title = (rule.get("title") or "").strip()
-    if code:
-        return f"{code} {title}".strip()
-    return title or tr(None, "common.rule_fallback")
-
-
 def _localized_bool(locale: str, value: bool) -> str:
     return tr(locale, "common.bool_true" if value else "common.bool_false")
-
-
-def _validate_target_for_moderation(
-    interaction: discord.Interaction,
-    target: discord.Member,
-    locale: str,
-) -> str | None:
-    guild = interaction.guild
-    if guild is None:
-        return tr(locale, "common.server_only")
-    if target.id == interaction.user.id:
-        return tr(locale, "common.target_self")
-    if target.id == guild.owner_id:
-        return tr(locale, "common.target_owner")
-
-    actor = interaction.user if isinstance(interaction.user, discord.Member) else None
-    if actor and guild.owner_id != actor.id and target.top_role >= actor.top_role:
-        return tr(locale, "common.target_hierarchy")
-
-    me = guild.me
-    if me and target.top_role >= me.top_role:
-        return tr(locale, "common.target_bot_hierarchy")
-    return None
-
-
-async def _log_moderation_action(
-    interaction: discord.Interaction,
-    user: discord.Member,
-    action_type: str,
-    rule_id: str | None,
-    commentary: str | None,
-    reason: str | None,
-    expires_at: datetime | None = None,
-):
-    base_url = _bot_api_url()
-    if not base_url:
-        raise RuntimeError("BOT_API_URL is not configured")
-
-    payload = {
-        "action_type": action_type,
-        "moderator_user_id": interaction.user.id,
-        "rule_id": rule_id,
-        "commentary": commentary,
-        "reason": reason,
-        "expires_at": expires_at.isoformat() if expires_at else None,
-        "target_user_id": user.id,
-        "target_user_name": user.name,
-        "target_user_joined_at": (
-            user.joined_at.isoformat()
-            if user.joined_at is not None
-            else datetime.now(timezone.utc).isoformat()
-        ),
-        "target_user_server_nickname": user.nick,
-        "server_id": interaction.guild.id,
-        "server_name": interaction.guild.name,
-    }
-
-    async with httpx.AsyncClient() as client:
-        response = await client.post(f"{base_url}/moderation/create_action", json=payload)
-        response.raise_for_status()
 
 
 async def _apply_mute_overwrites(guild: discord.Guild, role: discord.Role) -> tuple[int, int]:
@@ -152,10 +71,9 @@ async def moderation_settings(interaction: discord.Interaction):
     locale = await get_server_locale(interaction.guild.id)
     not_configured = tr(locale, "common.not_configured")
     async with get_async_session() as session:
-        settings = await get_or_create_moderation_settings(
+        settings = await get_or_create_server_moderation_settings(
             session=session,
             server_id=interaction.guild.id,
-            server_name=interaction.guild.name,
         )
         mute_role = interaction.guild.get_role(settings.mute_role_id) if settings.mute_role_id else None
         mute_role_name = mute_role.name if mute_role else not_configured
@@ -199,14 +117,11 @@ async def moderation_settings(interaction: discord.Interaction):
 async def moderation_set_mute_role(interaction: discord.Interaction, role: discord.Role):
     await interaction.response.defer(ephemeral=True)
     async with get_async_session() as session:
-        settings = await get_or_create_moderation_settings(
+        await update_server_moderation_settings(
             session=session,
             server_id=interaction.guild.id,
-            server_name=interaction.guild.name,
+            body=ServerModerationSettingsUpdateModel(mute_role_id=str(role.id)),
         )
-        settings.mute_role_id = role.id
-        settings.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
-        session.add(settings)
         await session.commit()
 
     locale = await get_server_locale(interaction.guild.id)
@@ -221,16 +136,17 @@ async def moderation_set_mute_role(interaction: discord.Interaction, role: disco
 async def moderation_set_log_channel(interaction: discord.Interaction, channel: discord.TextChannel):
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
-    async with get_async_session() as session:
-        settings = await get_or_create_moderation_settings(
-            session=session,
-            server_id=interaction.guild.id,
-            server_name=interaction.guild.name,
-        )
-        settings.mod_log_channel_id = channel.id
-        settings.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
-        session.add(settings)
-        await session.commit()
+    try:
+        async with get_async_session() as session:
+            await update_server_moderation_settings(
+                session=session,
+                server_id=interaction.guild.id,
+                body=ServerModerationSettingsUpdateModel(mod_log_channel_id=str(channel.id)),
+            )
+            await session.commit()
+    except Exception as error:
+        await interaction.followup.send(str(error), ephemeral=True)
+        return
     await interaction.followup.send(
         tr(locale, "settings.log_channel_set", mention=channel.mention),
         ephemeral=True,
@@ -246,14 +162,11 @@ async def moderation_clear_log_channel(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
     async with get_async_session() as session:
-        settings = await get_or_create_moderation_settings(
+        await update_server_moderation_settings(
             session=session,
             server_id=interaction.guild.id,
-            server_name=interaction.guild.name,
+            body=ServerModerationSettingsUpdateModel(mod_log_channel_id=""),
         )
-        settings.mod_log_channel_id = None
-        settings.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
-        session.add(settings)
         await session.commit()
     await interaction.followup.send(tr(locale, "settings.log_channel_cleared"), ephemeral=True)
 
@@ -266,7 +179,7 @@ async def moderation_clear_log_channel(interaction: discord.Interaction):
 @app_commands.choices(
     language=[
         app_commands.Choice(name="English", value="en"),
-        app_commands.Choice(name="Русский", value="ru"),
+        app_commands.Choice(name="Russian", value="ru"),
     ]
 )
 async def moderation_set_language(interaction: discord.Interaction, language: app_commands.Choice[str]):
@@ -279,11 +192,14 @@ async def moderation_set_language(interaction: discord.Interaction, language: ap
             ephemeral=True,
         )
         return
-    updated = await set_server_locale(
-        server_id=interaction.guild.id,
-        server_name=interaction.guild.name,
-        locale_code=requested,
-    )
+    async with get_async_session() as session:
+        settings = await update_server_localization_settings(
+            session=session,
+            server_id=interaction.guild.id,
+            body=ServerLocalizationSettingsUpdateModel(locale_code=requested),
+        )
+        updated = settings.locale_code
+        await session.commit()
     await interaction.followup.send(
         tr(updated, "settings.language_updated", locale=updated),
         ephemeral=True,
@@ -305,14 +221,11 @@ async def moderation_create_mute_role(interaction: discord.Interaction, role_nam
     edited, failed = await _apply_mute_overwrites(interaction.guild, role)
 
     async with get_async_session() as session:
-        settings = await get_or_create_moderation_settings(
+        await update_server_moderation_settings(
             session=session,
             server_id=interaction.guild.id,
-            server_name=interaction.guild.name,
+            body=ServerModerationSettingsUpdateModel(mute_role_id=str(role.id)),
         )
-        settings.mute_role_id = role.id
-        settings.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
-        session.add(settings)
         await session.commit()
 
     locale = await get_server_locale(interaction.guild.id)
@@ -340,16 +253,15 @@ async def moderation_set_mute_defaults(
         return
 
     async with get_async_session() as session:
-        settings = await get_or_create_moderation_settings(
+        await update_server_moderation_settings(
             session=session,
             server_id=interaction.guild.id,
-            server_name=interaction.guild.name,
+            body=ServerModerationSettingsUpdateModel(
+                default_mute_minutes=default_minutes,
+                max_mute_minutes=max_minutes,
+                auto_reconnect_voice_on_mute=auto_reconnect_on_mute,
+            ),
         )
-        settings.default_mute_minutes = default_minutes
-        settings.max_mute_minutes = max_minutes
-        settings.auto_reconnect_voice_on_mute = auto_reconnect_on_mute
-        settings.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
-        session.add(settings)
         await session.commit()
 
     await interaction.followup.send(
@@ -380,26 +292,26 @@ async def mute(
     locale = await get_server_locale(interaction.guild.id)
 
     try:
-        rules = await _fetch_server_rules(interaction.guild.id)
+        async with get_async_session() as session:
+            rules = await fetch_active_rule_models(session=session, server_id=interaction.guild.id)
     except Exception as error:
         await interaction.followup.send(tr(locale, "mute.fetch_rules_failed", error=error), ephemeral=True)
         return
-    selected_rule = _find_rule(rules, rule)
+    selected_rule = find_rule(rules, rule)
     if not selected_rule:
         await interaction.followup.send(tr(locale, "mute.invalid_rule"), ephemeral=True)
         return
-    selected_rule_label = _rule_label(selected_rule)
+    selected_rule_label = rule_label(selected_rule)
 
-    moderation_target_error = _validate_target_for_moderation(interaction, user, locale)
+    moderation_target_error = validate_target_for_moderation(interaction, user, locale)
     if moderation_target_error:
         await interaction.followup.send(moderation_target_error, ephemeral=True)
         return
 
     async with get_async_session() as session:
-        settings = await get_or_create_moderation_settings(
+        settings = await get_or_create_server_moderation_settings(
             session=session,
             server_id=interaction.guild.id,
-            server_name=interaction.guild.name,
         )
         if not settings.mute_role_id:
             await interaction.followup.send(
@@ -429,52 +341,21 @@ async def mute(
             )
             return
 
-        expires_at = datetime.now(timezone.utc) + timedelta(minutes=effective_duration)
-        await deactivate_user_mutes(session, interaction.guild.id, user.id)
-
-        if mute_role not in user.roles:
-            try:
-                await user.add_roles(
-                    mute_role,
-                    reason=f"Muted by {interaction.user} ({interaction.user.id})",
-                )
-            except discord.Forbidden:
-                await interaction.followup.send(
-                    tr(locale, "mute.assign_forbidden"),
-                    ephemeral=True,
-                )
-                return
-            except discord.HTTPException as error:
-                await interaction.followup.send(
-                    tr(locale, "mute.assign_failed", error=error),
-                    ephemeral=True,
-                )
-                return
-
-        reconnect_note = ""
-        if settings.auto_reconnect_voice_on_mute and user.voice and user.voice.channel:
-            try:
-                await try_reconnect_voice_member(user, reason="Apply mute role changes")
-                reconnect_note = tr(locale, "mute.reconnect_ok")
-            except Exception:
-                reconnect_note = tr(locale, "mute.reconnect_failed")
-
-        await session.commit()
-
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=effective_duration)
     commentary_text = commentary.strip() if commentary else None
     try:
-        await _log_moderation_action(
-            interaction=interaction,
-            user=user,
-            action_type="mute",
-            rule_id=rule,
-            commentary=commentary_text,
-            reason=None,
-            expires_at=expires_at,
-        )
-    except RuntimeError:
-        await interaction.followup.send(tr(locale, "common.api_missing"), ephemeral=True)
-        return
+        async with get_async_session() as session:
+            await create_bot_moderation_action(
+                session=session,
+                interaction=interaction,
+                user=user,
+                action_type=ActionType.MUTE,
+                rule_id=selected_rule.id,
+                commentary=commentary_text,
+                reason=None,
+                expires_at=expires_at,
+            )
+            await session.commit()
     except Exception as error:
         await interaction.followup.send(
             tr(locale, "mute.log_failed", error=error),
@@ -489,31 +370,21 @@ async def mute(
             mention=user.mention,
             duration=effective_duration,
             rule=selected_rule_label,
-            note=reconnect_note,
+            note="",
         ),
         ephemeral=False,
     )
-
 
 @mute.autocomplete("rule")
 async def mute_rule_autocomplete(interaction: discord.Interaction, current: str):
     if interaction.guild_id is None:
         return []
     try:
-        rules = await _fetch_server_rules(interaction.guild_id)
+        async with get_async_session() as session:
+            rules = await fetch_active_rule_models(session=session, server_id=interaction.guild_id)
     except Exception:
         return []
-    current_lower = current.lower().strip()
-    choices: list[app_commands.Choice[str]] = []
-    for item in rules:
-        label = _rule_label(item)
-        if current_lower and current_lower not in label.lower():
-            continue
-        display_name = label if len(label) <= 100 else f"{label[:97]}..."
-        choices.append(app_commands.Choice(name=display_name, value=str(item.get("id"))))
-        if len(choices) >= 25:
-            break
-    return choices
+    return rule_choices(rules, current)
 
 
 @app_commands.checks.has_permissions(moderate_members=True)
@@ -529,16 +400,15 @@ async def unmute(
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
     note = reason.strip() if reason else tr(locale, "common.manual_unmute_reason")
-    moderation_target_error = _validate_target_for_moderation(interaction, user, locale)
+    moderation_target_error = validate_target_for_moderation(interaction, user, locale)
     if moderation_target_error:
         await interaction.followup.send(moderation_target_error, ephemeral=True)
         return
 
     async with get_async_session() as session:
-        settings = await get_or_create_moderation_settings(
+        settings = await get_or_create_server_moderation_settings(
             session=session,
             server_id=interaction.guild.id,
-            server_name=interaction.guild.name,
         )
 
         removed_role = False

@@ -356,4 +356,5 @@ async def create_moderation_action_from_case(
         case_id=case_id,
         body=body,
         actor_user_id=actor_user_id,
+        apply_discord_effects=True,
     )

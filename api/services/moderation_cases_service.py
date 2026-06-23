@@ -894,6 +894,7 @@ async def create_action_from_case(
     case_id: UUID,
     body: ModerationCaseActionCreateFromCaseModel,
     actor_user_id: int,
+    apply_discord_effects: bool = False,
 ) -> ModerationActionRead:
     moderation_case = await get_case_or_404(server_id, case_id, session)
     ensure_case_writable_for_actions(moderation_case)
@@ -957,6 +958,7 @@ async def create_action_from_case(
         action=action_payload,
         moderator_user_id=actor_user_id,
         case_id=case_id,
+        apply_discord_effects=apply_discord_effects,
     )
 
     session.add(

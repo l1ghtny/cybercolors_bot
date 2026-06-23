@@ -53,6 +53,20 @@ async def _discord_post(path: str, payload: dict) -> list[dict] | dict:
     return response.json()
 
 
+
+async def _discord_put(path: str, payload: dict | None = None) -> list[dict] | dict:
+    headers = {"Authorization": f"Bot {_get_bot_token()}"}
+    async with httpx.AsyncClient() as client:
+        response = await client.put(f"{DISCORD_API_BASE_URL}{path}", headers=headers, json=payload)
+    if response.status_code >= 400:
+        raise HTTPException(
+            status_code=response.status_code,
+            detail=f"Discord API error: {response.text}",
+        )
+    if not response.content:
+        return {}
+    return response.json()
+
 async def fetch_guild_channels(server_id: int) -> list[dict]:
     channels = await _discord_get(f"/guilds/{server_id}/channels")
     if isinstance(channels, list):
@@ -137,3 +151,35 @@ async def create_channel_message(channel_id: int, content: str) -> dict:
     if isinstance(payload, dict):
         return payload
     return {}
+async def create_user_dm_channel(user_id: int) -> dict:
+    payload = await _discord_post(
+        "/users/@me/channels",
+        {"recipient_id": str(user_id)},
+    )
+    if isinstance(payload, dict):
+        return payload
+    return {}
+
+
+async def create_direct_message(user_id: int, content: str) -> dict:
+    channel = await create_user_dm_channel(user_id)
+    channel_id = channel.get("id")
+    if channel_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Discord API did not return a DM channel id",
+        )
+    payload = await _discord_post(
+        f"/channels/{channel_id}/messages",
+        {
+            "content": content,
+            "allowed_mentions": {"parse": []},
+        },
+    )
+    if isinstance(payload, dict):
+        return payload
+    return {}
+
+
+async def add_guild_member_role(server_id: int, user_id: int, role_id: int) -> None:
+    await _discord_put(f"/guilds/{server_id}/members/{user_id}/roles/{role_id}")

@@ -34,14 +34,20 @@ async def to_server_localization_read_model(
 async def get_server_localization_settings(
     session: AsyncSession,
     server_id: int,
+    server_name: str | None = None,
 ) -> ServerLocalizationSettings:
-    return await get_or_create_server_localization_settings(session=session, server_id=server_id)
+    return await get_or_create_server_localization_settings(
+        session=session,
+        server_id=server_id,
+        server_name=server_name,
+    )
 
 
 async def update_server_localization_settings(
     session: AsyncSession,
     server_id: int,
     body: ServerLocalizationSettingsUpdateModel,
+    server_name: str | None = None,
 ) -> ServerLocalizationSettings:
     locale_code = normalize_locale_code(body.locale_code)
     if locale_code not in SUPPORTED_LOCALES:
@@ -49,7 +55,11 @@ async def update_server_localization_settings(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Unsupported locale_code. Supported values: {', '.join(SUPPORTED_LOCALES)}",
         )
-    settings = await get_or_create_server_localization_settings(session=session, server_id=server_id)
+    settings = await get_or_create_server_localization_settings(
+        session=session,
+        server_id=server_id,
+        server_name=server_name,
+    )
     settings.locale_code = locale_code
     settings.updated_at = _utcnow_naive()
     session.add(settings)

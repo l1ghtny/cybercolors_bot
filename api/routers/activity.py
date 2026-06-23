@@ -1,11 +1,12 @@
 import asyncio
+import json
 from datetime import date, datetime, time, timedelta, timezone
 import logging
 import os
 from dataclasses import dataclass
 from time import monotonic
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import func
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -19,7 +20,7 @@ from api.models.user_profiles import (
 )
 from api.services.discord_guilds import TEXT_CHANNEL_TYPES, fetch_guild_channels, fetch_guild_member
 from src.db.database import get_session
-from src.db.models import GlobalUser, MessageLog, Server, User, UserActivity
+from src.db.models import GlobalUser, MessageLog, Server, ServerModerationSettings, User, UserActivity
 
 activity = APIRouter(
     prefix="/activity",
@@ -205,6 +206,48 @@ def _intersect_optional_sets(first: set[int] | None, second: set[int] | None) ->
     if second is None:
         return first
     return first.intersection(second)
+
+
+async def _fetch_server_activity_excluded_channel_ids(
+    session: AsyncSession,
+    server_id: int,
+) -> set[int]:
+    settings = await session.get(ServerModerationSettings, server_id)
+    if not settings or not settings.activity_excluded_channel_ids:
+        return set()
+    return {
+        int(channel_id)
+        for channel_id in settings.activity_excluded_channel_ids
+        if str(channel_id).isdigit()
+    }
+
+
+def _set_activity_leaderboard_meta_headers(
+    response: Response,
+    server_excluded_channel_ids: set[int],
+    server_excludes_applied: bool,
+) -> None:
+    response.headers["X-Activity-Server-Excludes"] = json.dumps(
+        [str(channel_id) for channel_id in sorted(server_excluded_channel_ids)]
+    )
+    response.headers["X-Activity-Server-Excludes-Applied"] = "true" if server_excludes_applied else "false"
+
+
+def _resolve_effective_activity_excluded_channel_ids(
+    query_excluded_channel_ids: set[int] | None,
+    server_excluded_channel_ids: set[int],
+    include_channel_ids: set[int] | None,
+    ignore_server_excludes: bool,
+) -> tuple[set[int] | None, bool]:
+    server_excludes_applied = (
+        bool(server_excluded_channel_ids)
+        and include_channel_ids is None
+        and not ignore_server_excludes
+    )
+    effective_excluded_channel_ids = set(query_excluded_channel_ids or set())
+    if server_excludes_applied:
+        effective_excluded_channel_ids.update(server_excluded_channel_ids)
+    return effective_excluded_channel_ids or None, server_excludes_applied
 
 
 def _matches_role_filters(
@@ -554,6 +597,7 @@ async def get_user_activity(
 @activity.get("/{server_id}/leaderboard", response_model=list[UserActivityLeaderboardItemModel])
 async def get_server_activity_leaderboard(
     server_id: int,
+    response: Response,
     limit: int = Query(default=50, ge=1, le=200),
     date_from: date | None = Query(default=None, description="Inclusive UTC date (YYYY-MM-DD)."),
     date_to: date | None = Query(default=None, description="Inclusive UTC date (YYYY-MM-DD)."),
@@ -582,6 +626,10 @@ async def get_server_activity_leaderboard(
         default=None,
         description="Channel IDs to exclude (repeat parameter or use comma-separated IDs).",
     ),
+    ignore_server_excludes: bool = Query(
+        default=False,
+        description="Do not apply server-level activity channel exclusions for this request.",
+    ),
     refresh_member_roles: bool = Query(
         default=False,
         description="Bypass member-role cache for this request.",
@@ -599,6 +647,21 @@ async def get_server_activity_leaderboard(
     exclude_role_ids_set = _parse_id_set_filter(exclude_role_ids, "exclude_role_ids")
     include_channel_ids_set = _parse_id_set_filter(include_channel_ids, "include_channel_ids")
     exclude_channel_ids_set = _parse_id_set_filter(exclude_channel_ids, "exclude_channel_ids")
+    server_excluded_channel_ids = await _fetch_server_activity_excluded_channel_ids(
+        session=session,
+        server_id=server_id,
+    )
+    effective_exclude_channel_ids, server_excludes_applied = _resolve_effective_activity_excluded_channel_ids(
+        query_excluded_channel_ids=exclude_channel_ids_set,
+        server_excluded_channel_ids=server_excluded_channel_ids,
+        include_channel_ids=include_channel_ids_set,
+        ignore_server_excludes=ignore_server_excludes,
+    )
+    _set_activity_leaderboard_meta_headers(
+        response=response,
+        server_excluded_channel_ids=server_excluded_channel_ids,
+        server_excludes_applied=server_excludes_applied,
+    )
 
     active_channel_ids = await _get_server_rendered_text_channel_ids(server_id, refresh=refresh_channels)
     effective_include_channel_ids = _intersect_optional_sets(active_channel_ids, include_channel_ids_set)
@@ -614,7 +677,7 @@ async def get_server_activity_leaderboard(
         include_user_ids=sql_include_user_ids,
         exclude_user_ids=exclude_user_ids_set,
         include_channel_ids=effective_include_channel_ids,
-        exclude_channel_ids=exclude_channel_ids_set,
+        exclude_channel_ids=effective_exclude_channel_ids,
     )
 
     leaderboard_query = (

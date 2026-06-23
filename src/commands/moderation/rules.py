@@ -1,11 +1,18 @@
-import os
 import re
 
 import discord
 from discord import app_commands
-import httpx
 
+from api.models.moderation_rules import ModerationRuleMessageRefModel
+from api.services.moderation_rules_service import (
+    create_manual_rule,
+    get_rule_parse_guide,
+    import_rules_from_message,
+    import_rules_from_messages,
+)
+from src.db.database import get_async_session
 from src.modules.localization.service import get_server_locale, tr
+from src.modules.moderation.bot_services import fetch_active_rule_models, rule_label
 
 
 MESSAGE_LINK_RE = re.compile(
@@ -13,14 +20,15 @@ MESSAGE_LINK_RE = re.compile(
 )
 
 
-def _bot_api_url() -> str:
-    return os.getenv("BOT_API_URL", "").rstrip("/")
-
-
 async def _refresh_rules_cache(interaction: discord.Interaction):
     client = interaction.client
     if hasattr(client, "load_current_server_rules"):
         await client.load_current_server_rules()
+
+
+def _error_text(error: Exception) -> str:
+    detail = getattr(error, "detail", None)
+    return str(detail if detail is not None else error)
 
 
 async def _import_rules_from_message(
@@ -30,43 +38,27 @@ async def _import_rules_from_message(
     replace_existing: bool,
     locale: str,
 ):
-    base_url = _bot_api_url()
-    if not base_url:
-        await interaction.followup.send(tr(locale, "common.api_missing"), ephemeral=True)
-        return
-
-    payload = {
-        "channel_id": str(channel_id),
-        "message_id": str(message_id),
-        "replace_existing": replace_existing,
-        "created_by_user_id": str(interaction.user.id),
-    }
-    api_url = f"{base_url}/moderation/rules/{interaction.guild.id}/import-message"
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(api_url, json=payload)
-            response.raise_for_status()
-            data = response.json()
+        async with get_async_session() as session:
+            imported = await import_rules_from_message(
+                session=session,
+                server_id=interaction.guild.id,
+                channel_id=channel_id,
+                message_id=message_id,
+                created_by_user_id=interaction.user.id,
+                replace_existing=replace_existing,
+            )
+            imported_count = len(imported)
+            await session.commit()
 
-        imported_count = len(data.get("imported", [])) if isinstance(data, dict) else 0
         await _refresh_rules_cache(interaction)
         await interaction.followup.send(
             tr(locale, "rules.import_message_success", imported_count=imported_count, message_id=message_id),
             ephemeral=True,
         )
-    except httpx.HTTPStatusError as error:
-        await interaction.followup.send(
-            tr(
-                locale,
-                "rules.import_failed_http",
-                status=error.response.status_code,
-                text=error.response.text,
-            ),
-            ephemeral=True,
-        )
     except Exception as error:
         await interaction.followup.send(
-            tr(locale, "rules.import_failed_generic", error=error),
+            tr(locale, "rules.import_failed_generic", error=_error_text(error)),
             ephemeral=True,
         )
 
@@ -77,24 +69,19 @@ async def _import_rules_from_messages(
     replace_existing: bool,
     locale: str,
 ):
-    base_url = _bot_api_url()
-    if not base_url:
-        await interaction.followup.send(tr(locale, "common.api_missing"), ephemeral=True)
-        return
-
-    payload = {
-        "messages": messages,
-        "replace_existing": replace_existing,
-        "created_by_user_id": str(interaction.user.id),
-    }
-    api_url = f"{base_url}/moderation/rules/{interaction.guild.id}/import-messages"
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(api_url, json=payload)
-            response.raise_for_status()
-            data = response.json()
+        refs = [ModerationRuleMessageRefModel(**message) for message in messages]
+        async with get_async_session() as session:
+            imported = await import_rules_from_messages(
+                session=session,
+                server_id=interaction.guild.id,
+                message_refs=refs,
+                created_by_user_id=interaction.user.id,
+                replace_existing=replace_existing,
+            )
+            imported_count = len(imported)
+            await session.commit()
 
-        imported_count = len(data.get("imported", [])) if isinstance(data, dict) else 0
         await _refresh_rules_cache(interaction)
         await interaction.followup.send(
             tr(
@@ -105,18 +92,8 @@ async def _import_rules_from_messages(
             ),
             ephemeral=True,
         )
-    except httpx.HTTPStatusError as error:
-        await interaction.followup.send(
-            tr(
-                locale,
-                "rules.import_failed_http",
-                status=error.response.status_code,
-                text=error.response.text,
-            ),
-            ephemeral=True,
-        )
     except Exception as error:
-        await interaction.followup.send(tr(locale, "rules.import_failed_generic", error=error), ephemeral=True)
+        await interaction.followup.send(tr(locale, "rules.import_failed_generic", error=_error_text(error)), ephemeral=True)
 
 
 @app_commands.checks.has_permissions(manage_guild=True)
@@ -222,40 +199,24 @@ async def rule_add(
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
 
-    base_url = _bot_api_url()
-    if not base_url:
-        await interaction.followup.send(tr(locale, "common.api_missing"), ephemeral=True)
-        return
-
-    api_url = f"{base_url}/moderation/rules/{interaction.guild.id}"
-    payload = {
-        "code": code,
-        "title": title,
-        "description": description,
-        "sort_order": sort_order,
-        "created_by_user_id": str(interaction.user.id),
-    }
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(api_url, json=payload)
-            response.raise_for_status()
-            rule = response.json()
+        async with get_async_session() as session:
+            rule = await create_manual_rule(
+                session=session,
+                server_id=interaction.guild.id,
+                title=title,
+                description=description,
+                code=code,
+                sort_order=sort_order,
+                created_by_user_id=interaction.user.id,
+            )
+            label = f"{rule.code or ''} {rule.title or ''}".strip()
+            await session.commit()
 
         await _refresh_rules_cache(interaction)
-        label = f"{rule.get('code', '')} {rule.get('title', '')}".strip()
         await interaction.followup.send(tr(locale, "rules.rule_added", label=label), ephemeral=True)
-    except httpx.HTTPStatusError as error:
-        await interaction.followup.send(
-            tr(
-                locale,
-                "rules.rule_add_failed_http",
-                status=error.response.status_code,
-                text=error.response.text,
-            ),
-            ephemeral=True,
-        )
     except Exception as error:
-        await interaction.followup.send(tr(locale, "rules.rule_add_failed_generic", error=error), ephemeral=True)
+        await interaction.followup.send(tr(locale, "rules.rule_add_failed_generic", error=_error_text(error)), ephemeral=True)
 
 
 @app_commands.checks.has_permissions(manage_guild=True)
@@ -270,44 +231,20 @@ async def rules_list(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
 
-    base_url = _bot_api_url()
-    if not base_url:
-        await interaction.followup.send(tr(locale, "common.api_missing"), ephemeral=True)
-        return
-
-    api_url = f"{base_url}/moderation/rules/{interaction.guild.id}"
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(api_url)
-            response.raise_for_status()
-            rules = response.json()
+        async with get_async_session() as session:
+            rules = await fetch_active_rule_models(session=session, server_id=interaction.guild.id)
 
-        if not isinstance(rules, list) or not rules:
+        if not rules:
             await interaction.followup.send(tr(locale, "rules.none_configured"), ephemeral=True)
             return
 
-        lines: list[str] = []
-        for item in rules:
-            code = (item.get("code") or "").strip()
-            title = (item.get("title") or "").strip()
-            label = f"{code} {title}".strip()
-            lines.append(f"- {label}")
-        body = "\n".join(lines)
+        body = "\n".join(f"- {rule_label(item)}" for item in rules)
         if len(body) > 1900:
             body = body[:1890] + "\n..."
         await interaction.followup.send(tr(locale, "rules.active_header", body=body), ephemeral=True)
-    except httpx.HTTPStatusError as error:
-        await interaction.followup.send(
-            tr(
-                locale,
-                "rules.fetch_failed_http",
-                status=error.response.status_code,
-                text=error.response.text,
-            ),
-            ephemeral=True,
-        )
     except Exception as error:
-        await interaction.followup.send(tr(locale, "rules.fetch_failed_generic", error=error), ephemeral=True)
+        await interaction.followup.send(tr(locale, "rules.fetch_failed_generic", error=_error_text(error)), ephemeral=True)
 
 
 @app_commands.checks.has_permissions(manage_guild=True)
@@ -322,27 +259,16 @@ async def rules_parse_guide(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
 
-    base_url = _bot_api_url()
-    if not base_url:
-        await interaction.followup.send(tr(locale, "common.api_missing"), ephemeral=True)
-        return
-
-    api_url = f"{base_url}/moderation/rules/{interaction.guild.id}/parse-guide"
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(api_url, params={"locale": locale})
-            response.raise_for_status()
-            guide = response.json()
+        guide = get_rule_parse_guide(locale=locale)
     except Exception as error:
-        await interaction.followup.send(tr(locale, "rules.guide_fetch_failed", error=error), ephemeral=True)
+        await interaction.followup.send(tr(locale, "rules.guide_fetch_failed", error=_error_text(error)), ephemeral=True)
         return
 
-    guidance = guide.get("guidance", []) if isinstance(guide, dict) else []
-    example = guide.get("example", "") if isinstance(guide, dict) else ""
-    lines = [f"- {item}" for item in guidance]
+    lines = [f"- {item}" for item in guide.guidance]
     text = "\n".join(lines)
-    if example:
-        text += f"\n\n{tr(locale, 'rules.guide_example')}\n```text\n{example}\n```"
+    if guide.example:
+        text += f"\n\n{tr(locale, 'rules.guide_example')}\n```text\n{guide.example}\n```"
     await interaction.followup.send(text or tr(locale, "rules.guide_empty"), ephemeral=True)
 
 

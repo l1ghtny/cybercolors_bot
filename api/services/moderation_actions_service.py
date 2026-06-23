@@ -14,7 +14,7 @@ from api.models.moderation_actions import (
     ModerationActionSummaryModel,
 )
 from api.models.moderation_cases import DeletedMessageCreateModel, DeletedMessageReadModel
-from api.services.discord_guilds import create_channel_message, fetch_guild_channels
+from api.services.discord_guilds import add_guild_member_role, create_channel_message, create_direct_message, fetch_guild_channels
 from api.services.moderation_core import (
     build_actor,
     ensure_case_writable_for_actions,
@@ -28,6 +28,7 @@ from api.services.moderation_queries import (
     query_moderation_actions,
 )
 from src.db.models import (
+    ActionType,
     DeletedMessage,
     GlobalUser,
     ModerationAction,
@@ -37,9 +38,12 @@ from src.db.models import (
     ModerationCaseActionLink,
     ModerationCaseRuleCitation,
     ModerationRule,
+    ServerLocalizationSettings,
     ServerModerationSettings,
 )
+from src.modules.localization.service import normalize_locale_code, tr
 from src.modules.moderation.moderation_helpers import check_if_server_exists, check_if_user_exists
+from src.modules.moderation.mute_management import deactivate_user_mutes
 
 logger = logging.getLogger("api.moderation")
 
@@ -272,11 +276,94 @@ async def _send_action_to_mod_log(
         )
 
 
+
+def _rules_label(rules: list[ModerationRule], fallback_reason: str) -> str:
+    if not rules:
+        return fallback_reason
+    primary_rule = rules[0]
+    code = (primary_rule.code or "").strip()
+    title = (primary_rule.title or "").strip()
+    if code:
+        return f"{code} {title}".strip()
+    return title or fallback_reason
+
+
+async def _get_server_locale(session: AsyncSession, server_id: int) -> str:
+    settings = await session.get(ServerLocalizationSettings, server_id)
+    return normalize_locale_code(settings.locale_code if settings else None)
+
+
+async def _send_warn_dm_for_action(
+    session: AsyncSession,
+    action: ModerationActionCreate,
+    resolved_reason: str,
+    resolved_rules: list[ModerationRule],
+    resolved_commentary: str | None,
+) -> None:
+    locale = await _get_server_locale(session=session, server_id=action.server_id)
+    message = tr(
+        locale,
+        "warn.dm_body",
+        server_name=action.server_name,
+        rule_label=_rules_label(resolved_rules, fallback_reason=resolved_reason),
+    )
+    if resolved_commentary:
+        message += tr(locale, "warn.dm_commentary", commentary=resolved_commentary)
+
+    try:
+        await create_direct_message(user_id=action.target_user_id, content=message)
+    except Exception as error:
+        logger.warning(
+            "Failed to DM warning to user %s in server %s: %s",
+            action.target_user_id,
+            action.server_id,
+            error,
+        )
+
+
+async def _apply_mute_effect_for_action(
+    session: AsyncSession,
+    action: ModerationActionCreate,
+) -> None:
+    settings = await session.get(ServerModerationSettings, action.server_id)
+    if not settings or not settings.mute_role_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Mute role is not configured for this server",
+        )
+
+    await deactivate_user_mutes(session=session, server_id=action.server_id, user_id=action.target_user_id)
+    await add_guild_member_role(
+        server_id=action.server_id,
+        user_id=action.target_user_id,
+        role_id=settings.mute_role_id,
+    )
+
+
+async def _apply_discord_action_effects(
+    session: AsyncSession,
+    action: ModerationActionCreate,
+    resolved_reason: str,
+    resolved_rules: list[ModerationRule],
+    resolved_commentary: str | None,
+) -> None:
+    if action.action_type == ActionType.WARN:
+        await _send_warn_dm_for_action(
+            session=session,
+            action=action,
+            resolved_reason=resolved_reason,
+            resolved_rules=resolved_rules,
+            resolved_commentary=resolved_commentary,
+        )
+    elif action.action_type == ActionType.MUTE:
+        await _apply_mute_effect_for_action(session=session, action=action)
+
 async def create_action(
     session: AsyncSession,
     action: ModerationActionCreate,
     moderator_user_id: int,
     case_id: UUID | None = None,
+    apply_discord_effects: bool = False,
 ) -> ModerationAction:
     mock_user = type(
         "MockUser",
@@ -309,7 +396,7 @@ async def create_action(
     if resolved_rules:
         primary_rule = resolved_rules[0]
         base_reason = f"{primary_rule.code} {primary_rule.title}".strip() if primary_rule.code else primary_rule.title
-        resolved_reason = f"{base_reason}\nКомментарий: {resolved_commentary}" if resolved_commentary else base_reason
+        resolved_reason = f"{base_reason}\nÃƒÂÃ…Â¡ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â¼ÃƒÂÃ‚Â¼ÃƒÂÃ‚ÂµÃƒÂÃ‚Â½Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â¸ÃƒÂÃ‚Â¹: {resolved_commentary}" if resolved_commentary else base_reason
 
     if not resolved_reason:
         raise HTTPException(
@@ -335,6 +422,15 @@ async def create_action(
                 detail="Moderation case not found",
             )
         ensure_case_writable_for_actions(linked_case)
+
+    if apply_discord_effects:
+        await _apply_discord_action_effects(
+            session=session,
+            action=action,
+            resolved_reason=resolved_reason,
+            resolved_rules=resolved_rules,
+            resolved_commentary=resolved_commentary,
+        )
 
     db_action = ModerationAction(
         action_type=action.action_type,

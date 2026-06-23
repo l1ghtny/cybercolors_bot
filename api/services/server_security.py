@@ -12,10 +12,14 @@ from api.services.moderation_core import naive_utcnow
 from src.db.models import Server, ServerSecuritySettings
 
 
-async def get_or_create_server_security_settings(session: AsyncSession, server_id: int) -> ServerSecuritySettings:
+async def get_or_create_server_security_settings(
+    session: AsyncSession,
+    server_id: int,
+    server_name: str | None = None,
+) -> ServerSecuritySettings:
     server = await session.get(Server, server_id)
     if not server:
-        server = Server(server_id=server_id, server_name=str(server_id))
+        server = Server(server_id=server_id, server_name=server_name or str(server_id))
         session.add(server)
         await session.flush()
 
@@ -69,8 +73,9 @@ async def update_verified_role(
     session: AsyncSession,
     server_id: int,
     body: ServerSecurityVerifiedRoleUpdateModel,
+    server_name: str | None = None,
 ) -> ServerSecuritySettings:
-    settings = await get_or_create_server_security_settings(session, server_id)
+    settings = await get_or_create_server_security_settings(session, server_id, server_name=server_name)
 
     if not body.role_id:
         settings.verified_role_id = None
@@ -96,8 +101,9 @@ async def update_permission_templates(
     session: AsyncSession,
     server_id: int,
     body: ServerSecurityPermissionsUpdateModel,
+    server_name: str | None = None,
 ) -> ServerSecuritySettings:
-    settings = await get_or_create_server_security_settings(session, server_id)
+    settings = await get_or_create_server_security_settings(session, server_id, server_name=server_name)
 
     if body.normal_permissions is not None:
         settings.normal_permissions = int(body.normal_permissions) if body.normal_permissions else None
@@ -114,8 +120,9 @@ async def apply_lockdown_state(
     session: AsyncSession,
     server_id: int,
     body: ServerSecurityLockdownUpdateModel,
+    server_name: str | None = None,
 ) -> ServerSecuritySettings:
-    settings = await get_or_create_server_security_settings(session, server_id)
+    settings = await get_or_create_server_security_settings(session, server_id, server_name=server_name)
     if settings.verified_role_id is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

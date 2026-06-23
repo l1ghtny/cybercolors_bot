@@ -3,8 +3,13 @@ from datetime import datetime, timezone
 import discord
 from discord import app_commands
 
+from api.models.server_security import ServerSecurityPermissionsUpdateModel
+from api.services.server_security import (
+    get_or_create_server_security_settings,
+    update_permission_templates,
+)
 from src.db.database import get_async_session
-from src.db.models import Server, ServerSecuritySettings
+from src.db.models import ServerSecuritySettings
 from src.modules.localization.service import get_server_locale, tr
 
 
@@ -12,22 +17,10 @@ def _utcnow_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-async def _get_or_create_security_settings(server_id: int, server_name: str) -> ServerSecuritySettings:
+async def _get_or_create_security_settings(server_id: int, server_name: str | None = None) -> ServerSecuritySettings:
     async with get_async_session() as session:
-        server = await session.get(Server, server_id)
-        if not server:
-            server = Server(server_id=server_id, server_name=server_name)
-            session.add(server)
-            await session.flush()
-
-        settings = await session.get(ServerSecuritySettings, server_id)
-        if settings:
-            return settings
-
-        settings = ServerSecuritySettings(server_id=server_id)
-        session.add(settings)
-        await session.flush()
-        await session.refresh(settings)
+        settings = await get_or_create_server_security_settings(session=session, server_id=server_id, server_name=server_name)
+        await session.commit()
         return settings
 
 
@@ -42,16 +35,16 @@ async def security_set_verified_role(interaction: discord.Interaction, role: dis
         return
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
-    settings = await _get_or_create_security_settings(interaction.guild.id, interaction.guild.name)
 
     async with get_async_session() as session:
-        settings = await session.get(ServerSecuritySettings, interaction.guild.id)
+        settings = await get_or_create_server_security_settings(session=session, server_id=interaction.guild.id, server_name=interaction.guild.name)
         settings.verified_role_id = role.id
         if settings.normal_permissions is None:
             settings.normal_permissions = role.permissions.value
         settings.updated_at = _utcnow_naive()
         session.add(settings)
-        await session.flush()
+        await session.commit()
+
     await interaction.followup.send(
         tr(locale, "security.verified_role_set", role_name=role.name),
         ephemeral=True,
@@ -81,15 +74,17 @@ async def security_capture_permissions(interaction: discord.Interaction, mode: a
         await interaction.followup.send(tr(locale, "security.verified_role_missing"), ephemeral=True)
         return
 
+    body = ServerSecurityPermissionsUpdateModel(
+        normal_permissions=str(role.permissions.value) if mode.value == "normal" else None,
+        lockdown_permissions=str(role.permissions.value) if mode.value == "lockdown" else None,
+    )
     async with get_async_session() as session:
-        settings = await session.get(ServerSecuritySettings, interaction.guild.id)
-        if mode.value == "normal":
-            settings.normal_permissions = role.permissions.value
-        else:
-            settings.lockdown_permissions = role.permissions.value
-        settings.updated_at = _utcnow_naive()
-        session.add(settings)
-        await session.flush()
+        await update_permission_templates(
+            session=session,
+            server_id=interaction.guild.id,
+            body=body,
+        )
+        await session.commit()
 
     await interaction.followup.send(
         tr(locale, "security.permissions_captured", role_name=role.name, mode=mode.value),
@@ -126,11 +121,11 @@ async def security_lockdown(interaction: discord.Interaction, enabled: bool):
     await role.edit(permissions=discord.Permissions(target_permissions))
 
     async with get_async_session() as session:
-        settings = await session.get(ServerSecuritySettings, interaction.guild.id)
+        settings = await get_or_create_server_security_settings(session=session, server_id=interaction.guild.id, server_name=interaction.guild.name)
         settings.lockdown_enabled = enabled
         settings.updated_at = _utcnow_naive()
         session.add(settings)
-        await session.flush()
+        await session.commit()
 
     state = tr(locale, "security.state_enabled" if enabled else "security.state_disabled")
     await interaction.followup.send(

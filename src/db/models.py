@@ -233,6 +233,10 @@ class ServerModerationSettings(SQLModel, table=True):
     max_mute_minutes: int = Field(default=10080, nullable=False)
     auto_reconnect_voice_on_mute: bool = Field(default=True, nullable=False)
     mod_log_channel_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
+    activity_excluded_channel_ids: list[str] = Field(
+        default_factory=list,
+        sa_column=Column(sa.JSON, nullable=False),
+    )
     updated_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
 
     server: Server = Relationship(back_populates="moderation_settings")

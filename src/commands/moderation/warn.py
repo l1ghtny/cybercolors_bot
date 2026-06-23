@@ -1,67 +1,17 @@
-import os
-from datetime import datetime, timezone
-
 import discord
 from discord import app_commands
-import httpx
 
+from src.db.database import get_async_session
+from src.db.models import ActionType
 from src.modules.localization.service import get_server_locale, tr
-
-
-def _bot_api_url() -> str:
-    return os.getenv("BOT_API_URL", "").rstrip("/")
-
-
-async def _fetch_server_rules(server_id: int) -> list[dict]:
-    base_url = _bot_api_url()
-    if not base_url:
-        raise RuntimeError("BOT_API_URL is not configured")
-    api_url = f"{base_url}/moderation/rules/{server_id}"
-    async with httpx.AsyncClient() as client:
-        response = await client.get(api_url)
-        response.raise_for_status()
-        payload = response.json()
-    if isinstance(payload, list):
-        return payload
-    return []
-
-
-def _find_rule(rules: list[dict], rule_id: str) -> dict | None:
-    for rule in rules:
-        if str(rule.get("id")) == rule_id:
-            return rule
-    return None
-
-
-def _rule_label(rule: dict) -> str:
-    code = (rule.get("code") or "").strip()
-    title = (rule.get("title") or "").strip()
-    if code:
-        return f"{code} {title}".strip()
-    return title or tr(None, "common.rule_fallback")
-
-
-def _validate_target_for_moderation(
-    interaction: discord.Interaction,
-    target: discord.Member,
-    locale: str,
-) -> str | None:
-    guild = interaction.guild
-    if guild is None:
-        return tr(locale, "common.server_only")
-    if target.id == interaction.user.id:
-        return tr(locale, "common.target_self")
-    if target.id == guild.owner_id:
-        return tr(locale, "common.target_owner")
-
-    actor = interaction.user if isinstance(interaction.user, discord.Member) else None
-    if actor and guild.owner_id != actor.id and target.top_role >= actor.top_role:
-        return tr(locale, "common.target_hierarchy")
-
-    me = guild.me
-    if me and target.top_role >= me.top_role:
-        return tr(locale, "common.target_bot_hierarchy")
-    return None
+from src.modules.moderation.bot_services import (
+    create_bot_moderation_action,
+    fetch_active_rule_models,
+    find_rule,
+    rule_choices,
+    rule_label,
+    validate_target_for_moderation,
+)
 
 
 @app_commands.command(
@@ -83,7 +33,8 @@ async def warn(
     locale = await get_server_locale(interaction.guild.id)
 
     try:
-        rules = await _fetch_server_rules(interaction.guild.id)
+        async with get_async_session() as session:
+            rules = await fetch_active_rule_models(session=session, server_id=interaction.guild.id)
     except Exception as error:
         await interaction.followup.send(
             tr(locale, "warn.fetch_rules_failed", error=error),
@@ -91,7 +42,7 @@ async def warn(
         )
         return
 
-    selected_rule = _find_rule(rules, rule)
+    selected_rule = find_rule(rules, rule)
     if not selected_rule:
         await interaction.followup.send(
             tr(locale, "warn.invalid_rule"),
@@ -99,89 +50,41 @@ async def warn(
         )
         return
 
-    selected_rule_label = _rule_label(selected_rule)
+    selected_rule_label = rule_label(selected_rule)
     commentary_text = commentary.strip() if commentary else None
-    target_error = _validate_target_for_moderation(interaction, user, locale)
+    target_error = validate_target_for_moderation(interaction, user, locale)
     if target_error:
         await interaction.followup.send(target_error, ephemeral=True)
         return
 
-    # 1. Perform Discord-specific actions
     try:
-        dm_message = tr(
-            locale,
-            "warn.dm_body",
-            server_name=interaction.guild.name,
-            rule_label=selected_rule_label,
-        )
-        if commentary_text:
-            dm_message += tr(locale, "warn.dm_commentary", commentary=commentary_text)
-        await user.send(dm_message)
-    except discord.Forbidden:
-        await interaction.followup.send(
-            tr(locale, "warn.dm_failed_forbidden"),
-            ephemeral=True,
-        )
-    except discord.HTTPException as error:
-        if getattr(error, "code", None) == 50007:
-            await interaction.followup.send(
-                tr(locale, "warn.dm_failed_privacy"),
-                ephemeral=True,
+        async with get_async_session() as session:
+            await create_bot_moderation_action(
+                session=session,
+                interaction=interaction,
+                user=user,
+                action_type=ActionType.WARN,
+                rule_id=selected_rule.id,
+                commentary=commentary_text,
+                reason=None,
             )
-        else:
-            await interaction.followup.send(
-                tr(locale, "warn.dm_failed_generic", status=error.status),
-                ephemeral=True,
-            )
-
-    # 2. Prepare data for the API POST request
-    base_url = _bot_api_url()
-    if not base_url:
-        await interaction.followup.send(tr(locale, "common.api_missing"), ephemeral=True)
-        return
-    api_url = f"{base_url}/moderation/create_action"
-    payload = {
-        "action_type": "warn",
-        "moderator_user_id": interaction.user.id,
-        "rule_id": rule,
-        "commentary": commentary_text,
-        "reason": None,
-        "target_user_id": user.id,
-        "target_user_name": user.name,
-        "target_user_joined_at": (
-            user.joined_at.isoformat()
-            if user.joined_at is not None
-            else datetime.now(timezone.utc).isoformat()
-        ),
-        "target_user_server_nickname": user.nick,
-        "server_id": interaction.guild.id,
-        "server_name": interaction.guild.name,
-    }
-
-    # 3. Make the POST request to the internal API
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(api_url, json=payload)
-            response.raise_for_status()
-        await interaction.followup.send(
-            tr(locale, "warn.success", mention=user.mention, rule=selected_rule_label),
-            ephemeral=False,
-        )
-    except httpx.RequestError as error:
-        await interaction.followup.send(
-            tr(locale, "warn.api_request_error", error=error),
-            ephemeral=True,
-        )
-    except httpx.HTTPStatusError as error:
+            await session.commit()
+    except Exception as error:
         await interaction.followup.send(
             tr(
                 locale,
                 "warn.api_http_error",
-                status=error.response.status_code,
-                text=error.response.text,
+                status=type(error).__name__,
+                text=str(error),
             ),
             ephemeral=True,
         )
+        return
+
+    await interaction.followup.send(
+        tr(locale, "warn.success", mention=user.mention, rule=selected_rule_label),
+        ephemeral=False,
+    )
 
 
 @warn.autocomplete("rule")
@@ -190,18 +93,9 @@ async def warn_rule_autocomplete(interaction: discord.Interaction, current: str)
         return []
 
     try:
-        rules = await _fetch_server_rules(interaction.guild_id)
+        async with get_async_session() as session:
+            rules = await fetch_active_rule_models(session=session, server_id=interaction.guild_id)
     except Exception:
         return []
 
-    current_lower = current.lower().strip()
-    choices: list[app_commands.Choice[str]] = []
-    for item in rules:
-        label = _rule_label(item)
-        if current_lower and current_lower not in label.lower():
-            continue
-        display_name = label if len(label) <= 100 else f"{label[:97]}..."
-        choices.append(app_commands.Choice(name=display_name, value=str(item.get("id"))))
-        if len(choices) >= 25:
-            break
-    return choices
+    return rule_choices(rules, current)

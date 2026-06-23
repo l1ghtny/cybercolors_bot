@@ -14,10 +14,11 @@ from src.db.models import Server, ServerModerationSettings
 async def get_or_create_server_moderation_settings(
     session: AsyncSession,
     server_id: int,
+    server_name: str | None = None,
 ) -> ServerModerationSettings:
     server = await session.get(Server, server_id)
     if not server:
-        server = Server(server_id=server_id, server_name=str(server_id))
+        server = Server(server_id=server_id, server_name=server_name or str(server_id))
         session.add(server)
         await session.flush()
 
@@ -61,6 +62,7 @@ async def to_server_moderation_settings_read_model(
         mod_log_channel_id=(
             str(settings.mod_log_channel_id) if settings.mod_log_channel_id is not None else None
         ),
+        activity_excluded_channel_ids=list(settings.activity_excluded_channel_ids or []),
         updated_at=settings.updated_at,
     )
 
@@ -69,8 +71,9 @@ async def update_server_moderation_settings(
     session: AsyncSession,
     server_id: int,
     body: ServerModerationSettingsUpdateModel,
+    server_name: str | None = None,
 ) -> ServerModerationSettings:
-    settings = await get_or_create_server_moderation_settings(session, server_id)
+    settings = await get_or_create_server_moderation_settings(session, server_id, server_name=server_name)
 
     if body.mute_role_id is not None:
         settings.mute_role_id = int(body.mute_role_id) if body.mute_role_id else None
@@ -103,6 +106,8 @@ async def update_server_moderation_settings(
             settings.mod_log_channel_id = requested_channel_id
         else:
             settings.mod_log_channel_id = None
+    if body.activity_excluded_channel_ids is not None:
+        settings.activity_excluded_channel_ids = body.activity_excluded_channel_ids
 
     settings.updated_at = naive_utcnow()
     session.add(settings)
@@ -115,6 +120,7 @@ async def create_mute_role_and_attach(
     session: AsyncSession,
     server_id: int,
     body: ServerModerationCreateMuteRoleModel,
+    server_name: str | None = None,
 ) -> ServerModerationSettings:
     role_payload = await create_guild_role(server_id=server_id, name=body.role_name)
     role_id = role_payload.get("id")
@@ -124,7 +130,7 @@ async def create_mute_role_and_attach(
             detail="Failed to create mute role via Discord API",
         )
 
-    settings = await get_or_create_server_moderation_settings(session, server_id)
+    settings = await get_or_create_server_moderation_settings(session, server_id, server_name=server_name)
     settings.mute_role_id = int(role_id)
     settings.updated_at = naive_utcnow()
     session.add(settings)

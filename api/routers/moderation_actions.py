@@ -124,7 +124,12 @@ async def create_moderation_action(
     session: AsyncSession = Depends(get_session),
     current_user_id: int = Depends(require_action_body_dashboard_access),
 ):
-    created = await create_action_service(session=session, action=action, moderator_user_id=current_user_id)
+    created = await create_action_service(
+        session=session,
+        action=action,
+        moderator_user_id=current_user_id,
+        apply_discord_effects=True,
+    )
     return to_moderation_history([created])[0]
 
 
@@ -134,7 +139,12 @@ async def create_moderation_action_v2(
     session: AsyncSession = Depends(get_session),
     current_user_id: int = Depends(require_action_body_dashboard_access),
 ):
-    created = await create_action_service(session=session, action=action, moderator_user_id=current_user_id)
+    created = await create_action_service(
+        session=session,
+        action=action,
+        moderator_user_id=current_user_id,
+        apply_discord_effects=True,
+    )
     return to_moderation_history([created])[0]
 
 
