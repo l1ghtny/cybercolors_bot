@@ -1,3 +1,4 @@
+import asyncio
 from datetime import date, datetime, time, timedelta, timezone
 import logging
 import os
@@ -16,7 +17,7 @@ from api.models.user_profiles import (
     UserActivitySummaryModel,
     UserActivityUpsertModel,
 )
-from api.services.discord_guilds import TEXT_CHANNEL_TYPES, fetch_guild_channels
+from api.services.discord_guilds import TEXT_CHANNEL_TYPES, fetch_guild_channels, fetch_guild_member
 from src.db.database import get_session
 from src.db.models import GlobalUser, MessageLog, Server, User, UserActivity
 
@@ -27,6 +28,7 @@ activity = APIRouter(
 )
 logger = logging.getLogger("uvicorn")
 ACTIVITY_CHANNEL_CACHE_TTL_SECONDS = int(os.getenv("ACTIVITY_CHANNEL_CACHE_TTL_SECONDS", "120"))
+ACTIVITY_MEMBER_ROLES_CACHE_TTL_SECONDS = int(os.getenv("ACTIVITY_MEMBER_ROLES_CACHE_TTL_SECONDS", "60"))
 
 
 @dataclass
@@ -35,7 +37,16 @@ class _ActivityChannelCacheEntry:
     expires_at: float
 
 
+@dataclass
+class _ActivityMemberRolesCacheEntry:
+    role_ids: set[int]
+    expires_at: float
+
+
 _activity_channels_cache: dict[int, _ActivityChannelCacheEntry] = {}
+_activity_member_roles_cache: dict[tuple[int, int], _ActivityMemberRolesCacheEntry] = {}
+_activity_member_roles_locks: dict[tuple[int, int], asyncio.Lock] = {}
+_activity_member_roles_locks_guard = asyncio.Lock()
 
 
 def _naive_utcnow() -> datetime:
@@ -95,6 +106,134 @@ async def _get_server_rendered_text_channel_ids(server_id: int, refresh: bool = 
     return channel_ids
 
 
+async def _get_activity_member_roles_lock(server_id: int, user_id: int) -> asyncio.Lock:
+    key = (server_id, user_id)
+    async with _activity_member_roles_locks_guard:
+        lock = _activity_member_roles_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            _activity_member_roles_locks[key] = lock
+        return lock
+
+
+def _get_cached_activity_member_role_ids(server_id: int, user_id: int) -> set[int] | None:
+    if ACTIVITY_MEMBER_ROLES_CACHE_TTL_SECONDS <= 0:
+        return None
+    cached = _activity_member_roles_cache.get((server_id, user_id))
+    if not cached:
+        return None
+    if cached.expires_at <= monotonic():
+        _activity_member_roles_cache.pop((server_id, user_id), None)
+        return None
+    return set(cached.role_ids)
+
+
+def _store_cached_activity_member_role_ids(server_id: int, user_id: int, role_ids: set[int]) -> None:
+    if ACTIVITY_MEMBER_ROLES_CACHE_TTL_SECONDS <= 0:
+        return
+    _activity_member_roles_cache[(server_id, user_id)] = _ActivityMemberRolesCacheEntry(
+        role_ids=set(role_ids),
+        expires_at=monotonic() + ACTIVITY_MEMBER_ROLES_CACHE_TTL_SECONDS,
+    )
+
+
+async def _get_member_role_ids_for_activity(
+    server_id: int,
+    user_id: int,
+    refresh: bool = False,
+) -> set[int] | None:
+    cached = None if refresh else _get_cached_activity_member_role_ids(server_id, user_id)
+    if cached is not None:
+        return cached
+
+    roles_lock = await _get_activity_member_roles_lock(server_id=server_id, user_id=user_id)
+    async with roles_lock:
+        cached = None if refresh else _get_cached_activity_member_role_ids(server_id, user_id)
+        if cached is not None:
+            return cached
+        try:
+            member_payload = await fetch_guild_member(server_id=server_id, user_id=user_id)
+        except Exception as exc:
+            logger.warning(
+                "Failed to fetch guild member roles for activity filtering (server_id=%s, user_id=%s): %s",
+                server_id,
+                user_id,
+                exc,
+            )
+            return None
+
+        if not member_payload:
+            role_ids: set[int] = set()
+        else:
+            role_ids = {
+                int(role_id)
+                for role_id in member_payload.get("roles", [])
+                if str(role_id).isdigit()
+            }
+        _store_cached_activity_member_role_ids(server_id=server_id, user_id=user_id, role_ids=role_ids)
+        return role_ids
+
+
+def _parse_id_set_filter(raw_values: list[str] | None, parameter_name: str) -> set[int] | None:
+    if raw_values is None:
+        return None
+
+    parsed: set[int] = set()
+    invalid: list[str] = []
+    for raw_value in raw_values:
+        for token in str(raw_value).split(","):
+            value = token.strip()
+            if not value:
+                continue
+            if not value.isdigit():
+                invalid.append(value)
+                continue
+            parsed.add(int(value))
+
+    if invalid:
+        sample = ", ".join(invalid[:5])
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"{parameter_name} must contain only Discord numeric IDs. Invalid values: {sample}",
+        )
+    return parsed or None
+
+
+def _intersect_optional_sets(first: set[int] | None, second: set[int] | None) -> set[int] | None:
+    if first is None:
+        return second
+    if second is None:
+        return first
+    return first.intersection(second)
+
+
+def _matches_role_filters(
+    user_id: int,
+    user_role_ids: set[int] | None,
+    include_user_ids: set[int] | None,
+    exclude_user_ids: set[int] | None,
+    include_role_ids: set[int] | None,
+    exclude_role_ids: set[int] | None,
+) -> bool:
+    if exclude_user_ids and user_id in exclude_user_ids:
+        return False
+    if user_role_ids is None and (include_role_ids or exclude_role_ids):
+        return False
+    if user_role_ids is not None and exclude_role_ids and user_role_ids.intersection(exclude_role_ids):
+        return False
+
+    include_by_user = bool(include_user_ids and user_id in include_user_ids)
+    include_by_role = bool(
+        include_role_ids
+        and user_role_ids is not None
+        and user_role_ids.intersection(include_role_ids)
+    )
+    has_include_filters = bool(include_user_ids or include_role_ids)
+    if has_include_filters and not (include_by_user or include_by_role):
+        return False
+    return True
+
+
 def _resolve_period_bounds(
     date_from: date | None,
     date_to: date | None,
@@ -121,17 +260,26 @@ def _build_activity_filters(
     user_id: int | None = None,
     period_start: datetime | None = None,
     period_end_exclusive: datetime | None = None,
-    channel_ids: set[int] | None = None,
+    include_user_ids: set[int] | None = None,
+    exclude_user_ids: set[int] | None = None,
+    include_channel_ids: set[int] | None = None,
+    exclude_channel_ids: set[int] | None = None,
 ) -> list:
     conditions = [MessageLog.server_id == server_id]
     if user_id is not None:
         conditions.append(MessageLog.user_id == user_id)
+    if include_user_ids is not None:
+        conditions.append(MessageLog.user_id.in_(include_user_ids))
+    if exclude_user_ids:
+        conditions.append(MessageLog.user_id.notin_(exclude_user_ids))
     if period_start is not None:
         conditions.append(MessageLog.created_at >= period_start)
     if period_end_exclusive is not None:
         conditions.append(MessageLog.created_at < period_end_exclusive)
-    if channel_ids is not None:
-        conditions.append(MessageLog.channel_id.in_(channel_ids))
+    if include_channel_ids is not None:
+        conditions.append(MessageLog.channel_id.in_(include_channel_ids))
+    if exclude_channel_ids:
+        conditions.append(MessageLog.channel_id.notin_(exclude_channel_ids))
     return conditions
 
 
@@ -200,16 +348,18 @@ async def _fetch_user_channel_counts(
     user_id: int,
     period_start: datetime | None,
     period_end_exclusive: datetime | None,
-    channel_ids: set[int] | None = None,
+    include_channel_ids: set[int] | None = None,
+    exclude_channel_ids: set[int] | None = None,
 ) -> list[tuple[int, int]]:
-    if channel_ids is not None and not channel_ids:
+    if include_channel_ids is not None and not include_channel_ids:
         return []
     conditions = _build_activity_filters(
         server_id=server_id,
         user_id=user_id,
         period_start=period_start,
         period_end_exclusive=period_end_exclusive,
-        channel_ids=channel_ids,
+        include_channel_ids=include_channel_ids,
+        exclude_channel_ids=exclude_channel_ids,
     )
     rows = (
         await session.exec(
@@ -231,16 +381,18 @@ async def _fetch_user_last_message_metadata(
     user_id: int,
     period_start: datetime | None,
     period_end_exclusive: datetime | None,
-    channel_ids: set[int] | None = None,
+    include_channel_ids: set[int] | None = None,
+    exclude_channel_ids: set[int] | None = None,
 ) -> tuple[int | None, datetime | None]:
-    if channel_ids is not None and not channel_ids:
+    if include_channel_ids is not None and not include_channel_ids:
         return None, None
     conditions = _build_activity_filters(
         server_id=server_id,
         user_id=user_id,
         period_start=period_start,
         period_end_exclusive=period_end_exclusive,
-        channel_ids=channel_ids,
+        include_channel_ids=include_channel_ids,
+        exclude_channel_ids=exclude_channel_ids,
     )
     row = (
         await session.exec(
@@ -306,6 +458,14 @@ async def get_user_activity(
     date_from: date | None = Query(default=None, description="Inclusive UTC date (YYYY-MM-DD)."),
     date_to: date | None = Query(default=None, description="Inclusive UTC date (YYYY-MM-DD)."),
     channels_limit: int = Query(default=20, ge=1, le=100, description="Max channels to include in breakdown."),
+    include_channel_ids: list[str] | None = Query(
+        default=None,
+        description="Channel IDs to include (repeat parameter or use comma-separated IDs).",
+    ),
+    exclude_channel_ids: list[str] | None = Query(
+        default=None,
+        description="Channel IDs to exclude (repeat parameter or use comma-separated IDs).",
+    ),
     refresh_channels: bool = Query(default=False, description="Bypass server channel cache for this request."),
     session: AsyncSession = Depends(get_session),
 ):
@@ -314,6 +474,9 @@ async def get_user_activity(
         date_to,
     )
     active_channel_ids = await _get_server_rendered_text_channel_ids(server_id, refresh=refresh_channels)
+    include_channel_ids_set = _parse_id_set_filter(include_channel_ids, "include_channel_ids")
+    exclude_channel_ids_set = _parse_id_set_filter(exclude_channel_ids, "exclude_channel_ids")
+    effective_include_channel_ids = _intersect_optional_sets(active_channel_ids, include_channel_ids_set)
 
     # Date-filtered activity is computed from raw message logs.
     if period_start is not None or period_end_exclusive is not None:
@@ -323,7 +486,8 @@ async def get_user_activity(
             user_id=user_id,
             period_start=period_start,
             period_end_exclusive=period_end_exclusive,
-            channel_ids=active_channel_ids,
+            include_channel_ids=effective_include_channel_ids,
+            exclude_channel_ids=exclude_channel_ids_set,
         )
         latest_channel_id, latest_message_at = await _fetch_user_last_message_metadata(
             session=session,
@@ -331,7 +495,8 @@ async def get_user_activity(
             user_id=user_id,
             period_start=period_start,
             period_end_exclusive=period_end_exclusive,
-            channel_ids=active_channel_ids,
+            include_channel_ids=effective_include_channel_ids,
+            exclude_channel_ids=exclude_channel_ids_set,
         )
         channels = [
             UserActivityChannelCountModel(channel_id=str(channel_id), message_count=message_count)
@@ -354,7 +519,8 @@ async def get_user_activity(
         user_id=user_id,
         period_start=None,
         period_end_exclusive=None,
-        channel_ids=active_channel_ids,
+        include_channel_ids=effective_include_channel_ids,
+        exclude_channel_ids=exclude_channel_ids_set,
     )
 
     if not channel_rows:
@@ -366,7 +532,8 @@ async def get_user_activity(
         user_id=user_id,
         period_start=None,
         period_end_exclusive=None,
-        channel_ids=active_channel_ids,
+        include_channel_ids=effective_include_channel_ids,
+        exclude_channel_ids=exclude_channel_ids_set,
     )
 
     channels = [
@@ -391,6 +558,34 @@ async def get_server_activity_leaderboard(
     date_from: date | None = Query(default=None, description="Inclusive UTC date (YYYY-MM-DD)."),
     date_to: date | None = Query(default=None, description="Inclusive UTC date (YYYY-MM-DD)."),
     channels_limit: int = Query(default=5, ge=1, le=20, description="Max channels per user in breakdown."),
+    include_user_ids: list[str] | None = Query(
+        default=None,
+        description="User IDs to include (repeat parameter or use comma-separated IDs).",
+    ),
+    exclude_user_ids: list[str] | None = Query(
+        default=None,
+        description="User IDs to exclude (repeat parameter or use comma-separated IDs).",
+    ),
+    include_role_ids: list[str] | None = Query(
+        default=None,
+        description="Role IDs to include (repeat parameter or use comma-separated IDs).",
+    ),
+    exclude_role_ids: list[str] | None = Query(
+        default=None,
+        description="Role IDs to exclude (repeat parameter or use comma-separated IDs).",
+    ),
+    include_channel_ids: list[str] | None = Query(
+        default=None,
+        description="Channel IDs to include (repeat parameter or use comma-separated IDs).",
+    ),
+    exclude_channel_ids: list[str] | None = Query(
+        default=None,
+        description="Channel IDs to exclude (repeat parameter or use comma-separated IDs).",
+    ),
+    refresh_member_roles: bool = Query(
+        default=False,
+        description="Bypass member-role cache for this request.",
+    ),
     refresh_channels: bool = Query(default=False, description="Bypass server channel cache for this request."),
     session: AsyncSession = Depends(get_session),
 ):
@@ -398,38 +593,83 @@ async def get_server_activity_leaderboard(
         date_from,
         date_to,
     )
+    include_user_ids_set = _parse_id_set_filter(include_user_ids, "include_user_ids")
+    exclude_user_ids_set = _parse_id_set_filter(exclude_user_ids, "exclude_user_ids")
+    include_role_ids_set = _parse_id_set_filter(include_role_ids, "include_role_ids")
+    exclude_role_ids_set = _parse_id_set_filter(exclude_role_ids, "exclude_role_ids")
+    include_channel_ids_set = _parse_id_set_filter(include_channel_ids, "include_channel_ids")
+    exclude_channel_ids_set = _parse_id_set_filter(exclude_channel_ids, "exclude_channel_ids")
+
     active_channel_ids = await _get_server_rendered_text_channel_ids(server_id, refresh=refresh_channels)
-    if active_channel_ids is not None and not active_channel_ids:
+    effective_include_channel_ids = _intersect_optional_sets(active_channel_ids, include_channel_ids_set)
+    if effective_include_channel_ids is not None and not effective_include_channel_ids:
         return []
 
+    role_filters_requested = bool(include_role_ids_set or exclude_role_ids_set)
+    sql_include_user_ids = include_user_ids_set if not include_role_ids_set else None
     conditions = _build_activity_filters(
         server_id=server_id,
         period_start=period_start,
         period_end_exclusive=period_end_exclusive,
-        channel_ids=active_channel_ids,
+        include_user_ids=sql_include_user_ids,
+        exclude_user_ids=exclude_user_ids_set,
+        include_channel_ids=effective_include_channel_ids,
+        exclude_channel_ids=exclude_channel_ids_set,
     )
 
-    leaderboard_rows = (
-        await session.exec(
-            select(
-                MessageLog.user_id,
-                func.count().label("message_count"),
-                func.max(MessageLog.created_at).label("last_message_at"),
-            )
-            .where(*conditions)
-            .group_by(MessageLog.user_id)
-            .order_by(
-                func.count().desc(),
-                func.max(MessageLog.created_at).desc(),
-                MessageLog.user_id.asc(),
-            )
-            .limit(limit)
+    leaderboard_query = (
+        select(
+            MessageLog.user_id,
+            func.count().label("message_count"),
+            func.max(MessageLog.created_at).label("last_message_at"),
         )
-    ).all()
+        .where(*conditions)
+        .group_by(MessageLog.user_id)
+        .order_by(
+            func.count().desc(),
+            func.max(MessageLog.created_at).desc(),
+            MessageLog.user_id.asc(),
+        )
+    )
+    if not role_filters_requested:
+        leaderboard_query = leaderboard_query.limit(limit)
+
+    leaderboard_rows = (await session.exec(leaderboard_query)).all()
     if not leaderboard_rows:
         return []
 
-    user_ids = [int(user_id) for user_id, _, _ in leaderboard_rows]
+    if role_filters_requested or (include_user_ids_set is not None and include_role_ids_set is not None):
+        filtered_rows = []
+        for user_id, message_count, last_message_at in leaderboard_rows:
+            user_key = int(user_id)
+            role_ids = await _get_member_role_ids_for_activity(
+                server_id=server_id,
+                user_id=user_key,
+                refresh=refresh_member_roles,
+            )
+            if not _matches_role_filters(
+                user_id=user_key,
+                user_role_ids=role_ids,
+                include_user_ids=include_user_ids_set,
+                exclude_user_ids=exclude_user_ids_set,
+                include_role_ids=include_role_ids_set,
+                exclude_role_ids=exclude_role_ids_set,
+            ):
+                continue
+            filtered_rows.append((user_key, int(message_count), last_message_at))
+            if len(filtered_rows) >= limit:
+                break
+        leaderboard_rows = filtered_rows
+    else:
+        leaderboard_rows = [
+            (int(user_id), int(message_count), last_message_at)
+            for user_id, message_count, last_message_at in leaderboard_rows
+        ]
+
+    if not leaderboard_rows:
+        return []
+
+    user_ids = [user_id for user_id, _, _ in leaderboard_rows]
     global_user_rows = (
         await session.exec(
             select(GlobalUser.discord_id, GlobalUser.username).where(GlobalUser.discord_id.in_(user_ids))

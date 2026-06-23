@@ -61,6 +61,7 @@ class ModerationActionSummaryModel(BaseModel):
     moderator_username: str
     reason: str
     case_id: str | None = None
+    case_title: str | None = None
     created_at: datetime
     expires_at: datetime | None = None
     is_active: bool

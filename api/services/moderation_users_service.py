@@ -1,5 +1,5 @@
 from fastapi import HTTPException, status
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, union_all
 from sqlalchemy.orm import selectinload
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -24,8 +24,8 @@ from src.db.models import (
     ModerationAction,
     ModerationActionRuleCitation,
     ModerationCase,
+    ModerationCaseRuleCitation,
     ModerationCaseUser,
-    ModerationRule,
     MonitoredUser,
     MonitoredUserComment,
     Server,
@@ -171,28 +171,51 @@ async def build_user_profile_card(
             comment_count=monitored_comment_count,
         )
 
+    rule_usage_union = union_all(
+        select(
+            ModerationActionRuleCitation.rule_id.label("rule_id"),
+            ModerationActionRuleCitation.rule_code_snapshot.label("code"),
+            ModerationActionRuleCitation.rule_title_snapshot.label("title"),
+            ModerationActionRuleCitation.cited_at.label("cited_at"),
+        )
+        .join(
+            ModerationAction,
+            ModerationAction.id == ModerationActionRuleCitation.action_id,
+        )
+        .where(
+            ModerationAction.server_id == server_id,
+            ModerationAction.target_user_id == user_id,
+        ),
+        select(
+            ModerationCaseRuleCitation.rule_id.label("rule_id"),
+            ModerationCaseRuleCitation.rule_code_snapshot.label("code"),
+            ModerationCaseRuleCitation.rule_title_snapshot.label("title"),
+            ModerationCaseRuleCitation.cited_at.label("cited_at"),
+        )
+        .join(
+            ModerationCase,
+            ModerationCase.id == ModerationCaseRuleCitation.case_id,
+        )
+        .where(
+            ModerationCase.server_id == server_id,
+            cases_for_user,
+        ),
+    ).subquery()
     top_rule_rows = (
         await session.exec(
             select(
-                ModerationActionRuleCitation.rule_id,
-                ModerationActionRuleCitation.rule_code_snapshot,
-                ModerationActionRuleCitation.rule_title_snapshot,
-                func.count(ModerationActionRuleCitation.id).label("count"),
-            )
-            .join(
-                ModerationAction,
-                ModerationAction.id == ModerationActionRuleCitation.action_id,
-            )
-            .where(
-                ModerationAction.server_id == server_id,
-                ModerationAction.target_user_id == user_id,
+                rule_usage_union.c.rule_id,
+                rule_usage_union.c.code,
+                rule_usage_union.c.title,
+                func.count().label("usage_count"),
+                func.max(rule_usage_union.c.cited_at).label("last_cited_at"),
             )
             .group_by(
-                ModerationActionRuleCitation.rule_id,
-                ModerationActionRuleCitation.rule_code_snapshot,
-                ModerationActionRuleCitation.rule_title_snapshot,
+                rule_usage_union.c.rule_id,
+                rule_usage_union.c.code,
+                rule_usage_union.c.title,
             )
-            .order_by(func.count(ModerationActionRuleCitation.id).desc())
+            .order_by(func.count().desc(), func.max(rule_usage_union.c.cited_at).desc())
             .limit(3)
         )
     ).all()
@@ -200,31 +223,28 @@ async def build_user_profile_card(
     for row in top_rule_rows:
         citation_rule_id = row[0]
         citation_rule_code = row[1]
-        citation_rule_title = row[2]
+        citation_rule_title = (row[2] or "Rule").strip() or "Rule"
         citation_count = int(row[3] or 0)
-
-        resolved_rule = await session.get(ModerationRule, citation_rule_id) if citation_rule_id is not None else None
-        if resolved_rule:
-            rule_ref = ModerationRuleRef(
-                id=str(resolved_rule.id),
-                code=resolved_rule.code,
-                title=resolved_rule.title,
-                deleted=False,
-            )
-        else:
-            title = (citation_rule_title or "Rule").strip() or "Rule"
-            if "(deleted)" not in title.lower():
-                title = f"{title} (deleted)"
-            rule_ref = ModerationRuleRef(
-                id=None,
-                code=citation_rule_code,
-                title=title,
-                deleted=True,
-            )
+        last_cited_at = row[4]
+        is_deleted = citation_rule_id is None
+        rule_title = citation_rule_title
+        if is_deleted and "(deleted)" not in rule_title.lower():
+            rule_title = f"{rule_title} (deleted)"
+        rule_ref = ModerationRuleRef(
+            id=str(citation_rule_id) if citation_rule_id is not None else None,
+            code=citation_rule_code,
+            title=rule_title,
+            deleted=is_deleted,
+        )
         top_rules_violated.append(
             TopRuleViolationModel(
                 rule=rule_ref,
                 count=citation_count,
+                rule_id=str(citation_rule_id) if citation_rule_id is not None else None,
+                code=citation_rule_code,
+                title=rule_title,
+                usage_count=citation_count,
+                last_cited_at=last_cited_at,
             )
         )
 
@@ -261,7 +281,8 @@ async def build_user_profile_card(
             )
             for case in cases
         ],
-        monitored=monitored_summary,
+        monitored=bool(monitored_row and monitored_row.is_active),
+        monitored_summary=monitored_summary,
         top_rules_violated=top_rules_violated,
     )
 

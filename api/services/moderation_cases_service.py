@@ -29,6 +29,7 @@ from api.models.moderation_cases import (
 from api.services.moderation_actions_service import create_action
 from api.services.moderation_core import (
     build_actor,
+    ensure_case_writable_for_actions,
     get_case_or_404,
     get_system_actor,
     naive_utcnow,
@@ -163,13 +164,21 @@ async def _add_case_system_note_for_monitored_subjects(
             .order_by(MonitoredUser.created_at.asc())
         )
     ).all()
-    for monitored_user, global_user in monitored_subjects:
-        display_name = global_user.username or str(monitored_user.user_id)
-        reason = monitored_user.reason or "no reason given"
-        note_text = (
-            f"Subject {display_name} is on the watchlist since "
-            f"{monitored_user.created_at:%Y-%m-%d} - reason: {reason}"
-        )
+    for monitored_user, _global_user in monitored_subjects:
+        note_text = f"Subject is on the watchlist since {monitored_user.created_at:%Y-%m-%d}"
+        if monitored_user.reason:
+            note_text = f"{note_text} - reason: {monitored_user.reason}"
+        existing_note = (
+            await session.exec(
+                select(ModerationCaseNote).where(
+                    ModerationCaseNote.case_id == moderation_case.id,
+                    ModerationCaseNote.author_user_id.is_(None),
+                    ModerationCaseNote.note == note_text,
+                )
+            )
+        ).first()
+        if existing_note:
+            continue
         session.add(
             ModerationCaseNote(
                 case_id=moderation_case.id,
@@ -279,6 +288,43 @@ async def _count_case_actions(
         action_ids_by_case.setdefault(case_id, set()).add(action_id)
 
     return {case_id: len(action_ids) for case_id, action_ids in action_ids_by_case.items()}
+
+
+async def _replace_case_action_link(
+    session: AsyncSession,
+    action: ModerationAction,
+    case_id: UUID,
+    linked_by_user_id: int,
+    linked_at: datetime | None = None,
+) -> None:
+    existing_links = (
+        await session.exec(
+            select(ModerationCaseActionLink).where(
+                ModerationCaseActionLink.moderation_action_id == action.id,
+            )
+        )
+    ).all()
+
+    same_case_link = None
+    for existing_link in existing_links:
+        if existing_link.case_id == case_id:
+            same_case_link = existing_link
+            continue
+        await session.delete(existing_link)
+
+    action.case_id = case_id
+    session.add(action)
+
+    if same_case_link is None:
+        session.add(
+            ModerationCaseActionLink(
+                case_id=case_id,
+                moderation_action_id=action.id,
+                linked_by_user_id=linked_by_user_id,
+                linked_at=linked_at or naive_utcnow(),
+            )
+        )
+    await session.flush()
 
 
 async def _count_case_entities(
@@ -751,7 +797,9 @@ async def link_action_to_case(
     moderation_action_id: str,
     linked_by_user_id: int,
 ) -> ModerationCaseReadModel:
+    """Attach an action to a case, moving it from any previous case link."""
     moderation_case = await get_case_or_404(server_id, case_id, session)
+    ensure_case_writable_for_actions(moderation_case)
     await build_actor(session, server_id, linked_by_user_id, require_membership=True)
 
     try:
@@ -763,30 +811,12 @@ async def link_action_to_case(
     if not action or action.server_id != server_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Moderation action not found")
 
-    if action.case_id is None:
-        action.case_id = case_id
-        session.add(action)
-    elif action.case_id != case_id:
-        # Keep existing canonical link and persist this one as secondary.
-        pass
-
-    existing_link = (
-        await session.exec(
-            select(ModerationCaseActionLink).where(
-                ModerationCaseActionLink.case_id == case_id,
-                ModerationCaseActionLink.moderation_action_id == action_id,
-            )
-        )
-    ).first()
-    if not existing_link:
-        session.add(
-            ModerationCaseActionLink(
-                case_id=case_id,
-                moderation_action_id=action_id,
-                linked_by_user_id=linked_by_user_id,
-            )
-        )
-        await session.flush()
+    await _replace_case_action_link(
+        session=session,
+        action=action,
+        case_id=case_id,
+        linked_by_user_id=linked_by_user_id,
+    )
 
     action_rule_ids = (
         await session.exec(
@@ -866,9 +896,18 @@ async def create_action_from_case(
     actor_user_id: int,
 ) -> ModerationActionRead:
     moderation_case = await get_case_or_404(server_id, case_id, session)
+    ensure_case_writable_for_actions(moderation_case)
     await build_actor(session, server_id, actor_user_id, require_membership=True)
 
-    target_user_id = int(body.target_user_id) if body.target_user_id and body.target_user_id.isdigit() else moderation_case.target_user_id
+    if body.target_user_id:
+        target_user_id = int(body.target_user_id) if body.target_user_id.isdigit() else moderation_case.target_user_id
+    else:
+        if moderation_case.target_user_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Case has no primary target; target_user_id is required",
+            )
+        target_user_id = moderation_case.target_user_id
     case_users = (
         await session.exec(
             select(ModerationCaseUser.user_id).where(ModerationCaseUser.case_id == case_id)
@@ -931,6 +970,44 @@ async def create_action_from_case(
     await session.flush()
 
     return to_moderation_history([created_action])[0]
+
+
+async def remove_action_from_case(
+    session: AsyncSession,
+    server_id: int,
+    case_id: UUID,
+    action_id: UUID,
+) -> ModerationCaseReadModel:
+    """Detach an action from a case and clear the action's canonical case_id."""
+    moderation_case = await get_case_or_404(server_id, case_id, session)
+    ensure_case_writable_for_actions(moderation_case)
+
+    action = await session.get(ModerationAction, action_id)
+    if not action or action.server_id != server_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Moderation action not found")
+
+    existing_link = (
+        await session.exec(
+            select(ModerationCaseActionLink).where(
+                ModerationCaseActionLink.case_id == case_id,
+                ModerationCaseActionLink.moderation_action_id == action_id,
+            )
+        )
+    ).first()
+
+    if existing_link is None and action.case_id != case_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Moderation action link not found")
+
+    if existing_link is not None:
+        await session.delete(existing_link)
+
+    if action.case_id == case_id:
+        action.case_id = None
+        session.add(action)
+
+    await session.flush()
+    await session.refresh(moderation_case)
+    return await to_case_read(moderation_case, session)
 
 
 def store_evidence_blob(

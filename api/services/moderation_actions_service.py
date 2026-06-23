@@ -15,7 +15,13 @@ from api.models.moderation_actions import (
 )
 from api.models.moderation_cases import DeletedMessageCreateModel, DeletedMessageReadModel
 from api.services.discord_guilds import create_channel_message, fetch_guild_channels
-from api.services.moderation_core import build_actor, naive_utcnow, to_deleted_message_read, to_moderation_history
+from api.services.moderation_core import (
+    build_actor,
+    ensure_case_writable_for_actions,
+    naive_utcnow,
+    to_deleted_message_read,
+    to_moderation_history,
+)
 from api.services.moderation_queries import (
     query_deleted_messages,
     query_deleted_messages_for_action,
@@ -198,6 +204,7 @@ def _to_action_summary(
     moderator_user_id: int,
     reason: str,
     case_id: UUID | None,
+    case_title: str | None,
     created_at: datetime,
     expires_at: datetime | None,
     is_active: bool,
@@ -216,6 +223,7 @@ def _to_action_summary(
         moderator_username=moderator_username or str(moderator_user_id),
         reason=reason,
         case_id=str(case_id) if case_id else None,
+        case_title=case_title,
         created_at=created_at,
         expires_at=expires_at,
         is_active=is_active,
@@ -326,6 +334,7 @@ async def create_action(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Moderation case not found",
             )
+        ensure_case_writable_for_actions(linked_case)
 
     db_action = ModerationAction(
         action_type=action.action_type,
@@ -397,6 +406,7 @@ async def list_action_summaries(
             ModerationAction.moderator_user_id,
             ModerationAction.reason,
             ModerationAction.case_id,
+            ModerationCase.title.label("case_title"),
             ModerationAction.created_at,
             ModerationAction.expires_at,
             ModerationAction.is_active,
@@ -407,6 +417,7 @@ async def list_action_summaries(
         )
         .join(target_user, target_user.discord_id == ModerationAction.target_user_id, isouter=True)
         .join(moderator_user, moderator_user.discord_id == ModerationAction.moderator_user_id, isouter=True)
+        .outerjoin(ModerationCase, ModerationCase.id == ModerationAction.case_id)
         .outerjoin(ModerationActionRuleCitation, ModerationActionRuleCitation.action_id == ModerationAction.id)
         .outerjoin(
             ModerationActionDeletedMessageLink,
@@ -426,6 +437,7 @@ async def list_action_summaries(
             ModerationAction.moderator_user_id,
             ModerationAction.reason,
             ModerationAction.case_id,
+            ModerationCase.title,
             ModerationAction.created_at,
             ModerationAction.expires_at,
             ModerationAction.is_active,
@@ -445,13 +457,14 @@ async def list_action_summaries(
             moderator_user_id=row[4],
             reason=row[5],
             case_id=row[6],
-            created_at=row[7],
-            expires_at=row[8],
-            is_active=row[9],
-            target_username=row[10],
-            moderator_username=row[11],
-            rules_count=int(row[12] or 0),
-            deleted_messages_count=int(row[13] or 0),
+            case_title=row[7],
+            created_at=row[8],
+            expires_at=row[9],
+            is_active=row[10],
+            target_username=row[11],
+            moderator_username=row[12],
+            rules_count=int(row[13] or 0),
+            deleted_messages_count=int(row[14] or 0),
         )
         for row in rows
     ]

@@ -24,6 +24,12 @@ class MonitoredUserUpdateModel(BaseModel):
         return self
 
 
+class MonitoredUserCountsModel(BaseModel):
+    cases_total: int = 0
+    cases_open: int = 0
+    actions_total: int = 0
+
+
 class MonitoredUserReadModel(BaseModel):
     id: str
     server_id: str
@@ -33,6 +39,7 @@ class MonitoredUserReadModel(BaseModel):
     updated_at: datetime
     user: ModerationActorModel
     added_by: ModerationActorModel
+    counts: MonitoredUserCountsModel | None = None
 
 
 class MonitoredUserCommentCreateModel(BaseModel):
@@ -83,10 +90,11 @@ class UserActionSummaryModel(BaseModel):
 class MonitoredUserDetailsModel(MonitoredUserReadModel):
     related_cases: list[UserCaseSummaryModel] = Field(default_factory=list)
     recent_actions: list[UserActionSummaryModel] = Field(default_factory=list)
+    counts: MonitoredUserCountsModel = Field(default_factory=MonitoredUserCountsModel)
     comment_count: int = 0
 
 
 class MonitoredUserFromCaseModel(BaseModel):
-    user_id: str = Field(pattern=r"^\d+$")
+    user_id: str | None = Field(default=None, pattern=r"^\d+$")
     reason: str | None = Field(default=None, max_length=5000)
     added_by_user_id: str | None = Field(default=None, pattern=r"^\d*$")

@@ -1,7 +1,7 @@
 from typing import List
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -166,9 +166,15 @@ async def get_cases_for_user(
 async def get_monitored_users(
     server_id: int,
     active_only: bool = Query(default=True),
+    include_counts: bool = Query(default=False),
     session: AsyncSession = Depends(get_session),
 ):
-    return await list_monitored_users_service(session=session, server_id=server_id, active_only=active_only)
+    return await list_monitored_users_service(
+        session=session,
+        server_id=server_id,
+        active_only=active_only,
+        include_counts=include_counts,
+    )
 
 
 @moderation_users_router.get(
@@ -234,17 +240,41 @@ async def patch_monitored_user(
 
 
 @moderation_users_router.post(
-    "/users/{server_id}/monitored/from-case/{case_id}",
+    "/users/{server_id}/monitored/{user_id}/from-case/{case_id}",
     response_model=MonitoredUserReadModel,
-    status_code=status.HTTP_201_CREATED,
 )
 async def add_monitored_user_from_case_route(
+    server_id: int,
+    user_id: int,
+    case_id: UUID,
+    body: MonitoredUserFromCaseModel = Body(default_factory=MonitoredUserFromCaseModel),
+    session: AsyncSession = Depends(get_session),
+    current_user_id: int | None = Depends(get_optional_current_discord_user_id),
+):
+    added_by_user_id = resolve_actor_user_id(body.added_by_user_id, current_user_id)
+    return await add_monitored_user_from_case(
+        session=session,
+        server_id=server_id,
+        case_id=case_id,
+        user_id=user_id,
+        reason=body.reason,
+        added_by_user_id=added_by_user_id,
+    )
+
+
+@moderation_users_router.post(
+    "/users/{server_id}/monitored/from-case/{case_id}",
+    response_model=MonitoredUserReadModel,
+)
+async def add_monitored_user_from_case_legacy_route(
     server_id: int,
     case_id: UUID,
     body: MonitoredUserFromCaseModel,
     session: AsyncSession = Depends(get_session),
     current_user_id: int | None = Depends(get_optional_current_discord_user_id),
 ):
+    if body.user_id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="user_id_required")
     added_by_user_id = resolve_actor_user_id(body.added_by_user_id, current_user_id)
     return await add_monitored_user_from_case(
         session=session,

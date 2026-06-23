@@ -36,6 +36,7 @@ from api.services.moderation_cases_service import (
     link_action_to_case as link_action_to_case_service,
     list_case_users as list_case_users_service,
     list_cases as list_cases_service,
+    remove_action_from_case as remove_action_from_case_service,
     remove_user_from_case as remove_user_from_case_service,
     remove_case_rule as remove_case_rule_service,
     safe_upload_key,
@@ -275,6 +276,25 @@ async def link_action_to_moderation_case(
         case_id=case_id,
         moderation_action_id=body.moderation_action_id,
         linked_by_user_id=linked_by_user_id,
+    )
+
+
+@moderation_cases_router.delete(
+    "/cases/{server_id}/{case_id}/actions/{action_id}",
+    response_model=ModerationCaseReadModel,
+    dependencies=[Depends(require_server_dashboard_access)],
+)
+async def unlink_action_from_moderation_case(
+    server_id: int,
+    case_id: UUID,
+    action_id: UUID,
+    session: AsyncSession = Depends(get_session),
+):
+    return await remove_action_from_case_service(
+        session=session,
+        server_id=server_id,
+        case_id=case_id,
+        action_id=action_id,
     )
 
 

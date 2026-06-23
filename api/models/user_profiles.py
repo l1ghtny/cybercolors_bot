@@ -97,8 +97,13 @@ class MonitoredUserSummaryModel(BaseModel):
 
 
 class TopRuleViolationModel(BaseModel):
-    rule: ModerationRuleRef
-    count: int
+    rule: ModerationRuleRef | None = None
+    count: int | None = None
+    rule_id: str | None = None
+    code: str | None = None
+    title: str
+    usage_count: int
+    last_cited_at: datetime | None = None
 
 
 class UserProfileCardModel(BaseModel):
@@ -116,5 +121,6 @@ class UserProfileCardModel(BaseModel):
     open_cases_count: int
     recent_actions: list[UserModerationActionSummaryModel]
     recent_cases: list[UserModerationCaseSummaryModel]
-    monitored: MonitoredUserSummaryModel | None = None
+    monitored: bool = False
+    monitored_summary: MonitoredUserSummaryModel | None = None
     top_rules_violated: list[TopRuleViolationModel] = Field(default_factory=list)

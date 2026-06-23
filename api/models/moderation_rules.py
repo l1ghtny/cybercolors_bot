@@ -107,14 +107,28 @@ class RuleUsageCaseSummaryModel(BaseModel):
 
 class RuleUsageTopOffenderModel(BaseModel):
     user: ModerationActorModel
-    action_count: int
+    count: int
+    action_count: int | None = None
+
+
+class RuleUsageCitationModel(BaseModel):
+    cited_at: datetime
+    source: str
+    source_id: str
+    source_title: str
+    target: ModerationActorModel | None = None
 
 
 class ModerationRuleUsageModel(BaseModel):
-    rule: ModerationRuleReadModel
+    rule_id: str
+    code: str | None = None
+    title: str
+    usage_count: int
     action_count: int
     case_count: int
     last_cited_at: datetime | None = None
+    top_offenders: list[RuleUsageTopOffenderModel] = Field(default_factory=list)
+    recent_citations: list[RuleUsageCitationModel] = Field(default_factory=list)
+    rule: ModerationRuleReadModel | None = None
     recent_actions: list[RuleUsageActionSummaryModel] = Field(default_factory=list)
     recent_cases: list[RuleUsageCaseSummaryModel] = Field(default_factory=list)
-    top_offenders: list[RuleUsageTopOffenderModel] = Field(default_factory=list)

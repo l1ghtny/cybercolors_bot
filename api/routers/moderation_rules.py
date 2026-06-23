@@ -44,10 +44,15 @@ moderation_rules_router = APIRouter(
 async def get_server_moderation_rules(
     server_id: int,
     include_inactive: bool = Query(default=False),
+    include_deleted: bool = Query(default=False),
     include_usage: bool = Query(default=False),
     session: AsyncSession = Depends(get_session),
 ):
-    rules = await list_rules(session=session, server_id=server_id, include_inactive=include_inactive)
+    rules = await list_rules(
+        session=session,
+        server_id=server_id,
+        include_inactive=include_inactive or include_deleted,
+    )
     usage_map = await get_rule_usage_stats_for_server(session=session, server_id=server_id) if include_usage else {}
     payload: list[ModerationRuleReadModel] = []
     for item in rules:

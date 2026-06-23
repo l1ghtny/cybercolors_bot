@@ -21,6 +21,7 @@ from api.models.moderation_cases import (
 )
 from api.models.user_profiles import NicknameRecordModel
 from src.db.models import (
+    CaseStatus,
     DeletedMessage,
     GlobalUser,
     ModerationAction,
@@ -214,6 +215,14 @@ async def build_optional_actor(
     )
 
 
+def ensure_case_writable_for_actions(moderation_case: ModerationCase) -> None:
+    if moderation_case.status == CaseStatus.ARCHIVED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Archived cases cannot be modified",
+        )
+
+
 def _rule_ref_from_action_citation(citation: ModerationActionRuleCitation) -> ModerationRuleRef:
     if citation.rule_id is not None and citation.rule is not None:
         return ModerationRuleRef(
@@ -254,6 +263,25 @@ def _rule_ref_from_case_citation(citation: ModerationCaseRuleCitation) -> Modera
     )
 
 
+def _rule_refs_from_action(action: ModerationAction) -> list[ModerationRuleRef]:
+    if action.rule_citations:
+        sorted_citations = sorted(
+            action.rule_citations,
+            key=lambda item: (item.cited_at or datetime.min.replace(tzinfo=None), str(item.id)),
+        )
+        return [_rule_ref_from_action_citation(item) for item in sorted_citations]
+    if action.rule is not None:
+        return [
+            ModerationRuleRef(
+                id=str(action.rule.id),
+                code=action.rule.code,
+                title=action.rule.title,
+                deleted=False,
+            )
+        ]
+    return []
+
+
 async def _to_action_summary(
     session: AsyncSession,
     action: ModerationAction,
@@ -267,6 +295,7 @@ async def _to_action_summary(
         created_at=action.created_at,
         expires_at=action.expires_at,
         is_active=action.is_active,
+        rules=_rule_refs_from_action(action),
     )
 
 
@@ -387,23 +416,7 @@ async def to_deleted_message_read(
 def to_moderation_history(result: Sequence[ModerationAction]) -> list[ModerationActionRead]:
     payload: list[ModerationActionRead] = []
     for action in result:
-        rule_refs: list[ModerationRuleRef] = []
-        if action.rule_citations:
-            sorted_citations = sorted(
-                action.rule_citations,
-                key=lambda item: (item.cited_at or datetime.min.replace(tzinfo=None), str(item.id)),
-            )
-            rule_refs = [_rule_ref_from_action_citation(item) for item in sorted_citations]
-        elif action.rule is not None:
-            rule_refs = [
-                ModerationRuleRef(
-                    id=str(action.rule.id),
-                    code=action.rule.code,
-                    title=action.rule.title,
-                    deleted=False,
-                )
-            ]
-
+        rule_refs = _rule_refs_from_action(action)
         primary_rule = rule_refs[0] if rule_refs else None
         payload.append(
             ModerationActionRead(
