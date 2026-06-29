@@ -16,6 +16,7 @@ from api.services.dashboard_access_service import (
     remove_dashboard_access_role,
     remove_dashboard_access_user,
 )
+from api.models.server_overview import ServerOverviewModel, ServerTimelineModel
 from api.models.server_directory import (
     ServerChannelModel,
     ServerMetadataModel,
@@ -24,6 +25,7 @@ from api.models.server_directory import (
     ServerUsersLookupRequest,
 )
 from api.models.user_profiles import UserProfileCardModel
+from api.services.server_overview import build_server_overview, build_server_timeline
 from api.services.server_directory import (
     build_server_metadata,
     get_server_channel_payload,
@@ -55,6 +57,27 @@ async def get_server(server_id: int, session: AsyncSession = Depends(get_session
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Server not found")
     return metadata
 
+
+@servers.get(
+    "/{server_id}/overview",
+    response_model=ServerOverviewModel,
+    dependencies=[Depends(require_server_dashboard_access)],
+)
+async def get_server_overview(server_id: int, session: AsyncSession = Depends(get_session)):
+    return await build_server_overview(session=session, server_id=server_id)
+
+
+@servers.get(
+    "/{server_id}/timeline",
+    response_model=ServerTimelineModel,
+    dependencies=[Depends(require_server_dashboard_access)],
+)
+async def get_server_timeline(
+    server_id: int,
+    limit: int = Query(default=100, ge=1, le=200),
+    session: AsyncSession = Depends(get_session),
+):
+    return await build_server_timeline(session=session, server_id=server_id, limit=limit)
 
 @servers.get("/{server_id}/channels", response_model=list[ServerChannelModel], dependencies=[Depends(require_server_dashboard_access)])
 async def get_server_channels(

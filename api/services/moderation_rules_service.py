@@ -79,13 +79,14 @@ def parse_rules_from_text(text: str) -> list[ParsedRule]:
             return
         merged = "\n".join(line for line in current_lines if line.strip())
         normalized_description = _normalize_text(merged)
+        title_source = _normalize_text(next((line for line in current_lines if line.strip()), merged))
         if not normalized_description:
             return
         parsed.append(
             ParsedRule(
                 marker=current_marker,
                 code=current_code,
-                title=_extract_title(normalized_description),
+                title=_extract_title(title_source or normalized_description),
                 description=normalized_description,
                 sort_order=len(parsed) + 1,
             )
@@ -96,13 +97,16 @@ def parse_rules_from_text(text: str) -> list[ParsedRule]:
         if match:
             marker_suffix = (match.group("marker") or "").strip()
             body = match.group("body").strip()
+            if marker_suffix.endswith("**") and not body.startswith("**"):
+                marker_suffix = marker_suffix[:-2].strip()
+                body = f"**{body}"
             # Prevent false positives like "2024 roadmap" and treat only explicit markers as rule starts.
             if not marker_suffix and not body.startswith("**"):
                 match = None
 
         if match:
             flush_current()
-            marker = f"{match.group('num')}{(match.group('marker') or '').strip()}"
+            marker = f"{match.group('num')}{marker_suffix}"
             current_marker = marker
             current_code = match.group("num")
             current_lines = [body]

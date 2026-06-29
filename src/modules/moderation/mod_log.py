@@ -95,3 +95,32 @@ def build_unmute_log_message(
     )
     message = tr(locale, "modlog.header") + "\n" + "\n".join(lines)
     return _truncate(message, 1900)
+
+
+def build_action_revert_log_message(
+    *,
+    action_type: str,
+    action_id: str,
+    target_user_id: int,
+    moderator_user_id: int | None,
+    reason: str,
+    reverted: bool,
+    locale: str | None = None,
+    is_auto: bool = False,
+) -> str:
+    action_name = tr(locale, "modlog.action_auto_revert") if is_auto else tr(locale, "modlog.action_revert")
+    lines = [
+        f"**{tr(locale, 'modlog.action_label')}:** `{action_name}`",
+        f"**{tr(locale, 'modlog.target_label')}:** <@{target_user_id}> (`{target_user_id}`)",
+        f"**{tr(locale, 'modlog.original_action_label')}:** `{action_type} {action_id}`",
+    ]
+    if moderator_user_id is not None:
+        lines.append(f"**{tr(locale, 'modlog.moderator_label')}:** <@{moderator_user_id}> (`{moderator_user_id}`)")
+    lines.extend(
+        [
+            f"**{tr(locale, 'modlog.reason_label')}:** {_truncate(reason, 1000)}",
+            f"**{tr(locale, 'modlog.reverted_label')}:** `{reverted}`",
+            f"**{tr(locale, 'modlog.logged_at_label')}:** `{_format_dt(datetime.now(timezone.utc).replace(tzinfo=None))}`",
+        ]
+    )
+    return _truncate(tr(locale, "modlog.header") + "\n" + "\n".join(lines), 1900)

@@ -17,10 +17,10 @@ def _get_bot_token() -> str:
     return token
 
 
-async def _discord_get(path: str) -> list[dict] | dict:
+async def _discord_get(path: str, params: dict | None = None) -> list[dict] | dict:
     headers = {"Authorization": f"Bot {_get_bot_token()}"}
     async with httpx.AsyncClient() as client:
-        response = await client.get(f"{DISCORD_API_BASE_URL}{path}", headers=headers)
+        response = await client.get(f"{DISCORD_API_BASE_URL}{path}", headers=headers, params=params)
     if response.status_code >= 400:
         raise HTTPException(
             status_code=response.status_code,
@@ -66,6 +66,45 @@ async def _discord_put(path: str, payload: dict | None = None) -> list[dict] | d
     if not response.content:
         return {}
     return response.json()
+
+async def _discord_delete(path: str, payload: dict | None = None) -> list[dict] | dict:
+    headers = {"Authorization": f"Bot {_get_bot_token()}"}
+    async with httpx.AsyncClient() as client:
+        response = await client.request("DELETE", f"{DISCORD_API_BASE_URL}{path}", headers=headers, json=payload)
+    if response.status_code >= 400:
+        raise HTTPException(
+            status_code=response.status_code,
+            detail=f"Discord API error: {response.text}",
+        )
+    if not response.content:
+        return {}
+    return response.json()
+async def fetch_guild_bans(server_id: int, limit: int = 1000, after: int | None = None) -> list[dict]:
+    params: dict[str, str | int] = {"limit": max(1, min(limit, 1000))}
+    if after is not None:
+        params["after"] = str(after)
+    payload = await _discord_get(f"/guilds/{server_id}/bans", params=params)
+    if isinstance(payload, list):
+        return payload
+    return []
+
+
+async def fetch_guild_audit_logs(
+    server_id: int,
+    *,
+    limit: int = 100,
+    before: int | None = None,
+    action_type: int | None = None,
+) -> dict:
+    params: dict[str, str | int] = {"limit": max(1, min(limit, 100))}
+    if before is not None:
+        params["before"] = str(before)
+    if action_type is not None:
+        params["action_type"] = action_type
+    payload = await _discord_get(f"/guilds/{server_id}/audit-logs", params=params)
+    if isinstance(payload, dict):
+        return payload
+    return {}
 
 async def fetch_guild_channels(server_id: int) -> list[dict]:
     channels = await _discord_get(f"/guilds/{server_id}/channels")
@@ -140,17 +179,26 @@ async def create_guild_role(server_id: int, name: str) -> dict:
     return {}
 
 
-async def create_channel_message(channel_id: int, content: str) -> dict:
+async def create_channel_message(
+    channel_id: int,
+    content: str | None = None,
+    embeds: list[dict] | None = None,
+) -> dict:
+    message_payload: dict = {"allowed_mentions": {"parse": []}}
+    if content is not None:
+        message_payload["content"] = content
+    if embeds:
+        message_payload["embeds"] = embeds
+
     payload = await _discord_post(
         f"/channels/{channel_id}/messages",
-        {
-            "content": content,
-            "allowed_mentions": {"parse": []},
-        },
+        message_payload,
     )
     if isinstance(payload, dict):
         return payload
     return {}
+
+
 async def create_user_dm_channel(user_id: int) -> dict:
     payload = await _discord_post(
         "/users/@me/channels",
@@ -183,3 +231,16 @@ async def create_direct_message(user_id: int, content: str) -> dict:
 
 async def add_guild_member_role(server_id: int, user_id: int, role_id: int) -> None:
     await _discord_put(f"/guilds/{server_id}/members/{user_id}/roles/{role_id}")
+async def ban_guild_member(server_id: int, user_id: int, delete_message_seconds: int = 0) -> None:
+    await _discord_put(
+        f"/guilds/{server_id}/bans/{user_id}",
+        {"delete_message_seconds": max(0, min(delete_message_seconds, 604800))},
+    )
+
+
+async def unban_guild_member(server_id: int, user_id: int) -> None:
+    await _discord_delete(f"/guilds/{server_id}/bans/{user_id}")
+
+
+async def kick_guild_member(server_id: int, user_id: int) -> None:
+    await _discord_delete(f"/guilds/{server_id}/members/{user_id}")

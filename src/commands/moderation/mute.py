@@ -15,9 +15,12 @@ from src.db.models import ActionType
 from src.modules.localization.catalog import SUPPORTED_LOCALES
 from src.modules.localization.service import get_server_locale, is_supported_locale, tr
 from src.modules.moderation.bot_services import (
+    case_choices,
     create_bot_moderation_action,
     fetch_active_rule_models,
+    fetch_open_case_models,
     find_rule,
+    resolve_case_id_for_action,
     rule_choices,
     rule_label,
     validate_target_for_moderation,
@@ -26,6 +29,7 @@ from src.modules.moderation.mute_management import (
     deactivate_user_mutes,
 )
 from src.modules.moderation.mod_log import build_unmute_log_message, send_mod_log_message
+from src.modules.moderation.public_notices import send_public_action_notice
 
 
 def _localized_bool(locale: str, value: bool) -> str:
@@ -287,6 +291,7 @@ async def mute(
     rule: str,
     duration_minutes: app_commands.Range[int, 1, 43200] | None = None,
     commentary: str | None = None,
+    case: str | None = None,
 ):
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
@@ -345,6 +350,16 @@ async def mute(
     commentary_text = commentary.strip() if commentary else None
     try:
         async with get_async_session() as session:
+            case_id = await resolve_case_id_for_action(
+                session=session,
+                interaction=interaction,
+                user=user,
+                action_type=ActionType.MUTE,
+                selected_case=case,
+                selected_rule=selected_rule,
+                selected_rule_label=selected_rule_label,
+                commentary=commentary_text,
+            )
             await create_bot_moderation_action(
                 session=session,
                 interaction=interaction,
@@ -354,6 +369,7 @@ async def mute(
                 commentary=commentary_text,
                 reason=None,
                 expires_at=expires_at,
+                case_id=case_id,
             )
             await session.commit()
     except Exception as error:
@@ -363,17 +379,16 @@ async def mute(
         )
         return
 
-    await interaction.followup.send(
-        tr(
-            locale,
-            "mute.success",
-            mention=user.mention,
-            duration=effective_duration,
-            rule=selected_rule_label,
-            note="",
-        ),
-        ephemeral=False,
+    success_message = tr(
+        locale,
+        "mute.success",
+        mention=user.mention,
+        duration=effective_duration,
+        rule=selected_rule_label,
+        note="",
     )
+    await send_public_action_notice(interaction, success_message)
+    await interaction.followup.send(success_message, ephemeral=True)
 
 @mute.autocomplete("rule")
 async def mute_rule_autocomplete(interaction: discord.Interaction, current: str):
@@ -385,6 +400,26 @@ async def mute_rule_autocomplete(interaction: discord.Interaction, current: str)
     except Exception:
         return []
     return rule_choices(rules, current)
+
+
+@mute.autocomplete("case")
+async def mute_case_autocomplete(interaction: discord.Interaction, current: str):
+    if interaction.guild_id is None:
+        return []
+
+    target = getattr(getattr(interaction, "namespace", None), "user", None)
+    target_id = getattr(target, "id", None)
+    try:
+        async with get_async_session() as session:
+            cases = await fetch_open_case_models(
+                session=session,
+                server_id=interaction.guild_id,
+                user_id=target_id,
+            )
+    except Exception:
+        return []
+
+    return case_choices(cases, current)
 
 
 @app_commands.checks.has_permissions(moderate_members=True)
@@ -455,13 +490,12 @@ async def unmute(
             content=content,
         )
 
-    await interaction.followup.send(
-        tr(
-            locale,
-            "unmute.success",
-            mention=user.mention,
-            removed_role=_localized_bool(locale, removed_role),
-            deactivated=deactivated,
-        ),
-        ephemeral=False,
+    success_message = tr(
+        locale,
+        "unmute.success",
+        mention=user.mention,
+        removed_role=_localized_bool(locale, removed_role),
+        deactivated=deactivated,
     )
+    await send_public_action_notice(interaction, success_message)
+    await interaction.followup.send(success_message, ephemeral=True)

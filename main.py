@@ -26,6 +26,30 @@ from src.commands.moderation.rules import (
     rules_parse_guide,
 )
 from src.commands.moderation.warn import warn
+from src.commands.moderation.actions import (
+    action_manage,
+    action_revert,
+    actions_list,
+    ban,
+    kick,
+    unban,
+)
+from src.commands.moderation.cases import (
+    case_add_rule,
+    case_add_user,
+    case_archive,
+    case_close,
+    case_create,
+    case_evidence,
+    case_link_action,
+    case_note,
+    case_remove_rule,
+    case_remove_user,
+    case_reopen,
+    case_show,
+    case_unlink_action,
+    cases_list,
+)
 from src.commands.moderation.mute import (
     moderation_settings,
     moderation_set_mute_role,
@@ -60,6 +84,7 @@ from src.modules.on_message_processing.check_for_links import delete_server_link
 from src.modules.on_message_processing.gpt_bot_reply import look_for_bot_reply
 from src.modules.on_message_processing.replies import check_for_replies
 from src.modules.on_voice_state_processing.create_voice_channel import create_voice_channel
+from src.modules.moderation.ban_worker import process_expired_bans
 from src.modules.moderation.mute_worker import process_expired_mutes
 from src.views.replies.delete_multiple_replies import DeleteReplyMultiple, DeleteReplyMultipleSelect
 from src.views.replies.delete_one_reply import DeleteOneReply
@@ -187,7 +212,7 @@ client = Aclient()
 tree = app_commands.CommandTree(client)
 
 moderation_group = app_commands.Group(
-    name="moderation",
+    name="mod",
     description="Moderation commands",
 )
 moderation_rules_group = app_commands.Group(
@@ -205,10 +230,23 @@ moderation_settings_group = app_commands.Group(
     description="Moderation settings",
     parent=moderation_group,
 )
+moderation_cases_group = app_commands.Group(
+    name="cases",
+    description="Moderation case management",
+    parent=moderation_group,
+)
+moderation_actions_group = app_commands.Group(
+    name="actions",
+    description="Moderation action management",
+    parent=moderation_group,
+)
 
 moderation_group.add_command(warn)
 moderation_group.add_command(mute)
 moderation_group.add_command(unmute)
+moderation_group.add_command(kick)
+moderation_group.add_command(ban)
+moderation_group.add_command(unban)
 
 moderation_rules_group.add_command(rule_add)
 moderation_rules_group.add_command(rules_import_message)
@@ -228,6 +266,25 @@ moderation_settings_group.add_command(moderation_set_log_channel)
 moderation_settings_group.add_command(moderation_clear_log_channel)
 moderation_settings_group.add_command(moderation_create_mute_role)
 moderation_settings_group.add_command(moderation_set_mute_defaults)
+
+moderation_cases_group.add_command(case_create)
+moderation_cases_group.add_command(cases_list)
+moderation_cases_group.add_command(case_show)
+moderation_cases_group.add_command(case_close)
+moderation_cases_group.add_command(case_reopen)
+moderation_cases_group.add_command(case_archive)
+moderation_cases_group.add_command(case_note)
+moderation_cases_group.add_command(case_evidence)
+moderation_cases_group.add_command(case_add_user)
+moderation_cases_group.add_command(case_remove_user)
+moderation_cases_group.add_command(case_add_rule)
+moderation_cases_group.add_command(case_remove_rule)
+moderation_cases_group.add_command(case_link_action)
+moderation_cases_group.add_command(case_unlink_action)
+
+moderation_actions_group.add_command(actions_list)
+moderation_actions_group.add_command(action_manage)
+moderation_actions_group.add_command(action_revert)
 
 tree.add_command(moderation_group)
 tree.add_command(rules_import_from_message_ctx)
@@ -294,7 +351,7 @@ async def birthdays_settings(interaction: discord.Interaction):
         raise Exception(error)
 
 
-@tree.command(name='add_reply', description='Добавляет ответы на определенные слова и фразы для бота')
+@tree.command(name='add_reply', description='Add a custom bot reply trigger.')
 async def add_reply(interaction: discord.Interaction, phrase: str, response: str):
     def em_replace(string):
         emoji = demoji.findall(string)
@@ -407,7 +464,7 @@ async def delete_reply_autocomplete(interaction: discord.Interaction, current: s
     return result_list
 
 
-@tree.command(name='check_dr', description='Форсированно запускает проверку на дни рождения, если сегодня кому-то не выдали роль')
+@tree.command(name='check_dr', description='Force birthday role check.')
 async def birthday_check(interaction: discord.Interaction):
     await interaction.response.defer()
     await check_birthday_new(client)
@@ -541,8 +598,11 @@ async def check_users_with_birthdays():
 @tasks.loop(seconds=60)
 async def auto_unmute_worker():
     processed, failed = await process_expired_mutes(client)
+    ban_processed, ban_failed = await process_expired_bans(client)
     if processed or failed:
         logger.info("Auto-unmute run finished. processed=%s failed=%s", processed, failed)
+    if ban_processed or ban_failed:
+        logger.info("Auto-unban run finished. processed=%s failed=%s", ban_processed, ban_failed)
 
 
 @client.event

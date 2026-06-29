@@ -1,4 +1,4 @@
-﻿import uuid
+import uuid
 from typing import List, Optional
 from uuid import UUID, uuid4, uuid7
 from datetime import datetime, UTC, timezone
@@ -42,6 +42,10 @@ class Server(SQLModel, table=True):
     dashboard_access_roles: List["DashboardAccessRole"] = Relationship(back_populates="server")
     moderation_rules: List["ModerationRule"] = Relationship(back_populates="server")
     moderation_settings: Optional["ServerModerationSettings"] = Relationship(
+        back_populates="server",
+        sa_relationship_kwargs={"uselist": False},
+    )
+    ai_settings: Optional["ServerAISettings"] = Relationship(
         back_populates="server",
         sa_relationship_kwargs={"uselist": False},
     )
@@ -242,6 +246,56 @@ class ServerModerationSettings(SQLModel, table=True):
     server: Server = Relationship(back_populates="moderation_settings")
 
 
+class ServerAISettings(SQLModel, table=True):
+    __tablename__ = "server_ai_settings"
+
+    server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), primary_key=True))
+    answer_channel_mode: str = Field(default="none", nullable=False, max_length=20)
+    answer_allowed_channel_ids: list[str] = Field(default_factory=list, sa_column=Column(sa.JSON, nullable=False))
+    answer_allowed_role_ids: list[str] = Field(default_factory=list, sa_column=Column(sa.JSON, nullable=False))
+    moderation_enabled: bool = Field(default=False, nullable=False)
+    moderation_channel_mode: str = Field(default="all", nullable=False, max_length=20)
+    moderation_included_channel_ids: list[str] = Field(default_factory=list, sa_column=Column(sa.JSON, nullable=False))
+    moderation_monitor_attachments: bool = Field(default=False, nullable=False)
+    moderation_monitor_bots: bool = Field(default=False, nullable=False)
+    moderation_strictness: str = Field(default="standard", nullable=False, max_length=20)
+    moderation_action_mode: str = Field(default="review_only", nullable=False, max_length=30)
+    log_ai_decisions: bool = Field(default=True, nullable=False)
+    updated_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+
+    server: Server = Relationship(back_populates="ai_settings")
+
+
+class AIModerationDecision(SQLModel, table=True):
+    __tablename__ = "ai_moderation_decisions"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False, index=True))
+    channel_id: int = Field(sa_column=Column(BigInteger, nullable=False, index=True))
+    message_id: int = Field(sa_column=Column(BigInteger, nullable=False, index=True))
+    author_user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False, index=True))
+    message_content: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    attachments_json: list[dict] = Field(default_factory=list, sa_column=Column(sa.JSON, nullable=False))
+    provider: Optional[str] = Field(default=None, nullable=True)
+    model: Optional[str] = Field(default=None, nullable=True)
+    strictness: str = Field(default="standard", nullable=False, max_length=20)
+    flagged: bool = Field(default=False, nullable=False, index=True)
+    severity: str = Field(default="none", nullable=False, max_length=20)
+    categories: list[str] = Field(default_factory=list, sa_column=Column(sa.JSON, nullable=False))
+    reason: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    suggested_action: str = Field(default="none", nullable=False, max_length=30)
+    rule_ids: list[str] = Field(default_factory=list, sa_column=Column(sa.JSON, nullable=False))
+    raw_response: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    parse_error: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    status: str = Field(default="pending_review", nullable=False, max_length=30, index=True)
+    reviewed_by_user_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=True))
+    reviewed_at: Optional[datetime] = None
+    linked_case_id: Optional[UUID] = Field(default=None, foreign_key="moderation_cases.id")
+    linked_action_id: Optional[UUID] = Field(default=None, foreign_key="moderation_actions.id")
+    created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+    updated_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+
+
 class ServerLocalizationSettings(SQLModel, table=True):
     __tablename__ = "server_localization_settings"
 
@@ -261,7 +315,38 @@ class ActionType(str, Enum):
     WARN = "warn"
     MUTE = "mute"
     BAN = "ban"
+    KICK = "kick"
 
+
+class ModerationImportSource(str, Enum):
+    DISCORD = "discord"
+    JUNIPER = "juniper"
+    DYNO = "dyno"
+    CARL_BOT = "carl_bot"
+    MEE6 = "mee6"
+    YAGPDB = "yagpdb"
+    MANUAL = "manual"
+
+
+class ModerationImportRunStatus(str, Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class ModerationImportItemStatus(str, Enum):
+    PENDING = "pending"
+    IMPORTED = "imported"
+    SKIPPED = "skipped"
+    FAILED = "failed"
+
+
+class ModerationImportConfidence(str, Enum):
+    EXACT = "exact"
+    PARSED = "parsed"
+    INFERRED = "inferred"
+    MANUAL_REVIEW = "manual_review"
 
 class ModerationRule(SQLModel, table=True):
     __tablename__ = "moderation_rules"
@@ -335,6 +420,57 @@ class ModerationAction(SQLModel, table=True):
     rule_citations: List["ModerationActionRuleCitation"] = Relationship(back_populates="action")
 
 
+
+class ModerationImportRun(SQLModel, table=True):
+    __tablename__ = "moderation_import_runs"
+
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False, index=True))
+    source: ModerationImportSource = Field(sa_column=Column(sa.String(length=50), nullable=False, index=True))
+    status: ModerationImportRunStatus = Field(
+        default=ModerationImportRunStatus.PENDING,
+        sa_column=Column(sa.String(length=50), nullable=False, index=True),
+    )
+    dry_run: bool = Field(default=False, nullable=False)
+    started_by_user_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=True),
+    )
+    started_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+    completed_at: Optional[datetime] = None
+    summary_json: Optional[dict] = Field(default=None, sa_column=Column(sa.JSON, nullable=True))
+    error_message: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+
+
+class ModerationImportSourceItem(SQLModel, table=True):
+    __tablename__ = "moderation_import_source_items"
+    __table_args__ = (
+        UniqueConstraint("server_id", "source", "source_hash", name="uq_moderation_import_source_item"),
+    )
+
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    import_run_id: UUID = Field(foreign_key="moderation_import_runs.id", nullable=False, index=True)
+    server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False, index=True))
+    source: ModerationImportSource = Field(sa_column=Column(sa.String(length=50), nullable=False, index=True))
+    source_item_type: str = Field(sa_column=Column(sa.String(length=100), nullable=False, index=True))
+    source_item_id: Optional[str] = Field(default=None, sa_column=Column(sa.String(length=255), nullable=True))
+    source_hash: str = Field(sa_column=Column(sa.String(length=64), nullable=False, index=True))
+    raw_payload_json: Optional[dict] = Field(default=None, sa_column=Column(sa.JSON, nullable=True))
+    normalized_payload_json: Optional[dict] = Field(default=None, sa_column=Column(sa.JSON, nullable=True))
+    confidence: ModerationImportConfidence = Field(
+        default=ModerationImportConfidence.EXACT,
+        sa_column=Column(sa.String(length=50), nullable=False),
+    )
+    status: ModerationImportItemStatus = Field(
+        default=ModerationImportItemStatus.PENDING,
+        sa_column=Column(sa.String(length=50), nullable=False, index=True),
+    )
+    moderation_action_id: Optional[UUID] = Field(
+        default=None,
+        sa_column=Column(sa.Uuid(), ForeignKey("moderation_actions.id", ondelete="SET NULL"), nullable=True, index=True),
+    )
+    created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+    error_message: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 class CaseStatus(str, Enum):
     OPEN = "open"
     CLOSED = "closed"

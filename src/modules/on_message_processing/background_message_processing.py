@@ -4,6 +4,7 @@ from sqlmodel import select
 
 from src.db.database import get_async_session
 from src.db.models import UserActivity
+from src.modules.ai.moderation_review import screen_message_with_ai
 from src.modules.moderation.moderation_helpers import check_if_server_exists, check_if_user_exists
 
 
@@ -50,5 +51,5 @@ async def process_background_tasks(message, known_global_users):
         await session.commit()
         known_global_users.add(user_id)
 
-    # 4. LLM moderation (Phase 6 preview - placeholder)
-    # await screen_with_llm(message)
+    # 4. AI moderation review. This is review-only; actions require moderator approval.
+    await screen_message_with_ai(message)

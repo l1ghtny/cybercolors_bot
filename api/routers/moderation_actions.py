@@ -246,21 +246,9 @@ async def list_moderation_actions(
     )
 
 
-@moderation_actions_router.get(
-    "/actions/{server_id}/{action_id}",
-    response_model=ModerationActionRead,
-    dependencies=[Depends(require_server_dashboard_access)],
-)
-async def get_moderation_action_details(
-    server_id: int,
-    action_id: UUID,
-    session: AsyncSession = Depends(get_session),
-):
-    return await get_action_details_service(session=session, server_id=server_id, action_id=action_id)
-
 
 @moderation_actions_router.post(
-    "/actions/{action_id}/deleted-messages",
+    "/actions/deleted-messages/{action_id}",
     response_model=DeletedMessageReadModel,
     status_code=status.HTTP_201_CREATED,
 )
@@ -279,7 +267,7 @@ async def add_deleted_message_for_action(
 
 
 @moderation_actions_router.post(
-    "/actions/{action_id}/deleted-messages/{deleted_message_id}/link",
+    "/actions/deleted-messages/{action_id}/{deleted_message_id}/link",
     response_model=DeletedMessageReadModel,
 )
 async def link_existing_deleted_message_to_action(
@@ -297,7 +285,7 @@ async def link_existing_deleted_message_to_action(
     )
 
 
-@moderation_actions_router.get("/actions/{action_id}/deleted-messages", response_model=list[DeletedMessageReadModel])
+@moderation_actions_router.get("/actions/deleted-messages/{action_id}", response_model=list[DeletedMessageReadModel])
 async def get_deleted_messages_for_action(
     action_id: UUID,
     session: AsyncSession = Depends(get_session),
@@ -305,6 +293,18 @@ async def get_deleted_messages_for_action(
 ):
     return await get_deleted_messages_for_action_service(session=session, action_id=action_id)
 
+
+@moderation_actions_router.get(
+    "/actions/{server_id}/{action_id}",
+    response_model=ModerationActionRead,
+    dependencies=[Depends(require_server_dashboard_access)],
+)
+async def get_moderation_action_details(
+    server_id: int,
+    action_id: UUID,
+    session: AsyncSession = Depends(get_session),
+):
+    return await get_action_details_service(session=session, server_id=server_id, action_id=action_id)
 
 @moderation_actions_router.get(
     "/deleted-messages/{server_id}",

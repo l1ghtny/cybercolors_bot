@@ -1,5 +1,6 @@
 from datetime import datetime
 import logging
+import os
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -14,7 +15,14 @@ from api.models.moderation_actions import (
     ModerationActionSummaryModel,
 )
 from api.models.moderation_cases import DeletedMessageCreateModel, DeletedMessageReadModel
-from api.services.discord_guilds import add_guild_member_role, create_channel_message, create_direct_message, fetch_guild_channels
+from api.services.discord_guilds import (
+    add_guild_member_role,
+    ban_guild_member,
+    create_channel_message,
+    create_direct_message,
+    fetch_guild_channels,
+    kick_guild_member,
+)
 from api.services.moderation_core import (
     build_actor,
     ensure_case_writable_for_actions,
@@ -47,6 +55,8 @@ from src.modules.moderation.mute_management import deactivate_user_mutes
 
 logger = logging.getLogger("api.moderation")
 
+DEFAULT_DASHBOARD_BASE_URL = "https://dashboard.modral.app"
+
 
 def _truncate(value: str, limit: int = 600) -> str:
     if len(value) <= limit:
@@ -58,6 +68,194 @@ def _format_dt(value: datetime | None) -> str:
     if value is None:
         return "n/a"
     return f"{value.isoformat()}Z"
+
+
+def _dashboard_base_url() -> str:
+    return (os.getenv("DASHBOARD_BASE_URL") or DEFAULT_DASHBOARD_BASE_URL).rstrip("/")
+
+
+def _dashboard_action_url(server_id: int, action_id: UUID | str) -> str:
+    return f"{_dashboard_base_url()}/dashboard/{server_id}/moderation/actions/{action_id}"
+
+
+def _dashboard_case_url(server_id: int, case_id: UUID | str) -> str:
+    return f"{_dashboard_base_url()}/dashboard/{server_id}/moderation/cases/{case_id}"
+
+
+def _inline_code(value: object, fallback: str = "unknown") -> str:
+    text = str(value if value is not None else fallback).replace("`", "'").strip()
+    return f"`{text or fallback}`"
+
+
+def _markdown_link(label: object, url: str) -> str:
+    text = str(label).replace("\n", " ").replace("[", "(").replace("]", ")").strip()
+    return f"[{text or url}]({url})"
+
+
+def _rule_label_from_parts(code: str | None, title: str | None) -> str:
+    code = (code or "").strip()
+    title = (title or "").strip()
+    if code:
+        return f"{code} {title}".strip()
+    return title or "Rule"
+
+
+def _rule_labels_for_action(action: ModerationAction) -> list[str]:
+    if action.rule_citations:
+        sorted_citations = sorted(
+            action.rule_citations,
+            key=lambda item: (item.cited_at or datetime.min.replace(tzinfo=None), str(item.id)),
+        )
+        return [
+            _rule_label_from_parts(
+                item.rule.code if item.rule is not None else item.rule_code_snapshot,
+                item.rule.title if item.rule is not None else item.rule_title_snapshot,
+            )
+            for item in sorted_citations
+        ]
+    if action.rule is not None:
+        return [_rule_label_from_parts(action.rule.code, action.rule.title)]
+    return []
+
+
+def _format_user_for_log(user_id: int, username: str | None, locale: str | None = None) -> str:
+    return f"<@{user_id}> ({_inline_code(username or tr(locale, 'modlog.unknown'))}, {_inline_code(user_id)})"
+
+
+def _reason_without_commentary_suffix(reason: str | None, commentary: str | None) -> str:
+    display_reason = (reason or "").strip()
+    display_commentary = (commentary or "").strip()
+    if not display_reason or not display_commentary:
+        return display_reason
+
+    legacy_suffix = f"\nCommentary: {display_commentary}"
+    if display_reason.endswith(legacy_suffix):
+        return display_reason[: -len(legacy_suffix)].rstrip()
+    return display_reason
+
+
+def _display_reason_for_log(reason: str | None, commentary: str | None, rule_labels: list[str]) -> str:
+    display_reason = _reason_without_commentary_suffix(reason, commentary)
+    normalized_reason = display_reason.strip().casefold()
+    if normalized_reason and any(normalized_reason == label.strip().casefold() for label in rule_labels):
+        return ""
+    return display_reason
+
+
+def _build_action_log_message(
+    *,
+    action: ModerationAction,
+    moderator_username: str | None,
+    target_username: str | None,
+    locale: str | None = None,
+) -> str:
+    action_url = _dashboard_action_url(action.server_id, action.id)
+    action_label = action.action_type.value if hasattr(action.action_type, "value") else str(action.action_type)
+    lines = [
+        f"**{tr(locale, 'modlog.action_label')}:** {_markdown_link(action_label, action_url)}",
+        f"**{tr(locale, 'modlog.target_label')}:** {_format_user_for_log(action.target_user_id, target_username, locale)}",
+        f"**{tr(locale, 'modlog.moderator_label')}:** {_format_user_for_log(action.moderator_user_id, moderator_username, locale)}",
+    ]
+
+    rule_labels = _rule_labels_for_action(action)
+    display_reason = _display_reason_for_log(action.reason, action.commentary, rule_labels)
+    if display_reason:
+        lines.append(f"**{tr(locale, 'modlog.reason_label')}:** {_truncate(display_reason, limit=1000)}")
+    if action.commentary:
+        lines.append(f"**{tr(locale, 'modlog.commentary_label')}:** {_truncate(action.commentary, limit=1000)}")
+
+    if rule_labels:
+        label_key = "modlog.rule_label" if len(rule_labels) == 1 else "modlog.rules_label"
+        lines.append(f"**{tr(locale, label_key)}:** {', '.join(_inline_code(item) for item in rule_labels)}")
+
+    if action.case_id:
+        case_label = action.case.title if action.case is not None and action.case.title else str(action.case_id)
+        lines.append(
+            f"**{tr(locale, 'modlog.case_label')}:** "
+            f"{_markdown_link(case_label, _dashboard_case_url(action.server_id, action.case_id))}"
+        )
+    if action.expires_at:
+        lines.append(f"**{tr(locale, 'modlog.expires_at_label')}:** {_inline_code(_format_dt(action.expires_at))}")
+    lines.append(f"**{tr(locale, 'modlog.action_id_label')}:** {_markdown_link(action.id, action_url)}")
+
+    message = f"{tr(locale, 'modlog.header')}\n" + "\n".join(lines)
+    return _truncate(message, limit=1900)
+
+
+
+def _action_log_color(action_type: ActionType) -> int:
+    if action_type == ActionType.WARN:
+        return 0xF2C94C
+    if action_type == ActionType.MUTE:
+        return 0xEB5757
+    if action_type == ActionType.BAN:
+        return 0x2F3136
+    if action_type == ActionType.KICK:
+        return 0xF2994A
+    return 0x5865F2
+
+
+def _embed_field(name: str, value: str, inline: bool = False) -> dict:
+    return {
+        "name": _truncate(name, limit=256),
+        "value": _truncate(value or "-", limit=1024),
+        "inline": inline,
+    }
+
+
+def _build_action_log_embed(
+    *,
+    action: ModerationAction,
+    moderator_username: str | None,
+    target_username: str | None,
+    locale: str | None = None,
+) -> dict:
+    action_url = _dashboard_action_url(action.server_id, action.id)
+    action_label = action.action_type.value if hasattr(action.action_type, "value") else str(action.action_type)
+    rule_labels = _rule_labels_for_action(action)
+    display_reason = _display_reason_for_log(action.reason, action.commentary, rule_labels)
+    fields = [
+        _embed_field(
+            tr(locale, "modlog.target_label"),
+            _format_user_for_log(action.target_user_id, target_username, locale),
+            inline=True,
+        ),
+        _embed_field(
+            tr(locale, "modlog.moderator_label"),
+            _format_user_for_log(action.moderator_user_id, moderator_username, locale),
+            inline=True,
+        ),
+    ]
+
+    if rule_labels:
+        label_key = "modlog.rule_label" if len(rule_labels) == 1 else "modlog.rules_label"
+        fields.append(_embed_field(tr(locale, label_key), "\n".join(_inline_code(item) for item in rule_labels)))
+    if display_reason:
+        fields.append(_embed_field(tr(locale, "modlog.reason_label"), display_reason))
+    if action.commentary:
+        fields.append(_embed_field(tr(locale, "modlog.commentary_label"), action.commentary))
+    if action.case_id:
+        case_label = action.case.title if action.case is not None and action.case.title else str(action.case_id)
+        fields.append(
+            _embed_field(
+                tr(locale, "modlog.case_label"),
+                _markdown_link(case_label, _dashboard_case_url(action.server_id, action.case_id)),
+            )
+        )
+    if action.expires_at:
+        fields.append(_embed_field(tr(locale, "modlog.expires_at_label"), _format_dt(action.expires_at), inline=True))
+
+    created_at = getattr(action, "created_at", None)
+    embed = {
+        "title": f"{tr(locale, 'modlog.title')}: {action_label}",
+        "url": action_url,
+        "color": _action_log_color(action.action_type),
+        "fields": fields,
+        "footer": {"text": f"{tr(locale, 'modlog.action_id_label')}: {action.id}"},
+    }
+    if created_at is not None:
+        embed["timestamp"] = _format_dt(created_at)
+    return embed
 
 
 async def _resolve_username(session: AsyncSession, user_id: int) -> str | None:
@@ -246,27 +444,16 @@ async def _send_action_to_mod_log(
 
     moderator_username = await _resolve_username(session, action.moderator_user_id)
     target_username = await _resolve_username(session, action.target_user_id)
-    lines = [
-        f"**Action:** `{action.action_type.value}`",
-        f"**Target:** <@{action.target_user_id}> (`{target_username or 'unknown'}`, `{action.target_user_id}`)",
-        f"**Moderator:** <@{action.moderator_user_id}> (`{moderator_username or 'unknown'}`, `{action.moderator_user_id}`)",
-        f"**Reason:** {_truncate(action.reason, limit=1000)}",
-    ]
-    if action.commentary:
-        lines.append(f"**Commentary:** {_truncate(action.commentary, limit=1000)}")
-    if action.rule_id:
-        lines.append(f"**Rule ID:** `{action.rule_id}`")
-    if action.case_id:
-        lines.append(f"**Case ID:** `{action.case_id}`")
-    if action.expires_at:
-        lines.append(f"**Expires At:** `{_format_dt(action.expires_at)}`")
-    lines.append(f"**Action ID:** `{action.id}`")
-    message = "[MODERATION LOG]\n" + "\n".join(lines)
-    if len(message) > 1900:
-        message = _truncate(message, limit=1900)
+    locale = await _get_server_locale(session=session, server_id=action.server_id)
+    embed = _build_action_log_embed(
+        action=action,
+        moderator_username=moderator_username,
+        target_username=target_username,
+        locale=locale,
+    )
 
     try:
-        await create_channel_message(channel_id=settings.mod_log_channel_id, content=message)
+        await create_channel_message(channel_id=settings.mod_log_channel_id, embeds=[embed])
     except Exception as error:
         logger.warning(
             "Failed to send moderation action log to channel %s for server %s: %s",
@@ -321,10 +508,13 @@ async def _send_warn_dm_for_action(
         )
 
 
-async def _apply_mute_effect_for_action(
+async def _prepare_discord_action_effects(
     session: AsyncSession,
     action: ModerationActionCreate,
-) -> None:
+) -> int | None:
+    if action.action_type != ActionType.MUTE:
+        return None
+
     settings = await session.get(ServerModerationSettings, action.server_id)
     if not settings or not settings.mute_role_id:
         raise HTTPException(
@@ -333,10 +523,17 @@ async def _apply_mute_effect_for_action(
         )
 
     await deactivate_user_mutes(session=session, server_id=action.server_id, user_id=action.target_user_id)
+    return settings.mute_role_id
+
+
+async def _apply_mute_effect_for_action(
+    action: ModerationActionCreate,
+    mute_role_id: int,
+) -> None:
     await add_guild_member_role(
         server_id=action.server_id,
         user_id=action.target_user_id,
-        role_id=settings.mute_role_id,
+        role_id=mute_role_id,
     )
 
 
@@ -346,6 +543,7 @@ async def _apply_discord_action_effects(
     resolved_reason: str,
     resolved_rules: list[ModerationRule],
     resolved_commentary: str | None,
+    mute_role_id: int | None = None,
 ) -> None:
     if action.action_type == ActionType.WARN:
         await _send_warn_dm_for_action(
@@ -356,7 +554,21 @@ async def _apply_discord_action_effects(
             resolved_commentary=resolved_commentary,
         )
     elif action.action_type == ActionType.MUTE:
-        await _apply_mute_effect_for_action(session=session, action=action)
+        if mute_role_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Mute role is not configured for this server",
+            )
+        await _apply_mute_effect_for_action(action=action, mute_role_id=mute_role_id)
+    elif action.action_type == ActionType.BAN:
+        await ban_guild_member(
+            server_id=action.server_id,
+            user_id=action.target_user_id,
+            delete_message_seconds=0,
+        )
+    elif action.action_type == ActionType.KICK:
+        await kick_guild_member(server_id=action.server_id, user_id=action.target_user_id)
+
 
 async def create_action(
     session: AsyncSession,
@@ -396,7 +608,7 @@ async def create_action(
     if resolved_rules:
         primary_rule = resolved_rules[0]
         base_reason = f"{primary_rule.code} {primary_rule.title}".strip() if primary_rule.code else primary_rule.title
-        resolved_reason = f"{base_reason}\nÃƒÂÃ…Â¡ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â¼ÃƒÂÃ‚Â¼ÃƒÂÃ‚ÂµÃƒÂÃ‚Â½Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â¸ÃƒÂÃ‚Â¹: {resolved_commentary}" if resolved_commentary else base_reason
+        resolved_reason = base_reason
 
     if not resolved_reason:
         raise HTTPException(
@@ -423,14 +635,9 @@ async def create_action(
             )
         ensure_case_writable_for_actions(linked_case)
 
+    mute_role_id: int | None = None
     if apply_discord_effects:
-        await _apply_discord_action_effects(
-            session=session,
-            action=action,
-            resolved_reason=resolved_reason,
-            resolved_rules=resolved_rules,
-            resolved_commentary=resolved_commentary,
-        )
+        mute_role_id = await _prepare_discord_action_effects(session=session, action=action)
 
     db_action = ModerationAction(
         action_type=action.action_type,
@@ -480,6 +687,17 @@ async def create_action(
         )
 
     db_action = await _load_action_for_read(session=session, action_id=db_action.id)
+
+    if apply_discord_effects:
+        await _apply_discord_action_effects(
+            session=session,
+            action=action,
+            resolved_reason=resolved_reason,
+            resolved_rules=resolved_rules,
+            resolved_commentary=resolved_commentary,
+            mute_role_id=mute_role_id,
+        )
+
     await _send_action_to_mod_log(session=session, action=db_action)
     return db_action
 

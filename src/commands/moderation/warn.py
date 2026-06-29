@@ -4,10 +4,14 @@ from discord import app_commands
 from src.db.database import get_async_session
 from src.db.models import ActionType
 from src.modules.localization.service import get_server_locale, tr
+from src.modules.moderation.public_notices import send_public_action_notice
 from src.modules.moderation.bot_services import (
+    case_choices,
     create_bot_moderation_action,
     fetch_active_rule_models,
+    fetch_open_case_models,
     find_rule,
+    resolve_case_id_for_action,
     rule_choices,
     rule_label,
     validate_target_for_moderation,
@@ -23,6 +27,7 @@ async def warn(
     user: discord.Member,
     rule: str,
     commentary: str | None = None,
+    case: str | None = None,
 ):
     """Handles /warn: select a declared server rule, add optional commentary, and log action."""
     if interaction.guild is None:
@@ -59,6 +64,16 @@ async def warn(
 
     try:
         async with get_async_session() as session:
+            case_id = await resolve_case_id_for_action(
+                session=session,
+                interaction=interaction,
+                user=user,
+                action_type=ActionType.WARN,
+                selected_case=case,
+                selected_rule=selected_rule,
+                selected_rule_label=selected_rule_label,
+                commentary=commentary_text,
+            )
             await create_bot_moderation_action(
                 session=session,
                 interaction=interaction,
@@ -67,6 +82,7 @@ async def warn(
                 rule_id=selected_rule.id,
                 commentary=commentary_text,
                 reason=None,
+                case_id=case_id,
             )
             await session.commit()
     except Exception as error:
@@ -81,10 +97,9 @@ async def warn(
         )
         return
 
-    await interaction.followup.send(
-        tr(locale, "warn.success", mention=user.mention, rule=selected_rule_label),
-        ephemeral=False,
-    )
+    success_message = tr(locale, "warn.success", mention=user.mention, rule=selected_rule_label)
+    await send_public_action_notice(interaction, success_message)
+    await interaction.followup.send(success_message, ephemeral=True)
 
 
 @warn.autocomplete("rule")
@@ -99,3 +114,23 @@ async def warn_rule_autocomplete(interaction: discord.Interaction, current: str)
         return []
 
     return rule_choices(rules, current)
+
+
+@warn.autocomplete("case")
+async def warn_case_autocomplete(interaction: discord.Interaction, current: str):
+    if interaction.guild_id is None:
+        return []
+
+    target = getattr(getattr(interaction, "namespace", None), "user", None)
+    target_id = getattr(target, "id", None)
+    try:
+        async with get_async_session() as session:
+            cases = await fetch_open_case_models(
+                session=session,
+                server_id=interaction.guild_id,
+                user_id=target_id,
+            )
+    except Exception:
+        return []
+
+    return case_choices(cases, current)

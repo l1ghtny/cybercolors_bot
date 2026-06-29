@@ -85,6 +85,59 @@ async def get_expired_active_mutes(
     return (await session.exec(statement)).all()
 
 
+
+async def get_active_ban_actions_for_user(
+    session: AsyncSession,
+    server_id: int,
+    user_id: int,
+) -> list[ModerationAction]:
+    statement = (
+        select(ModerationAction)
+        .where(
+            ModerationAction.server_id == server_id,
+            ModerationAction.target_user_id == user_id,
+            ModerationAction.action_type == ActionType.BAN,
+            ModerationAction.is_active == True,
+        )
+        .order_by(ModerationAction.created_at.desc())
+    )
+    return (await session.exec(statement)).all()
+
+
+async def deactivate_user_bans(
+    session: AsyncSession,
+    server_id: int,
+    user_id: int,
+) -> int:
+    actions = await get_active_ban_actions_for_user(session=session, server_id=server_id, user_id=user_id)
+    now = naive_utcnow()
+    for action in actions:
+        action.is_active = False
+        action.expires_at = action.expires_at or now
+        session.add(action)
+    await session.flush()
+    return len(actions)
+
+
+async def get_expired_active_bans(
+    session: AsyncSession,
+    limit: int = 200,
+) -> list[ModerationAction]:
+    now = naive_utcnow()
+    statement = (
+        select(ModerationAction)
+        .where(
+            ModerationAction.action_type == ActionType.BAN,
+            ModerationAction.is_active == True,
+            ModerationAction.expires_at.is_not(None),
+            ModerationAction.expires_at <= now,
+        )
+        .order_by(ModerationAction.expires_at.asc())
+        .limit(limit)
+    )
+    return (await session.exec(statement)).all()
+
+
 async def try_reconnect_voice_member(member: discord.Member, reason: str):
     if member.voice is None or member.voice.channel is None:
         return

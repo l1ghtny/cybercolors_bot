@@ -25,3 +25,19 @@ def test_parse_guide_has_example_and_guidance():
     assert guide.title
     assert guide.guidance
     assert guide.example
+
+
+def test_parse_bare_number_bold_rule_preserves_opening_markdown_until_normalized():
+    text = (
+        "6 **All channels must be used for their intended purpose**\n"
+        "Check the channel description before sending a message."
+    )
+
+    parsed = parse_rules_from_text(text)
+
+    assert len(parsed) == 1
+    assert parsed[0].code == "6"
+    assert parsed[0].marker == "6"
+    assert parsed[0].title == "All channels must be used for their intended purpose"
+    assert "**" not in (parsed[0].description or "")
+    assert (parsed[0].description or "").startswith("All channels")

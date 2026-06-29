@@ -6,11 +6,17 @@ from discord import app_commands
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.models.moderation_actions import ModerationActionCreate
+from api.models.moderation_cases import ModerationCaseCreateModel, ModerationCaseSummaryModel
 from api.models.moderation_rules import ModerationRuleReadModel
 from api.services.moderation_actions_service import create_action
+from api.services.moderation_cases_service import create_case, list_cases
 from api.services.moderation_rules_service import list_rules, to_rule_read_model
-from src.db.models import ActionType, ModerationAction
+from src.db.models import ActionType, CaseStatus, ModerationAction, ModerationCase
 from src.modules.localization.service import tr
+from src.modules.moderation.moderation_helpers import check_if_server_exists, check_if_user_exists
+
+
+CASE_NEW_VALUE = "__new_case__"
 
 
 async def fetch_active_rule_models(session: AsyncSession, server_id: int) -> list[ModerationRuleReadModel]:
@@ -49,6 +55,100 @@ def rule_choices(
         if len(choices) >= limit:
             break
     return choices
+
+
+async def fetch_open_case_models(
+    session: AsyncSession,
+    server_id: int,
+    user_id: int | None = None,
+    limit: int = 20,
+) -> list[ModerationCaseSummaryModel]:
+    return await list_cases(
+        session=session,
+        server_id=server_id,
+        status_filter=CaseStatus.OPEN,
+        user_id=str(user_id) if user_id is not None else None,
+        limit=limit,
+    )
+
+
+def case_label(case: ModerationCaseSummaryModel) -> str:
+    target = case.target_user.display_name or case.target_user.user_id
+    return f"#{case.id[:8]} {case.title} ({target})"
+
+
+def case_choices(
+    cases: list[ModerationCaseSummaryModel],
+    current: str,
+    include_new: bool = True,
+    limit: int = 25,
+) -> list[app_commands.Choice[str]]:
+    current_lower = current.lower().strip()
+    choices: list[app_commands.Choice[str]] = []
+    if include_new and (not current_lower or "new" in current_lower):
+        choices.append(app_commands.Choice(name="New case", value=CASE_NEW_VALUE))
+
+    for moderation_case in cases:
+        label = case_label(moderation_case)
+        if current_lower and current_lower not in label.lower():
+            continue
+        display_name = label if len(label) <= 100 else f"{label[:97]}..."
+        choices.append(app_commands.Choice(name=display_name, value=moderation_case.id))
+        if len(choices) >= limit:
+            break
+    return choices
+
+
+async def resolve_case_id_for_action(
+    *,
+    session: AsyncSession,
+    interaction: discord.Interaction,
+    user: discord.Member,
+    action_type: ActionType,
+    selected_case: str | None,
+    selected_rule: ModerationRuleReadModel,
+    selected_rule_label: str,
+    commentary: str | None,
+) -> UUID | None:
+    if not selected_case:
+        return None
+
+    if interaction.guild is None:
+        raise ValueError("Cases can only be used in a server")
+
+    if selected_case == CASE_NEW_VALUE:
+        await check_if_server_exists(interaction.guild, session)
+        await check_if_user_exists(user, interaction.guild, session)
+        await check_if_user_exists(interaction.user, interaction.guild, session)
+
+        title = f"{action_type.value.title()} - {user.display_name}: {selected_rule_label}"
+        case_data = await create_case(
+            session=session,
+            server_id=interaction.guild.id,
+            body=ModerationCaseCreateModel(
+                target_user_id=str(user.id),
+                opened_by_user_id=str(interaction.user.id),
+                title=title[:300],
+                summary=commentary,
+                rule_ids=[str(selected_rule.id)],
+            ),
+            opened_by_user_id=interaction.user.id,
+        )
+        return UUID(case_data.id)
+
+    try:
+        case_id = UUID(str(selected_case))
+    except ValueError:
+        raise ValueError("Invalid case selection")
+
+    existing_case = await session.get(ModerationCase, case_id)
+    if (
+        existing_case is None
+        or existing_case.server_id != interaction.guild.id
+        or existing_case.status != CaseStatus.OPEN
+    ):
+        raise ValueError("Selected case is not open or does not exist")
+    return case_id
 
 
 def validate_target_for_moderation(
@@ -90,6 +190,7 @@ def build_action_payload(
     commentary: str | None,
     reason: str | None,
     expires_at: datetime | None = None,
+    case_id: UUID | None = None,
 ) -> ModerationActionCreate:
     parsed_rule_id = UUID(str(rule_id)) if rule_id else None
     return ModerationActionCreate(
@@ -100,6 +201,7 @@ def build_action_payload(
         commentary=commentary,
         reason=reason,
         expires_at=expires_at,
+        case_id=str(case_id) if case_id else None,
         target_user_id=user.id,
         target_user_name=user.name,
         target_user_joined_at=target_joined_at_for_action(user),
@@ -119,6 +221,7 @@ async def create_bot_moderation_action(
     commentary: str | None,
     reason: str | None,
     expires_at: datetime | None = None,
+    case_id: UUID | None = None,
 ) -> ModerationAction:
     payload = build_action_payload(
         interaction=interaction,
@@ -128,6 +231,7 @@ async def create_bot_moderation_action(
         commentary=commentary,
         reason=reason,
         expires_at=expires_at,
+        case_id=case_id,
     )
     return await create_action(
         session=session,

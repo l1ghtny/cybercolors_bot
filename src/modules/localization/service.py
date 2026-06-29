@@ -59,6 +59,39 @@ async def set_server_locale(server_id: int, server_name: str | None, locale_code
     return normalized
 
 
+def _looks_like_mojibake(value: str) -> bool:
+    return any(marker in value for marker in ("Ð", "Ñ", "Ã", "Â"))
+
+
+def _to_cp1252_bytes_lossless(value: str) -> bytes:
+    payload = bytearray()
+    for char in value:
+        codepoint = ord(char)
+        if 0x80 <= codepoint <= 0x9F:
+            payload.append(codepoint)
+            continue
+        try:
+            payload.extend(char.encode("cp1252"))
+        except UnicodeEncodeError:
+            payload.extend(char.encode("latin1"))
+    return bytes(payload)
+
+
+def _repair_mojibake(value: str) -> str:
+    current = value
+    for _ in range(3):
+        if not _looks_like_mojibake(current):
+            break
+        try:
+            repaired = _to_cp1252_bytes_lossless(current).decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            break
+        if repaired == current:
+            break
+        current = repaired
+    return current
+
+
 def tr(locale_code: str | None, key: str, **kwargs) -> str:
     locale = normalize_locale_code(locale_code)
     template = (
@@ -66,6 +99,8 @@ def tr(locale_code: str | None, key: str, **kwargs) -> str:
         or TRANSLATIONS[DEFAULT_LOCALE].get(key)
         or key
     )
+    if locale == "ru":
+        template = _repair_mojibake(template)
     if not kwargs:
         return template
     return template.format(**kwargs)
