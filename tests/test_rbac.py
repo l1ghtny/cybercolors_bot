@@ -46,6 +46,8 @@ def test_rbac_catalog_contains_presets_and_permission_keys():
     assert "birthdays.records.manage" in permission_keys
     assert "admin" in preset_keys
     assert "moderator" in preset_keys
+    birthday_records = next(permission for permission in catalog.permissions if permission.key == "birthdays.records.manage")
+    assert birthday_records.group == "birthdays"
     moderator = next(preset for preset in catalog.presets if preset.key == "moderator")
     assert "birthdays.records.manage" in moderator.permission_keys
 

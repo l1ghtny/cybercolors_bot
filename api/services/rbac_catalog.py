@@ -47,7 +47,7 @@ PERMISSIONS: tuple[PermissionDefinition, ...] = (
     PermissionDefinition("moderation.rules.manage", "moderation", "Manage rules", "Create and update moderation rules."),
     PermissionDefinition("moderation.monitoring.manage", "moderation", "Manage monitoring", "Manage monitored users and queue decisions."),
     PermissionDefinition("moderation.monitoring.rules.manage", "moderation", "Manage monitoring rules", "Manage monitoring rule configuration."),
-    PermissionDefinition("birthdays.records.manage", "moderation", "Manage birthday records", "Add and update member birthdays."),
+    PermissionDefinition("birthdays.records.manage", "birthdays", "Manage birthday records", "Add and update member birthdays."),
     PermissionDefinition("moderation.settings.edit", "settings", "Edit moderation settings", "Edit moderation settings."),
     PermissionDefinition("security.settings.edit", "settings", "Edit security settings", "Edit security and newcomer settings."),
     PermissionDefinition("temp_voice.settings.edit", "settings", "Edit temp voice settings", "Configure temporary voice trigger channels and archives."),
