@@ -31,7 +31,7 @@ auth = APIRouter(prefix="/auth", tags=["auth"])
 
 
 test_bot_token = os.getenv("DISCORD_TOKEN_TEST")
-bot_token = os.getenv("DISCORD_TOKEN")
+bot_token = os.getenv("DISCORD_BOT_TOKEN") or os.getenv("DISCORD_TOKEN")
 # --- Discord OAuth2 Credentials ---
 DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID")
 DISCORD_TEST_CLIENT_ID = os.getenv("DISCORD_TEST_CLIENT_ID")
