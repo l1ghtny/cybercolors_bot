@@ -45,7 +45,7 @@ spec:
           imagePullPolicy: Always
           env:
             - name: PUBLIC_API_BASE_URL
-              value: https://cybercolors-api.lightny.pro
+              value: https://cybercolors-api.modral.app
             - name: PUBLIC_DISCORD_CLIENT_ID
               valueFrom:
                 secretKeyRef:
@@ -53,7 +53,7 @@ spec:
                   key: DISCORD_CLIENT_ID
                   optional: true
             - name: PUBLIC_DISCORD_REDIRECT_URI
-              value: https://cybercolors.lightny.pro/
+              value: https://cybercolors.modral.app/
           ports:
             - name: http
               containerPort: 80

@@ -43,7 +43,7 @@ spec:
         - name: api
           image: localhost:32000/cybercolors-backend:latest
           imagePullPolicy: Always
-          command: ["fastapi", "run", "api.api_main:app", "--host", "0.0.0.0", "--port", "8000"]
+          command: ["fastapi", "run", "api/api_main.py", "--host", "0.0.0.0", "--port", "8000"]
           ports:
             - name: http
               containerPort: 8000
@@ -54,6 +54,8 @@ spec:
                 name: cybercolors-app-secrets
                 optional: true
           env:
+            - name: PYTHONPATH
+              value: /home/discord-bot
             - name: DB_USER
               valueFrom:
                 secretKeyRef:

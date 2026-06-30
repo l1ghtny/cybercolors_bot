@@ -9,9 +9,9 @@ data:
   DB_PORT: "5432"
   DB_ECHO: "false"
   DB_POOL_RECYCLE_SECONDS: "1800"
-  BOT_API_URL: https://cybercolors-api.lightny.pro
-  DASHBOARD_BASE_URL: https://cybercolors.lightny.pro
-  CORS_ALLOWED_ORIGINS: https://cybercolors.lightny.pro
+  BOT_API_URL: https://cybercolors-api.modral.app
+  DASHBOARD_BASE_URL: https://cybercolors.modral.app
+  CORS_ALLOWED_ORIGINS: https://cybercolors.lightny.pro,https://cybercolors.modral.app
   AI_MODEL: gpt-4.1-mini
   AI_KNOWLEDGE_EMBEDDING_MODEL: text-embedding-3-small
   AI_ANSWER_TIMEOUT_SECONDS: "45"
