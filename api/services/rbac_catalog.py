@@ -47,6 +47,7 @@ PERMISSIONS: tuple[PermissionDefinition, ...] = (
     PermissionDefinition("moderation.rules.manage", "moderation", "Manage rules", "Create and update moderation rules."),
     PermissionDefinition("moderation.monitoring.manage", "moderation", "Manage monitoring", "Manage monitored users and queue decisions."),
     PermissionDefinition("moderation.monitoring.rules.manage", "moderation", "Manage monitoring rules", "Manage monitoring rule configuration."),
+    PermissionDefinition("birthdays.records.manage", "moderation", "Manage birthday records", "Add and update member birthdays."),
     PermissionDefinition("moderation.settings.edit", "settings", "Edit moderation settings", "Edit moderation settings."),
     PermissionDefinition("security.settings.edit", "settings", "Edit security settings", "Edit security and newcomer settings."),
     PermissionDefinition("temp_voice.settings.edit", "settings", "Edit temp voice settings", "Configure temporary voice trigger channels and archives."),
@@ -82,6 +83,7 @@ PRESETS: tuple[PresetDefinition, ...] = (
         + (
             "moderation.actions.apply.warn",
             "moderation.cases.manage",
+            "birthdays.records.manage",
         ),
     ),
     PresetDefinition(
@@ -94,6 +96,7 @@ PRESETS: tuple[PresetDefinition, ...] = (
             "moderation.actions.apply.mute",
             "moderation.cases.manage",
             "moderation.monitoring.manage",
+            "birthdays.records.manage",
         ),
     ),
     PresetDefinition(
@@ -111,6 +114,7 @@ PRESETS: tuple[PresetDefinition, ...] = (
             "moderation.rules.manage",
             "moderation.monitoring.manage",
             "moderation.monitoring.rules.manage",
+            "birthdays.records.manage",
             "ai.suggestions.review",
         ),
     ),

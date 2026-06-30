@@ -57,7 +57,7 @@ async def add_birthday_for_server(
     server_id: int,
     body: BirthdayCreateModel,
     session: AsyncSession = Depends(get_session),
-    _: int = Depends(require_server_permission("birthdays.settings.edit")),
+    _: int = Depends(require_server_permission("birthdays.records.manage")),
 ):
     user_id = int(body.user_id)
     member, global_user = await get_member_or_404(server_id, user_id, session)
@@ -87,7 +87,7 @@ async def update_birthday_for_server_user(
     user_id: int,
     body: BirthdayWriteModel,
     session: AsyncSession = Depends(get_session),
-    _: int = Depends(require_server_permission("birthdays.settings.edit")),
+    _: int = Depends(require_server_permission("birthdays.records.manage")),
 ):
     member, global_user = await get_member_or_404(server_id, user_id, session)
 

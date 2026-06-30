@@ -43,8 +43,11 @@ def test_rbac_catalog_contains_presets_and_permission_keys():
     assert "ai.suggestions.view" in permission_keys
     assert "ai.decisions.view" in permission_keys
     assert "ai.suggestions.review" in permission_keys
+    assert "birthdays.records.manage" in permission_keys
     assert "admin" in preset_keys
     assert "moderator" in preset_keys
+    moderator = next(preset for preset in catalog.presets if preset.key == "moderator")
+    assert "birthdays.records.manage" in moderator.permission_keys
 
 
 def _route_permission_keys(path: str, method: str) -> set[str]:
@@ -105,8 +108,8 @@ def test_settings_write_routes_use_feature_permissions():
         ("POST", "/replies/{server_id}/delete_replies"): {"replies.manage"},
         ("POST", "/replies/{server_id}/edit_replies"): {"replies.manage"},
         ("POST", "/replies/{server_id}/duplicate-selected"): {"replies.manage"},
-        ("POST", "/birthdays/{server_id}"): {"birthdays.settings.edit"},
-        ("PUT", "/birthdays/{server_id}/{user_id}"): {"birthdays.settings.edit"},
+        ("POST", "/birthdays/{server_id}"): {"birthdays.records.manage"},
+        ("PUT", "/birthdays/{server_id}/{user_id}"): {"birthdays.records.manage"},
         ("PUT", "/birthdays/{server_id}/settings/channel"): {"birthdays.settings.edit"},
         ("PUT", "/birthdays/{server_id}/settings/role"): {"birthdays.settings.edit"},
         ("POST", "/birthdays/{server_id}/settings/messages"): {"birthdays.settings.edit"},
