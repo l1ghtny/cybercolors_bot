@@ -4,7 +4,8 @@ from uuid import UUID, uuid4, uuid7
 from datetime import datetime, UTC, timezone
 
 import sqlalchemy as sa
-from sqlalchemy import BigInteger, Column, ForeignKey, TIMESTAMP, Text, UniqueConstraint
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import BigInteger, Column, ForeignKey, JSON, String, TIMESTAMP, Text, UniqueConstraint
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -32,6 +33,10 @@ class Server(SQLModel, table=True):
     replies: List["Replies"] = Relationship(back_populates="server")
     voice_channels: List["VoiceChannel"] = Relationship(back_populates="server")
     temp_voice_logs: List["TempVoiceLog"] = Relationship(back_populates="server")
+    temp_voice_settings: Optional["ServerTempVoiceSettings"] = Relationship(
+        back_populates="server",
+        sa_relationship_kwargs={"uselist": False},
+    )
     moderation_actions: List["ModerationAction"] = Relationship(back_populates="server")
     moderation_cases: List["ModerationCase"] = Relationship(back_populates="server")
     deleted_messages: List["DeletedMessage"] = Relationship(back_populates="server")
@@ -40,6 +45,8 @@ class Server(SQLModel, table=True):
     monitored_users: List["MonitoredUser"] = Relationship(back_populates="server")
     dashboard_access_users: List["DashboardAccessUser"] = Relationship(back_populates="server")
     dashboard_access_roles: List["DashboardAccessRole"] = Relationship(back_populates="server")
+    rbac_assignments: List["ServerRbacAssignment"] = Relationship(back_populates="server")
+    rbac_audit_events: List["ServerRbacAuditEvent"] = Relationship(back_populates="server")
     moderation_rules: List["ModerationRule"] = Relationship(back_populates="server")
     moderation_settings: Optional["ServerModerationSettings"] = Relationship(
         back_populates="server",
@@ -49,6 +56,9 @@ class Server(SQLModel, table=True):
         back_populates="server",
         sa_relationship_kwargs={"uselist": False},
     )
+    ai_knowledge_sources: List["AIKnowledgeSource"] = Relationship(back_populates="server")
+    ai_knowledge_chunks: List["AIKnowledgeChunk"] = Relationship(back_populates="server")
+    ai_knowledge_index_jobs: List["AIKnowledgeIndexJob"] = Relationship(back_populates="server")
     security_settings: Optional["ServerSecuritySettings"] = Relationship(
         back_populates="server",
         sa_relationship_kwargs={"uselist": False},
@@ -128,6 +138,22 @@ class GlobalUser(SQLModel, table=True):
     dashboard_access_role_added: List["DashboardAccessRole"] = Relationship(
         back_populates="added_by",
         sa_relationship_kwargs={'foreign_keys': '[DashboardAccessRole.added_by_user_id]'}
+    )
+    rbac_assignments_created: List["ServerRbacAssignment"] = Relationship(
+        back_populates="created_by",
+        sa_relationship_kwargs={'foreign_keys': '[ServerRbacAssignment.created_by_user_id]'}
+    )
+    rbac_assignments_updated: List["ServerRbacAssignment"] = Relationship(
+        back_populates="updated_by",
+        sa_relationship_kwargs={'foreign_keys': '[ServerRbacAssignment.updated_by_user_id]'}
+    )
+    rbac_audit_events: List["ServerRbacAuditEvent"] = Relationship(
+        back_populates="actor",
+        sa_relationship_kwargs={'foreign_keys': '[ServerRbacAuditEvent.actor_user_id]'}
+    )
+    ai_knowledge_sources_created: List["AIKnowledgeSource"] = Relationship(
+        back_populates="created_by",
+        sa_relationship_kwargs={'foreign_keys': '[AIKnowledgeSource.created_by_user_id]'}
     )
 
     replies: List["Replies"] = Relationship(back_populates="created_by")
@@ -211,8 +237,26 @@ class VoiceChannel(SQLModel, table=True):
     __tablename__ = "voice_channels"
     server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False, primary_key=True))
     channel_id: int = Field(sa_column=Column(BigInteger, nullable=False, primary_key=True))
+    trigger_channel_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
+    owner_user_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=True))
+    channel_name: Optional[str] = Field(default=None, nullable=True)
+    created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
 
     server: Server = Relationship(back_populates="voice_channels")
+
+
+class ServerTempVoiceSettings(SQLModel, table=True):
+    __tablename__ = "server_temp_voice_settings"
+
+    server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), primary_key=True))
+    enabled: bool = Field(default=False, nullable=False)
+    trigger_channel_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
+    archive_channel_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
+    channel_name_template: str = Field(default="{display_name}'s channel", nullable=False, max_length=100)
+    owner_manage_channel_enabled: bool = Field(default=True, nullable=False)
+    updated_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+
+    server: Server = Relationship(back_populates="temp_voice_settings")
 
 
 class ServerSecuritySettings(SQLModel, table=True):
@@ -220,6 +264,9 @@ class ServerSecuritySettings(SQLModel, table=True):
 
     server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), primary_key=True))
     verified_role_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
+    newcomer_role_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
+    newcomer_restriction_enabled: bool = Field(default=False, nullable=False)
+    newcomer_auto_release_minutes: Optional[int] = Field(default=None, nullable=True)
     normal_permissions: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
     lockdown_permissions: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
     lockdown_enabled: bool = Field(default=False, nullable=False)
@@ -261,6 +308,9 @@ class ServerAISettings(SQLModel, table=True):
     moderation_strictness: str = Field(default="standard", nullable=False, max_length=20)
     moderation_action_mode: str = Field(default="review_only", nullable=False, max_length=30)
     log_ai_decisions: bool = Field(default=True, nullable=False)
+    moderation_kill_switch_enabled: bool = Field(default=False, nullable=False)
+    moderation_daily_token_limit: Optional[int] = Field(default=None, nullable=True)
+    moderation_provider_timeout_seconds: int = Field(default=20, nullable=False)
     updated_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
 
     server: Server = Relationship(back_populates="ai_settings")
@@ -268,6 +318,7 @@ class ServerAISettings(SQLModel, table=True):
 
 class AIModerationDecision(SQLModel, table=True):
     __tablename__ = "ai_moderation_decisions"
+    __table_args__ = (UniqueConstraint("server_id", "message_id", name="uq_ai_moderation_decisions_server_message"),)
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False, index=True))
@@ -278,22 +329,136 @@ class AIModerationDecision(SQLModel, table=True):
     attachments_json: list[dict] = Field(default_factory=list, sa_column=Column(sa.JSON, nullable=False))
     provider: Optional[str] = Field(default=None, nullable=True)
     model: Optional[str] = Field(default=None, nullable=True)
+    total_tokens: int = Field(default=0, nullable=False)
     strictness: str = Field(default="standard", nullable=False, max_length=20)
     flagged: bool = Field(default=False, nullable=False, index=True)
     severity: str = Field(default="none", nullable=False, max_length=20)
     categories: list[str] = Field(default_factory=list, sa_column=Column(sa.JSON, nullable=False))
     reason: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     suggested_action: str = Field(default="none", nullable=False, max_length=30)
+    selected_action: Optional[str] = Field(default=None, nullable=True, max_length=30)
+    action_reason: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    action_override: bool = Field(default=False, nullable=False)
     rule_ids: list[str] = Field(default_factory=list, sa_column=Column(sa.JSON, nullable=False))
     raw_response: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     parse_error: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     status: str = Field(default="pending_review", nullable=False, max_length=30, index=True)
+    review_channel_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
+    review_message_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
+    archive_channel_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
+    archive_message_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
     reviewed_by_user_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=True))
     reviewed_at: Optional[datetime] = None
     linked_case_id: Optional[UUID] = Field(default=None, foreign_key="moderation_cases.id")
     linked_action_id: Optional[UUID] = Field(default=None, foreign_key="moderation_actions.id")
     created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
     updated_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+
+
+class AIAnswerLog(SQLModel, table=True):
+    __tablename__ = "ai_answer_logs"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    server_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True, index=True))
+    channel_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True, index=True))
+    message_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True, index=True))
+    author_user_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True, index=True))
+    status: str = Field(sa_column=Column(String(length=30), nullable=False, index=True))
+    provider: Optional[str] = Field(default=None, sa_column=Column(String(length=50), nullable=True))
+    model: Optional[str] = Field(default=None, sa_column=Column(String(length=120), nullable=True))
+    response_id: Optional[str] = Field(default=None, sa_column=Column(String(length=120), nullable=True))
+    total_tokens: int = Field(default=0, nullable=False)
+    tool_call_count: int = Field(default=0, nullable=False)
+    visual_input_count: int = Field(default=0, nullable=False)
+    conversation_message_count: int = Field(default=0, nullable=False)
+    request_content: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    response_content: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    error_type: Optional[str] = Field(default=None, sa_column=Column(String(length=120), nullable=True))
+    error_message: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    duration_ms: Optional[int] = Field(default=None, nullable=True)
+    created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+
+
+class AIKnowledgeSource(SQLModel, table=True):
+    __tablename__ = "ai_knowledge_sources"
+
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False, index=True))
+    source_type: str = Field(sa_column=Column(String(length=30), nullable=False, index=True))
+    subject_type: str = Field(default="server", sa_column=Column(String(length=30), nullable=False, index=True))
+    subject_user_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=True, index=True),
+    )
+    status: str = Field(default="draft", sa_column=Column(String(length=30), nullable=False, index=True))
+    visibility: str = Field(default="public_answer", sa_column=Column(String(length=30), nullable=False, index=True))
+    title: Optional[str] = Field(default=None, sa_column=Column(String(length=255), nullable=True))
+    content_text: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    source_url: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    storage_key: Optional[str] = Field(default=None, sa_column=Column(String(length=512), nullable=True))
+    mime_type: Optional[str] = Field(default=None, sa_column=Column(String(length=120), nullable=True))
+    size_bytes: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
+    sha256: Optional[str] = Field(default=None, sa_column=Column(String(length=64), nullable=True, index=True))
+    metadata_json: dict = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
+    created_by_user_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=True, index=True),
+    )
+    error_code: Optional[str] = Field(default=None, sa_column=Column(String(length=80), nullable=True))
+    error_message: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+    updated_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+    indexed_at: Optional[datetime] = None
+    deleted_at: Optional[datetime] = Field(default=None, nullable=True, index=True)
+
+    server: Server = Relationship(back_populates="ai_knowledge_sources")
+    created_by: Optional[GlobalUser] = Relationship(
+        back_populates="ai_knowledge_sources_created",
+        sa_relationship_kwargs={'foreign_keys': '[AIKnowledgeSource.created_by_user_id]'}
+    )
+    chunks: List["AIKnowledgeChunk"] = Relationship(back_populates="source")
+    index_jobs: List["AIKnowledgeIndexJob"] = Relationship(back_populates="source")
+
+
+class AIKnowledgeChunk(SQLModel, table=True):
+    __tablename__ = "ai_knowledge_chunks"
+    __table_args__ = (UniqueConstraint("source_id", "chunk_ordinal", name="uq_ai_knowledge_chunks_source_ordinal"),)
+
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    source_id: UUID = Field(foreign_key="ai_knowledge_sources.id", nullable=False, index=True)
+    server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False, index=True))
+    chunk_ordinal: int = Field(nullable=False)
+    chunk_text: str = Field(sa_column=Column(Text, nullable=False))
+    text_hash: str = Field(sa_column=Column(String(length=64), nullable=False, index=True))
+    token_count: int = Field(default=0, nullable=False)
+    embedding: Optional[list[float]] = Field(default=None, sa_column=Column(Vector(1536), nullable=True))
+    embedding_provider: Optional[str] = Field(default=None, sa_column=Column(String(length=50), nullable=True))
+    embedding_model: Optional[str] = Field(default=None, sa_column=Column(String(length=120), nullable=True))
+    created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+    updated_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+
+    server: Server = Relationship(back_populates="ai_knowledge_chunks")
+    source: AIKnowledgeSource = Relationship(back_populates="chunks")
+
+
+class AIKnowledgeIndexJob(SQLModel, table=True):
+    __tablename__ = "ai_knowledge_index_jobs"
+
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False, index=True))
+    source_id: Optional[UUID] = Field(default=None, foreign_key="ai_knowledge_sources.id", nullable=True, index=True)
+    job_type: str = Field(default="index_source", sa_column=Column(String(length=40), nullable=False, index=True))
+    status: str = Field(default="pending", sa_column=Column(String(length=30), nullable=False, index=True))
+    dedupe_key: str = Field(sa_column=Column(String(length=255), nullable=False, index=True))
+    attempt_count: int = Field(default=0, nullable=False)
+    run_after: datetime = Field(default_factory=utcnow_utc_tz, nullable=False, index=True)
+    locked_at: Optional[datetime] = Field(default=None, nullable=True)
+    error_message: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+    updated_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+
+    server: Server = Relationship(back_populates="ai_knowledge_index_jobs")
+    source: Optional[AIKnowledgeSource] = Relationship(back_populates="index_jobs")
 
 
 class ServerLocalizationSettings(SQLModel, table=True):
@@ -418,6 +583,7 @@ class ModerationAction(SQLModel, table=True):
     case_links: List["ModerationCaseActionLink"] = Relationship(back_populates="moderation_action")
     deleted_message_links: List["ModerationActionDeletedMessageLink"] = Relationship(back_populates="moderation_action")
     rule_citations: List["ModerationActionRuleCitation"] = Relationship(back_populates="action")
+    import_source_items: List["ModerationImportSourceItem"] = Relationship(back_populates="moderation_action")
 
 
 
@@ -471,6 +637,7 @@ class ModerationImportSourceItem(SQLModel, table=True):
     )
     created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
     error_message: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    moderation_action: Optional[ModerationAction] = Relationship(back_populates="import_source_items")
 class CaseStatus(str, Enum):
     OPEN = "open"
     CLOSED = "closed"
@@ -587,6 +754,53 @@ class DashboardAccessRole(SQLModel, table=True):
     added_by: GlobalUser = Relationship(
         back_populates="dashboard_access_role_added",
         sa_relationship_kwargs={'foreign_keys': '[DashboardAccessRole.added_by_user_id]'}
+    )
+
+
+class ServerRbacAssignment(SQLModel, table=True):
+    __tablename__ = "server_rbac_assignments"
+    __table_args__ = (
+        UniqueConstraint("server_id", "subject_type", "subject_id", name="uq_server_rbac_assignments_subject"),
+    )
+
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False, index=True))
+    subject_type: str = Field(sa_column=Column(String(length=20), nullable=False, index=True))
+    subject_id: str = Field(sa_column=Column(String(length=64), nullable=False, index=True))
+    preset: Optional[str] = Field(default=None, sa_column=Column(String(length=50), nullable=True))
+    permission_keys: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    created_by_user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False))
+    updated_by_user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False))
+    created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+    updated_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+
+    server: Server = Relationship(back_populates="rbac_assignments")
+    created_by: GlobalUser = Relationship(
+        back_populates="rbac_assignments_created",
+        sa_relationship_kwargs={'foreign_keys': '[ServerRbacAssignment.created_by_user_id]'}
+    )
+    updated_by: GlobalUser = Relationship(
+        back_populates="rbac_assignments_updated",
+        sa_relationship_kwargs={'foreign_keys': '[ServerRbacAssignment.updated_by_user_id]'}
+    )
+
+
+class ServerRbacAuditEvent(SQLModel, table=True):
+    __tablename__ = "server_rbac_audit_events"
+
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False, index=True))
+    actor_user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False, index=True))
+    subject_type: str = Field(sa_column=Column(String(length=20), nullable=False, index=True))
+    subject_id: str = Field(sa_column=Column(String(length=64), nullable=False, index=True))
+    before_json: Optional[dict] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    after_json: Optional[dict] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False, index=True)
+
+    server: Server = Relationship(back_populates="rbac_audit_events")
+    actor: GlobalUser = Relationship(
+        back_populates="rbac_audit_events",
+        sa_relationship_kwargs={'foreign_keys': '[ServerRbacAuditEvent.actor_user_id]'}
     )
 
 
@@ -816,11 +1030,15 @@ class UserActivity(SQLModel, table=True):
 class TempVoiceLog(SQLModel, table=True):
     __tablename__ = "temp_voice_log"
     id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
-    server_id: int = Field(foreign_key="servers.server_id")
+    server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False))
     channel_id: int = Field(sa_column=Column(BigInteger))
+    trigger_channel_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
+    owner_user_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=True))
     channel_name: str
     created_at: datetime
     deleted_at: Optional[datetime] = None
+    archive_channel_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
+    archive_message_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
 
     server: Server = Relationship(back_populates="temp_voice_logs")
 

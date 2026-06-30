@@ -12,8 +12,11 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.commands.misc.cats import cat_command, cat_command_text
 from src.commands.moderation.security import (
+    security_create_newcomer_role,
+    security_newcomer_role_suggestion,
     security_capture_permissions,
     security_lockdown,
+    security_set_newcomer_role,
     security_set_verified_role,
     verify_member,
 )
@@ -80,12 +83,14 @@ from src.modules.birthdays_module.user_validation.validation_main import main_va
 from src.modules.guild_lifecycle import mark_guild_presence, sync_active_guild_presence
 from src.modules.logs_setup import logger
 from src.modules.on_message_processing.background_message_processing import process_background_tasks
+from src.modules.ai.moderation_review import register_ai_moderation_review_views
 from src.modules.on_message_processing.check_for_links import delete_server_links
 from src.modules.on_message_processing.gpt_bot_reply import look_for_bot_reply
 from src.modules.on_message_processing.replies import check_for_replies
 from src.modules.on_voice_state_processing.create_voice_channel import create_voice_channel
 from src.modules.moderation.ban_worker import process_expired_bans
 from src.modules.moderation.mute_worker import process_expired_mutes
+from src.modules.moderation.newcomer_restrictions import handle_new_member_restriction
 from src.views.replies.delete_multiple_replies import DeleteReplyMultiple, DeleteReplyMultipleSelect
 from src.views.replies.delete_one_reply import DeleteOneReply
 from src.views.pagination.pagination import PaginationView
@@ -124,6 +129,7 @@ class Aclient(discord.AutoShardedClient):
         # 2. Call your cache loader
         await self.load_user_cache()
         await self.load_current_server_rules()
+        await register_ai_moderation_review_views(self)
 
     async def load_user_cache(self):
         """
@@ -255,6 +261,9 @@ moderation_rules_group.add_command(rules_list)
 moderation_rules_group.add_command(rules_parse_guide)
 
 moderation_security_group.add_command(security_set_verified_role)
+moderation_security_group.add_command(security_newcomer_role_suggestion)
+moderation_security_group.add_command(security_set_newcomer_role)
+moderation_security_group.add_command(security_create_newcomer_role)
 moderation_security_group.add_command(security_capture_permissions)
 moderation_security_group.add_command(security_lockdown)
 moderation_security_group.add_command(verify_member)
@@ -613,6 +622,11 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
 @client.event
 async def on_guild_join(guild: discord.Guild):
     await mark_guild_presence(guild, is_active=True)
+
+
+@client.event
+async def on_member_join(member: discord.Member):
+    await handle_new_member_restriction(member)
 
 
 @client.event

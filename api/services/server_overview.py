@@ -11,6 +11,7 @@ from api.models.server_overview import (
     ServerTimelineEventModel,
     ServerTimelineModel,
 )
+from api.services.ai_moderation import count_pending_ai_suggestions
 from api.services.moderation_core import build_optional_actor, get_system_actor, naive_utcnow
 from src.db.models import (
     ActionType,
@@ -29,6 +30,7 @@ from src.db.models import (
     Server,
     ServerLocalizationSettings,
     ServerModerationSettings,
+    ServerRbacAuditEvent,
     ServerSecuritySettings,
     User,
 )
@@ -124,6 +126,7 @@ async def build_server_overview(session: AsyncSession, server_id: int) -> Server
             select(func.max(MessageLog.created_at)).where(MessageLog.server_id == server_id)
         )
     ).one()
+    ai_pending_suggestions = await count_pending_ai_suggestions(session=session, server_id=server_id)
 
     server = await session.get(Server, server_id)
     moderation_settings = await session.get(ServerModerationSettings, server_id)
@@ -145,6 +148,7 @@ async def build_server_overview(session: AsyncSession, server_id: int) -> Server
             birthdays_count=birthdays_count,
             messages_today=messages_today,
             active_users_today=active_users_today,
+            ai_pending_suggestions=ai_pending_suggestions,
             last_message_at=last_message_at,
         ),
         setup=ServerOverviewSetupModel(
@@ -153,6 +157,10 @@ async def build_server_overview(session: AsyncSession, server_id: int) -> Server
             birthday_channel_configured=bool(server and server.birthday_channel_id),
             birthday_role_configured=bool(server and server.birthday_role_id),
             verified_role_configured=bool(security_settings and security_settings.verified_role_id),
+            newcomer_role_configured=bool(security_settings and security_settings.newcomer_role_id),
+            newcomer_restriction_enabled=bool(
+                security_settings and security_settings.newcomer_restriction_enabled
+            ),
             lockdown_enabled=bool(security_settings and security_settings.lockdown_enabled),
             locale_code=localization_settings.locale_code if localization_settings else "en",
         ),
@@ -342,6 +350,51 @@ async def _case_evidence_events(session: AsyncSession, server_id: int, limit: in
     return events
 
 
+async def _rbac_audit_events(session: AsyncSession, server_id: int, limit: int) -> list[ServerTimelineEventModel]:
+    audit_events = (
+        await session.exec(
+            select(ServerRbacAuditEvent)
+            .where(ServerRbacAuditEvent.server_id == server_id)
+            .order_by(ServerRbacAuditEvent.created_at.desc())
+            .limit(limit)
+        )
+    ).all()
+    events: list[ServerTimelineEventModel] = []
+    for audit_event in audit_events:
+        if audit_event.before_json is None and audit_event.after_json is not None:
+            title = "RBAC assignment created"
+        elif audit_event.after_json is None:
+            title = "RBAC assignment removed"
+        else:
+            title = "RBAC assignment updated"
+
+        target = None
+        if audit_event.subject_type == "user" and audit_event.subject_id.isdigit():
+            target = await build_optional_actor(session, server_id, int(audit_event.subject_id))
+
+        events.append(
+            ServerTimelineEventModel(
+                id=f"rbac_assignment:{audit_event.id}",
+                server_id=str(server_id),
+                event_type="rbac_assignment_changed",
+                entity_type="server_rbac_assignment",
+                entity_id=str(audit_event.id),
+                occurred_at=audit_event.created_at,
+                title=title,
+                description=f"{audit_event.subject_type}:{audit_event.subject_id}",
+                actor=await build_optional_actor(session, server_id, audit_event.actor_user_id),
+                target=target,
+                metadata={
+                    "subject_type": audit_event.subject_type,
+                    "subject_id": audit_event.subject_id,
+                    "before": audit_event.before_json,
+                    "after": audit_event.after_json,
+                },
+            )
+        )
+    return events
+
+
 async def build_server_timeline(session: AsyncSession, server_id: int, limit: int = 100) -> ServerTimelineModel:
     scoped_limit = max(1, min(limit, 200))
     events: list[ServerTimelineEventModel] = []
@@ -350,6 +403,7 @@ async def build_server_timeline(session: AsyncSession, server_id: int, limit: in
     events.extend(await _monitoring_events(session, server_id, scoped_limit))
     events.extend(await _case_note_events(session, server_id, scoped_limit))
     events.extend(await _case_evidence_events(session, server_id, scoped_limit))
+    events.extend(await _rbac_audit_events(session, server_id, scoped_limit))
     events.sort(key=lambda item: item.occurred_at, reverse=True)
     return ServerTimelineModel(
         server_id=str(server_id),

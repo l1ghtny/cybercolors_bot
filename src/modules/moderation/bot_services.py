@@ -8,7 +8,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from api.models.moderation_actions import ModerationActionCreate
 from api.models.moderation_cases import ModerationCaseCreateModel, ModerationCaseSummaryModel
 from api.models.moderation_rules import ModerationRuleReadModel
-from api.services.moderation_actions_service import create_action
+from api.services.moderation_actions_service import _dashboard_action_url, _dashboard_case_url, create_action
 from api.services.moderation_cases_service import create_case, list_cases
 from api.services.moderation_rules_service import list_rules, to_rule_read_model
 from src.db.models import ActionType, CaseStatus, ModerationAction, ModerationCase
@@ -55,6 +55,66 @@ def rule_choices(
         if len(choices) >= limit:
             break
     return choices
+
+
+def _receipt_value(value: object, limit: int = 600) -> str:
+    text = str(value).strip()
+    if len(text) <= limit:
+        return text
+    return f"{text[: limit - 3]}..."
+
+
+def build_moderator_action_receipt(
+    *,
+    locale: str,
+    server_id: int,
+    public_message: str,
+    action: ModerationAction | None = None,
+    action_type: ActionType | str | None = None,
+    action_id: str | UUID | None = None,
+    rule: str | None = None,
+    commentary: str | None = None,
+    case_id: str | UUID | None = None,
+    expires_at: datetime | None = None,
+    extra_lines: list[tuple[str, object | None]] | None = None,
+) -> str:
+    """Build the private moderator receipt sent after the public notice."""
+    resolved_action_id = action_id or getattr(action, "id", None)
+    resolved_action_type = action_type or getattr(action, "action_type", None)
+    resolved_case_id = case_id or getattr(action, "case_id", None)
+    resolved_commentary = commentary if commentary is not None else getattr(action, "commentary", None)
+    resolved_expires_at = expires_at or getattr(action, "expires_at", None)
+
+    lines = [f"**{tr(locale, 'action.private_receipt_title')}**", f"{tr(locale, 'action.public_notice_label')}: {public_message}"]
+
+    if resolved_action_id:
+        action_id_text = str(resolved_action_id)
+        lines.append(
+            f"{tr(locale, 'modlog.action_id_label')}: "
+            f"[`{action_id_text[:8]}`]({_dashboard_action_url(server_id, action_id_text)})"
+        )
+    if resolved_action_type:
+        action_type_text = resolved_action_type.value if hasattr(resolved_action_type, "value") else str(resolved_action_type)
+        lines.append(f"{tr(locale, 'modlog.action_label')}: `{_receipt_value(action_type_text, 80)}`")
+    if rule:
+        lines.append(f"{tr(locale, 'modlog.rule_label')}: `{_receipt_value(rule)}`")
+    if resolved_case_id:
+        case_id_text = str(resolved_case_id)
+        lines.append(
+            f"{tr(locale, 'modlog.case_label')}: "
+            f"[`{case_id_text[:8]}`]({_dashboard_case_url(server_id, case_id_text)})"
+        )
+    if resolved_expires_at:
+        lines.append(f"{tr(locale, 'modlog.expires_at_label')}: `{resolved_expires_at.isoformat()}`")
+    if resolved_commentary:
+        lines.append(f"{tr(locale, 'modlog.commentary_label')}: {_receipt_value(resolved_commentary)}")
+
+    for label, value in extra_lines or []:
+        if value is None:
+            continue
+        lines.append(f"{label}: {_receipt_value(value)}")
+
+    return "\n".join(lines)
 
 
 async def fetch_open_case_models(
@@ -191,13 +251,14 @@ def build_action_payload(
     reason: str | None,
     expires_at: datetime | None = None,
     case_id: UUID | None = None,
+    rule_ids: list[str] | None = None,
 ) -> ModerationActionCreate:
     parsed_rule_id = UUID(str(rule_id)) if rule_id else None
     return ModerationActionCreate(
         action_type=action_type,
         moderator_user_id=interaction.user.id,
         rule_id=parsed_rule_id,
-        rule_ids=[],
+        rule_ids=rule_ids or [],
         commentary=commentary,
         reason=reason,
         expires_at=expires_at,
@@ -222,12 +283,14 @@ async def create_bot_moderation_action(
     reason: str | None,
     expires_at: datetime | None = None,
     case_id: UUID | None = None,
+    rule_ids: list[str] | None = None,
 ) -> ModerationAction:
     payload = build_action_payload(
         interaction=interaction,
         user=user,
         action_type=action_type,
         rule_id=rule_id,
+        rule_ids=rule_ids,
         commentary=commentary,
         reason=reason,
         expires_at=expires_at,

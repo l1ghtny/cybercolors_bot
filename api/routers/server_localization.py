@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from api.dependencies.server_access import require_server_admin_or_owner, require_server_dashboard_access
+from api.dependencies.server_access import require_server_dashboard_access, require_server_permission
 from api.models.server_localization import (
     ServerLocalizationSettingsReadModel,
     ServerLocalizationSettingsUpdateModel,
@@ -33,7 +33,7 @@ async def set_server_localization(
     server_id: int,
     body: ServerLocalizationSettingsUpdateModel,
     session: AsyncSession = Depends(get_session),
-    _: None = Depends(require_server_admin_or_owner),
+    _: int = Depends(require_server_permission("localization.settings.edit")),
 ):
     settings = await update_server_localization_settings(session=session, server_id=server_id, body=body)
     return await to_server_localization_read_model(server_id, settings)

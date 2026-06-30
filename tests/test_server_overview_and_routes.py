@@ -81,7 +81,15 @@ async def _overview_and_timeline_scenario() -> None:
         await session.flush()
         session.add(Birthday(user_id=target_id, day=1, month=1))
         session.add(ServerModerationSettings(server_id=server_id, mute_role_id=_make_discord_id(), mod_log_channel_id=_make_discord_id()))
-        session.add(ServerSecuritySettings(server_id=server_id, verified_role_id=_make_discord_id(), lockdown_enabled=True))
+        session.add(
+            ServerSecuritySettings(
+                server_id=server_id,
+                verified_role_id=_make_discord_id(),
+                newcomer_role_id=_make_discord_id(),
+                newcomer_restriction_enabled=True,
+                lockdown_enabled=True,
+            )
+        )
         session.add(ServerLocalizationSettings(server_id=server_id, locale_code="ru"))
         session.add(Replies(id=reply_id, bot_reply="hello", server_id=server_id, created_by_id=moderator_id, created_at=now))
         session.add(ModerationRule(id=uuid4(), server_id=server_id, title="No spam", is_active=True, created_by_user_id=moderator_id))
@@ -186,6 +194,8 @@ async def _overview_and_timeline_scenario() -> None:
         assert overview.setup.birthday_channel_configured is True
         assert overview.setup.birthday_role_configured is True
         assert overview.setup.verified_role_configured is True
+        assert overview.setup.newcomer_role_configured is True
+        assert overview.setup.newcomer_restriction_enabled is True
         assert overview.setup.lockdown_enabled is True
         assert overview.setup.locale_code == "ru"
 

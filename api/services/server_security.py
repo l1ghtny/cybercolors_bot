@@ -2,12 +2,15 @@ from fastapi import HTTPException, status
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.models.server_security import (
+    ServerSecurityCreateNewcomerRoleModel,
     ServerSecurityLockdownUpdateModel,
+    ServerSecurityNewcomerRoleUpdateModel,
     ServerSecurityPermissionsUpdateModel,
+    ServerSecurityRoleSuggestionModel,
     ServerSecuritySettingsReadModel,
     ServerSecurityVerifiedRoleUpdateModel,
 )
-from api.services.discord_guilds import fetch_guild_roles, update_guild_role_permissions
+from api.services.discord_guilds import create_guild_role, fetch_guild_roles, update_guild_role_permissions
 from api.services.moderation_core import naive_utcnow
 from src.db.models import Server, ServerSecuritySettings
 
@@ -54,10 +57,15 @@ async def to_server_security_read_model(
     settings: ServerSecuritySettings,
 ) -> ServerSecuritySettingsReadModel:
     role_name, _ = await _resolve_role_name_and_permissions(server_id, settings.verified_role_id)
+    newcomer_role_name, _ = await _resolve_role_name_and_permissions(server_id, settings.newcomer_role_id)
     return ServerSecuritySettingsReadModel(
         server_id=str(server_id),
         verified_role_id=str(settings.verified_role_id) if settings.verified_role_id is not None else None,
         verified_role_name=role_name,
+        newcomer_role_id=str(settings.newcomer_role_id) if settings.newcomer_role_id is not None else None,
+        newcomer_role_name=newcomer_role_name,
+        newcomer_restriction_enabled=settings.newcomer_restriction_enabled,
+        newcomer_auto_release_minutes=settings.newcomer_auto_release_minutes,
         normal_permissions=(
             str(settings.normal_permissions) if settings.normal_permissions is not None else None
         ),
@@ -90,6 +98,78 @@ async def update_verified_role(
     settings.verified_role_id = role_id
     if settings.normal_permissions is None and current_permissions is not None:
         settings.normal_permissions = current_permissions
+    settings.updated_at = naive_utcnow()
+    session.add(settings)
+    await session.flush()
+    await session.refresh(settings)
+    return settings
+
+
+def build_newcomer_role_suggestion() -> ServerSecurityRoleSuggestionModel:
+    return ServerSecurityRoleSuggestionModel(
+        purpose="newcomer_restricted_role",
+        role_name="Newcomer",
+        permissions="0",
+        mentionable=False,
+        hoist=False,
+        color=0xF2C94C,
+        reason=(
+            "Recommended for restricted newcomers: no base permissions, not mentionable, "
+            "not displayed separately. Channel overwrites can then decide exactly what newcomers can do."
+        ),
+    )
+
+
+async def update_newcomer_role(
+    session: AsyncSession,
+    server_id: int,
+    body: ServerSecurityNewcomerRoleUpdateModel,
+    server_name: str | None = None,
+) -> ServerSecuritySettings:
+    settings = await get_or_create_server_security_settings(session, server_id, server_name=server_name)
+
+    if body.role_id is not None:
+        settings.newcomer_role_id = int(body.role_id) if body.role_id else None
+    if body.enabled is not None:
+        settings.newcomer_restriction_enabled = body.enabled
+    if body.auto_release_minutes is not None:
+        settings.newcomer_auto_release_minutes = (
+            body.auto_release_minutes if body.auto_release_minutes > 0 else None
+        )
+    settings.updated_at = naive_utcnow()
+    session.add(settings)
+    await session.flush()
+    await session.refresh(settings)
+    return settings
+
+
+async def create_newcomer_role_and_attach(
+    session: AsyncSession,
+    server_id: int,
+    body: ServerSecurityCreateNewcomerRoleModel,
+    server_name: str | None = None,
+) -> ServerSecuritySettings:
+    role_payload = await create_guild_role(
+        server_id=server_id,
+        name=body.role_name,
+        permissions=body.permissions,
+        mentionable=body.mentionable,
+        hoist=body.hoist,
+        color=body.color,
+    )
+    role_id = role_payload.get("id")
+    if role_id is None or not str(role_id).isdigit():
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to create newcomer role via Discord API",
+        )
+
+    settings = await get_or_create_server_security_settings(session, server_id, server_name=server_name)
+    settings.newcomer_role_id = int(role_id)
+    settings.newcomer_restriction_enabled = body.enabled
+    settings.newcomer_auto_release_minutes = (
+        body.auto_release_minutes if body.auto_release_minutes and body.auto_release_minutes > 0 else None
+    )
     settings.updated_at = naive_utcnow()
     session.add(settings)
     await session.flush()

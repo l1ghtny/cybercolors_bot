@@ -30,6 +30,7 @@ from api.services.moderation_core import (
     to_deleted_message_read,
     to_moderation_history,
 )
+from api.services.moderation_import_metadata import action_import_metadata
 from api.services.moderation_queries import (
     query_deleted_messages,
     query_deleted_messages_for_action,
@@ -45,6 +46,7 @@ from src.db.models import (
     ModerationCase,
     ModerationCaseActionLink,
     ModerationCaseRuleCitation,
+    ModerationImportSourceItem,
     ModerationRule,
     ServerLocalizationSettings,
     ServerModerationSettings,
@@ -92,15 +94,18 @@ def _markdown_link(label: object, url: str) -> str:
     return f"[{text or url}]({url})"
 
 
-def _rule_label_from_parts(code: str | None, title: str | None) -> str:
+def _rule_label_from_parts(code: str | None, title: str | None, locale: str | None = None) -> str:
     code = (code or "").strip()
     title = (title or "").strip()
     if code:
+        if code.isdigit():
+            keycap_code = "".join(f"{digit}\ufe0f\u20e3" for digit in code)
+            return f"{tr(locale, 'modlog.rule_label')} {keycap_code}: {title}".strip(": ")
         return f"{code} {title}".strip()
     return title or "Rule"
 
 
-def _rule_labels_for_action(action: ModerationAction) -> list[str]:
+def _rule_labels_for_action(action: ModerationAction, locale: str | None = None) -> list[str]:
     if action.rule_citations:
         sorted_citations = sorted(
             action.rule_citations,
@@ -110,11 +115,12 @@ def _rule_labels_for_action(action: ModerationAction) -> list[str]:
             _rule_label_from_parts(
                 item.rule.code if item.rule is not None else item.rule_code_snapshot,
                 item.rule.title if item.rule is not None else item.rule_title_snapshot,
+                locale,
             )
             for item in sorted_citations
         ]
     if action.rule is not None:
-        return [_rule_label_from_parts(action.rule.code, action.rule.title)]
+        return [_rule_label_from_parts(action.rule.code, action.rule.title, locale)]
     return []
 
 
@@ -134,10 +140,23 @@ def _reason_without_commentary_suffix(reason: str | None, commentary: str | None
     return display_reason
 
 
+def _rule_label_compare_values(label: str) -> set[str]:
+    normalized = label.strip().casefold().replace("\ufe0f", "").replace("\u20e3", "").replace(":", " ")
+    normalized = " ".join(normalized.split())
+    values = {normalized} if normalized else set()
+    for prefix in ("rule ", "правило "):
+        if normalized.startswith(prefix):
+            values.add(normalized[len(prefix) :].strip())
+    return values
+
+
 def _display_reason_for_log(reason: str | None, commentary: str | None, rule_labels: list[str]) -> str:
     display_reason = _reason_without_commentary_suffix(reason, commentary)
     normalized_reason = display_reason.strip().casefold()
-    if normalized_reason and any(normalized_reason == label.strip().casefold() for label in rule_labels):
+    rule_reason_values: set[str] = set()
+    for label in rule_labels:
+        rule_reason_values.update(_rule_label_compare_values(label))
+    if normalized_reason and normalized_reason in rule_reason_values:
         return ""
     return display_reason
 
@@ -157,7 +176,7 @@ def _build_action_log_message(
         f"**{tr(locale, 'modlog.moderator_label')}:** {_format_user_for_log(action.moderator_user_id, moderator_username, locale)}",
     ]
 
-    rule_labels = _rule_labels_for_action(action)
+    rule_labels = _rule_labels_for_action(action, locale)
     display_reason = _display_reason_for_log(action.reason, action.commentary, rule_labels)
     if display_reason:
         lines.append(f"**{tr(locale, 'modlog.reason_label')}:** {_truncate(display_reason, limit=1000)}")
@@ -176,6 +195,9 @@ def _build_action_log_message(
         )
     if action.expires_at:
         lines.append(f"**{tr(locale, 'modlog.expires_at_label')}:** {_inline_code(_format_dt(action.expires_at))}")
+    import_metadata = action_import_metadata(action, locale=locale)
+    if import_metadata["created_at_label"]:
+        lines.append(f"**{tr(locale, 'modlog.created_at_label')}:** {import_metadata['created_at_label']}")
     lines.append(f"**{tr(locale, 'modlog.action_id_label')}:** {_markdown_link(action.id, action_url)}")
 
     message = f"{tr(locale, 'modlog.header')}\n" + "\n".join(lines)
@@ -212,7 +234,7 @@ def _build_action_log_embed(
 ) -> dict:
     action_url = _dashboard_action_url(action.server_id, action.id)
     action_label = action.action_type.value if hasattr(action.action_type, "value") else str(action.action_type)
-    rule_labels = _rule_labels_for_action(action)
+    rule_labels = _rule_labels_for_action(action, locale)
     display_reason = _display_reason_for_log(action.reason, action.commentary, rule_labels)
     fields = [
         _embed_field(
@@ -244,6 +266,15 @@ def _build_action_log_embed(
         )
     if action.expires_at:
         fields.append(_embed_field(tr(locale, "modlog.expires_at_label"), _format_dt(action.expires_at), inline=True))
+    import_metadata = action_import_metadata(action, locale=locale)
+    if import_metadata["created_at_label"]:
+        fields.append(
+            _embed_field(
+                tr(locale, "modlog.created_at_label"),
+                import_metadata["created_at_label"],
+                inline=False,
+            )
+        )
 
     created_at = getattr(action, "created_at", None)
     embed = {
@@ -253,7 +284,7 @@ def _build_action_log_embed(
         "fields": fields,
         "footer": {"text": f"{tr(locale, 'modlog.action_id_label')}: {action.id}"},
     }
-    if created_at is not None:
+    if created_at is not None and import_metadata["source_created_at_known"]:
         embed["timestamp"] = _format_dt(created_at)
     return embed
 
@@ -390,6 +421,7 @@ async def _load_action_for_read(session: AsyncSession, action_id: UUID) -> Moder
                 selectinload(ModerationAction.rule),
                 selectinload(ModerationAction.case),
                 selectinload(ModerationAction.rule_citations).selectinload(ModerationActionRuleCitation.rule),
+                selectinload(ModerationAction.import_source_items),
             )
         )
     ).one_or_none()
@@ -414,7 +446,9 @@ def _to_action_summary(
     moderator_username: str | None,
     rules_count: int,
     deleted_messages_count: int,
+    import_metadata: dict | None = None,
 ) -> ModerationActionSummaryModel:
+    import_metadata = import_metadata or {}
     return ModerationActionSummaryModel(
         id=str(action_id),
         action_type=action_type,
@@ -427,11 +461,42 @@ def _to_action_summary(
         case_id=str(case_id) if case_id else None,
         case_title=case_title,
         created_at=created_at,
+        created_at_label=import_metadata.get("created_at_label"),
+        import_source=import_metadata.get("import_source"),
+        import_source_label=import_metadata.get("import_source_label"),
+        source_created_at_known=import_metadata.get("source_created_at_known", True),
+        source_created_at_note=import_metadata.get("source_created_at_note"),
         expires_at=expires_at,
         is_active=is_active,
         rules_count=rules_count,
         deleted_messages_count=deleted_messages_count,
     )
+
+
+async def _import_metadata_for_action_ids(
+    session: AsyncSession,
+    action_ids: list[UUID],
+) -> dict[UUID, dict]:
+    if not action_ids:
+        return {}
+    items = (
+        await session.exec(
+            select(ModerationImportSourceItem).where(
+                ModerationImportSourceItem.moderation_action_id.in_(action_ids),
+            )
+        )
+    ).all()
+    by_action_id: dict[UUID, list[ModerationImportSourceItem]] = {}
+    for item in items:
+        if item.moderation_action_id is None:
+            continue
+        by_action_id.setdefault(item.moderation_action_id, []).append(item)
+
+    result: dict[UUID, dict] = {}
+    for action_id, source_items in by_action_id.items():
+        lightweight_action = type("ImportedActionProxy", (), {"import_source_items": source_items})()
+        result[action_id] = action_import_metadata(lightweight_action)
+    return result
 
 
 async def _send_action_to_mod_log(
@@ -464,15 +529,11 @@ async def _send_action_to_mod_log(
 
 
 
-def _rules_label(rules: list[ModerationRule], fallback_reason: str) -> str:
+def _rules_label(rules: list[ModerationRule], fallback_reason: str, locale: str | None = None) -> str:
     if not rules:
         return fallback_reason
     primary_rule = rules[0]
-    code = (primary_rule.code or "").strip()
-    title = (primary_rule.title or "").strip()
-    if code:
-        return f"{code} {title}".strip()
-    return title or fallback_reason
+    return _rule_label_from_parts(primary_rule.code, primary_rule.title, locale) or fallback_reason
 
 
 async def _get_server_locale(session: AsyncSession, server_id: int) -> str:
@@ -492,7 +553,7 @@ async def _send_warn_dm_for_action(
         locale,
         "warn.dm_body",
         server_name=action.server_name,
-        rule_label=_rules_label(resolved_rules, fallback_reason=resolved_reason),
+        rule_label=_rules_label(resolved_rules, fallback_reason=resolved_reason, locale=locale),
     )
     if resolved_commentary:
         message += tr(locale, "warn.dm_commentary", commentary=resolved_commentary)
@@ -762,6 +823,7 @@ async def list_action_summaries(
         .limit(limit)
     )
     rows = (await session.exec(statement)).all()
+    metadata_by_action_id = await _import_metadata_for_action_ids(session, [row[0] for row in rows])
     return [
         _to_action_summary(
             action_id=row[0],
@@ -779,6 +841,7 @@ async def list_action_summaries(
             moderator_username=row[12],
             rules_count=int(row[13] or 0),
             deleted_messages_count=int(row[14] or 0),
+            import_metadata=metadata_by_action_id.get(row[0]),
         )
         for row in rows
     ]

@@ -7,7 +7,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.dependencies.auth import get_bearer_access_token
 from api.dependencies.current_user import get_current_discord_user_id
-from api.dependencies.server_access import require_server_admin_or_owner, require_server_dashboard_access
+from api.dependencies.server_access import require_server_dashboard_access, require_server_permission
 from api.helpers.replies import enrich_user_data
 from api.models.bot_replies import (
     ReplyAddModel,
@@ -19,6 +19,7 @@ from api.models.bot_replies import (
 )
 from api.services.dashboard_access_service import assert_dashboard_access
 from api.services.replies_service import duplicate_selected_replies
+from api.services.rbac_service import assert_user_has_permission
 from src.db.database import get_session
 from src.db.models import Replies, Triggers
 
@@ -29,7 +30,7 @@ replies = APIRouter(
 )
 
 
-async def require_duplicate_target_server_dashboard_access(
+async def require_duplicate_target_server_replies_manage(
     body: ReplyDuplicateRequestModel,
     session: AsyncSession = Depends(get_session),
     current_user_id: int = Depends(get_current_discord_user_id),
@@ -40,6 +41,13 @@ async def require_duplicate_target_server_dashboard_access(
         session=session,
         server_id=target_server_id,
         caller_user_id=current_user_id,
+        access_token=access_token,
+    )
+    await assert_user_has_permission(
+        session=session,
+        server_id=target_server_id,
+        user_id=current_user_id,
+        permission_key="replies.manage",
         access_token=access_token,
     )
     return target_server_id
@@ -79,7 +87,7 @@ async def get_replies_by_server_id(server_id: int, session: AsyncSession = Depen
     '/{server_id}/add_replies',
     response_model=ReplyMutationResponseModel,
     status_code=201,
-    dependencies=[Depends(require_server_admin_or_owner)],
+    dependencies=[Depends(require_server_permission("replies.manage"))],
 )
 async def add_replies(
     server_id: int,
@@ -143,7 +151,7 @@ async def add_replies(
 @replies.post(
     '/{server_id}/delete_replies',
     response_model=ReplyMutationResponseModel,
-    dependencies=[Depends(require_server_admin_or_owner)],
+    dependencies=[Depends(require_server_permission("replies.manage"))],
 )
 async def delete_replies(
     server_id: int,
@@ -180,7 +188,7 @@ async def delete_replies(
 @replies.post(
     '/{server_id}/edit_replies',
     response_model=ReplyMutationResponseModel,
-    dependencies=[Depends(require_server_admin_or_owner)],
+    dependencies=[Depends(require_server_permission("replies.manage"))],
 )
 async def edit_replies(
     server_id: int,
@@ -229,8 +237,8 @@ async def duplicate_selected_replies_to_server(
     server_id: int,
     body: ReplyDuplicateRequestModel,
     session: AsyncSession = Depends(get_session),
-    current_user_id: int = Depends(get_current_discord_user_id),
-    target_server_id: int = Depends(require_duplicate_target_server_dashboard_access),
+    current_user_id: int = Depends(require_server_permission("replies.manage")),
+    target_server_id: int = Depends(require_duplicate_target_server_replies_manage),
 ):
     if target_server_id == server_id:
         raise HTTPException(

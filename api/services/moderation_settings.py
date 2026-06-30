@@ -4,9 +4,16 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from api.models.moderation_settings import (
     ServerModerationCreateMuteRoleModel,
     ServerModerationSettingsReadModel,
+    ServerModerationSettingsTestResultModel,
     ServerModerationSettingsUpdateModel,
 )
-from api.services.discord_guilds import TEXT_CHANNEL_TYPES, create_guild_role, fetch_channel, fetch_guild_roles
+from api.services.discord_guilds import (
+    TEXT_CHANNEL_TYPES,
+    create_channel_message,
+    create_guild_role,
+    fetch_channel,
+    fetch_guild_roles,
+)
 from api.services.moderation_core import naive_utcnow
 from src.db.models import Server, ServerModerationSettings
 
@@ -137,3 +144,63 @@ async def create_mute_role_and_attach(
     await session.flush()
     await session.refresh(settings)
     return settings
+
+
+async def check_mute_role_setting(
+    session: AsyncSession,
+    server_id: int,
+) -> ServerModerationSettingsTestResultModel:
+    settings = await get_or_create_server_moderation_settings(session, server_id)
+    if settings.mute_role_id is None:
+        return ServerModerationSettingsTestResultModel(ok=False, error="Mute role is not configured")
+
+    try:
+        roles = await fetch_guild_roles(server_id)
+    except HTTPException as exc:
+        return ServerModerationSettingsTestResultModel(ok=False, error=str(exc.detail))
+
+    for role in roles:
+        raw_id = role.get("id")
+        if raw_id is None or not str(raw_id).isdigit() or int(raw_id) != settings.mute_role_id:
+            continue
+        if role.get("managed"):
+            return ServerModerationSettingsTestResultModel(
+                ok=False,
+                error="Configured mute role is managed by Discord or an integration and cannot be assigned by the bot",
+            )
+        return ServerModerationSettingsTestResultModel(ok=True)
+
+    return ServerModerationSettingsTestResultModel(
+        ok=False,
+        error="Configured mute role was not found in this server",
+    )
+
+
+async def check_mod_log_setting(
+    session: AsyncSession,
+    server_id: int,
+) -> ServerModerationSettingsTestResultModel:
+    settings = await get_or_create_server_moderation_settings(session, server_id)
+    if settings.mod_log_channel_id is None:
+        return ServerModerationSettingsTestResultModel(ok=False, error="Moderation log channel is not configured")
+
+    try:
+        channel = await fetch_channel(server_id=server_id, channel_id=settings.mod_log_channel_id)
+        if not channel:
+            return ServerModerationSettingsTestResultModel(
+                ok=False,
+                error="Configured moderation log channel was not found in this server",
+            )
+        if channel.get("type") not in TEXT_CHANNEL_TYPES:
+            return ServerModerationSettingsTestResultModel(
+                ok=False,
+                error="Configured moderation log channel must be a text or announcement channel",
+            )
+        await create_channel_message(
+            channel_id=settings.mod_log_channel_id,
+            content="Moderation log test message. If you can see this, the CyberColors bot can post here.",
+        )
+    except HTTPException as exc:
+        return ServerModerationSettingsTestResultModel(ok=False, error=str(exc.detail))
+
+    return ServerModerationSettingsTestResultModel(ok=True)

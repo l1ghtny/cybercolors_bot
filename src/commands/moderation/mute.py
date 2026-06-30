@@ -15,6 +15,7 @@ from src.db.models import ActionType
 from src.modules.localization.catalog import SUPPORTED_LOCALES
 from src.modules.localization.service import get_server_locale, is_supported_locale, tr
 from src.modules.moderation.bot_services import (
+    build_moderator_action_receipt,
     case_choices,
     create_bot_moderation_action,
     fetch_active_rule_models,
@@ -24,6 +25,11 @@ from src.modules.moderation.bot_services import (
     rule_choices,
     rule_label,
     validate_target_for_moderation,
+)
+from src.modules.moderation.durations import (
+    action_duration_choices,
+    duration_unit_choices,
+    resolve_duration_selection,
 )
 from src.modules.moderation.mute_management import (
     deactivate_user_mutes,
@@ -285,11 +291,17 @@ async def moderation_set_mute_defaults(
     name="mute",
     description="Apply role-based mute with rule + optional commentary.",
 )
+@app_commands.choices(
+    duration=action_duration_choices(include_default=True),
+    duration_unit=duration_unit_choices(),
+)
 async def mute(
     interaction: discord.Interaction,
     user: discord.Member,
     rule: str,
-    duration_minutes: app_commands.Range[int, 1, 43200] | None = None,
+    duration: app_commands.Choice[str] | None = None,
+    duration_value: app_commands.Range[int, 1, 999] | None = None,
+    duration_unit: app_commands.Choice[str] | None = None,
     commentary: str | None = None,
     case: str | None = None,
 ):
@@ -338,14 +350,24 @@ async def mute(
             )
             return
 
-        effective_duration = duration_minutes or settings.default_mute_minutes
-        if effective_duration > settings.max_mute_minutes:
-            await interaction.followup.send(
-                tr(locale, "mute.duration_exceeds", max_minutes=settings.max_mute_minutes),
-                ephemeral=True,
+        try:
+            duration_selection = resolve_duration_selection(
+                preset=duration,
+                custom_value=duration_value,
+                custom_unit=duration_unit,
+                default_minutes=settings.default_mute_minutes,
+                max_minutes=settings.max_mute_minutes,
+                allow_default=True,
+                allow_permanent=False,
             )
+        except ValueError as error:
+            await interaction.followup.send(str(error), ephemeral=True)
             return
 
+    effective_duration = duration_selection.minutes
+    if effective_duration is None:
+        await interaction.followup.send("Mute duration is required.", ephemeral=True)
+        return
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=effective_duration)
     commentary_text = commentary.strip() if commentary else None
     try:
@@ -360,7 +382,7 @@ async def mute(
                 selected_rule_label=selected_rule_label,
                 commentary=commentary_text,
             )
-            await create_bot_moderation_action(
+            created_action = await create_bot_moderation_action(
                 session=session,
                 interaction=interaction,
                 user=user,
@@ -383,12 +405,22 @@ async def mute(
         locale,
         "mute.success",
         mention=user.mention,
-        duration=effective_duration,
+        duration=duration_selection.label,
         rule=selected_rule_label,
         note="",
     )
     await send_public_action_notice(interaction, success_message)
-    await interaction.followup.send(success_message, ephemeral=True)
+    await interaction.followup.send(
+        build_moderator_action_receipt(
+            locale=locale,
+            server_id=interaction.guild.id,
+            public_message=success_message,
+            action=created_action,
+            rule=selected_rule_label,
+        ),
+        ephemeral=True,
+        allowed_mentions=discord.AllowedMentions.none(),
+    )
 
 @mute.autocomplete("rule")
 async def mute_rule_autocomplete(interaction: discord.Interaction, current: str):
@@ -498,4 +530,18 @@ async def unmute(
         deactivated=deactivated,
     )
     await send_public_action_notice(interaction, success_message)
-    await interaction.followup.send(success_message, ephemeral=True)
+    await interaction.followup.send(
+        build_moderator_action_receipt(
+            locale=locale,
+            server_id=interaction.guild.id,
+            public_message=success_message,
+            action_type="unmute",
+            extra_lines=[
+                (tr(locale, "action.reason_label"), note),
+                (tr(locale, "modlog.removed_role_label"), _localized_bool(locale, removed_role)),
+                (tr(locale, "modlog.closed_actions_label"), deactivated),
+            ],
+        ),
+        ephemeral=True,
+        allowed_mentions=discord.AllowedMentions.none(),
+    )

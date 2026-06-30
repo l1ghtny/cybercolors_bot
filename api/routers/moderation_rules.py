@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.dependencies.current_user import get_optional_current_discord_user_id, resolve_actor_user_id
-from api.dependencies.server_access import require_server_admin_or_owner, require_server_dashboard_access
+from api.dependencies.server_access import require_server_dashboard_access, require_server_permission
 from api.models.moderation_rules import (
     ModerationRuleUsageModel,
     ModerationRuleBulkUpsertResponseModel,
@@ -89,7 +89,7 @@ async def add_server_moderation_rule(
     body: ModerationRuleCreateModel,
     session: AsyncSession = Depends(get_session),
     current_user_id: int | None = Depends(get_optional_current_discord_user_id),
-    _: None = Depends(require_server_admin_or_owner),
+    _: int = Depends(require_server_permission("moderation.rules.manage")),
 ):
     created_by_user_id = resolve_actor_user_id(body.created_by_user_id, current_user_id)
     rule = await create_manual_rule(
@@ -132,7 +132,7 @@ async def import_server_moderation_rules_from_text(
     body: ModerationRuleImportTextModel,
     session: AsyncSession = Depends(get_session),
     current_user_id: int | None = Depends(get_optional_current_discord_user_id),
-    _: None = Depends(require_server_admin_or_owner),
+    _: int = Depends(require_server_permission("moderation.rules.manage")),
 ):
     created_by_user_id = resolve_actor_user_id(body.created_by_user_id, current_user_id)
     parsed = parse_rules_from_text(body.text)
@@ -156,7 +156,7 @@ async def import_server_moderation_rules_from_message(
     body: ModerationRuleImportMessageModel,
     session: AsyncSession = Depends(get_session),
     current_user_id: int | None = Depends(get_optional_current_discord_user_id),
-    _: None = Depends(require_server_admin_or_owner),
+    _: int = Depends(require_server_permission("moderation.rules.manage")),
 ):
     created_by_user_id = resolve_actor_user_id(body.created_by_user_id, current_user_id)
     imported = await import_rules_from_message(
@@ -180,7 +180,7 @@ async def import_server_moderation_rules_from_messages(
     body: ModerationRuleImportMessagesModel,
     session: AsyncSession = Depends(get_session),
     current_user_id: int | None = Depends(get_optional_current_discord_user_id),
-    _: None = Depends(require_server_admin_or_owner),
+    _: int = Depends(require_server_permission("moderation.rules.manage")),
 ):
     created_by_user_id = resolve_actor_user_id(body.created_by_user_id, current_user_id)
     imported = await import_rules_from_messages(
@@ -198,7 +198,7 @@ async def disable_server_moderation_rule(
     server_id: int,
     rule_id: UUID,
     session: AsyncSession = Depends(get_session),
-    _: None = Depends(require_server_admin_or_owner),
+    _: int = Depends(require_server_permission("moderation.rules.manage")),
 ):
     disabled = await deactivate_rule(session=session, server_id=server_id, rule_id=rule_id)
     return to_rule_read_model(disabled)
@@ -209,6 +209,6 @@ async def hard_delete_server_moderation_rule(
     server_id: int,
     rule_id: UUID,
     session: AsyncSession = Depends(get_session),
-    _: None = Depends(require_server_admin_or_owner),
+    _: int = Depends(require_server_permission("moderation.rules.manage")),
 ):
     await delete_rule_permanently(session=session, server_id=server_id, rule_id=rule_id)

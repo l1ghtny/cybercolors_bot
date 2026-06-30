@@ -5,6 +5,7 @@ from fastapi import HTTPException, status
 
 DISCORD_API_BASE_URL = "https://discord.com/api/v10"
 TEXT_CHANNEL_TYPES = {0, 5}
+VOICE_CHANNEL_TYPE = 2
 
 
 def _get_bot_token() -> str:
@@ -120,6 +121,13 @@ async def fetch_guild_roles(server_id: int) -> list[dict]:
     return []
 
 
+async def fetch_current_bot_user() -> dict:
+    payload = await _discord_get("/users/@me")
+    if isinstance(payload, dict):
+        return payload
+    return {}
+
+
 async def fetch_channel(server_id: int, channel_id: int) -> dict | None:
     channels = await fetch_guild_channels(server_id)
     for channel in channels:
@@ -147,6 +155,16 @@ async def fetch_guild_member(server_id: int, user_id: int) -> dict | None:
     return None
 
 
+async def search_guild_members(server_id: int, query: str, limit: int = 10) -> list[dict]:
+    payload = await _discord_get(
+        f"/guilds/{server_id}/members/search",
+        params={"query": query, "limit": max(1, min(limit, 1000))},
+    )
+    if isinstance(payload, list):
+        return payload
+    return []
+
+
 async def fetch_channel_message(channel_id: int, message_id: int) -> dict:
     payload = await _discord_get(f"/channels/{channel_id}/messages/{message_id}")
     if isinstance(payload, dict):
@@ -164,15 +182,47 @@ async def update_guild_role_permissions(server_id: int, role_id: int, permission
     return {}
 
 
-async def create_guild_role(server_id: int, name: str) -> dict:
+async def create_guild_role(
+    server_id: int,
+    name: str,
+    *,
+    permissions: int | str = 0,
+    mentionable: bool = False,
+    hoist: bool = False,
+    color: int | None = None,
+) -> dict:
+    payload: dict = {
+        "name": name,
+        "permissions": str(permissions),
+        "mentionable": mentionable,
+        "hoist": hoist,
+    }
+    if color is not None:
+        payload["color"] = color
     payload = await _discord_post(
         f"/guilds/{server_id}/roles",
-        {
-            "name": name,
-            "permissions": "0",
-            "mentionable": False,
-            "hoist": False,
-        },
+        payload,
+    )
+    if isinstance(payload, dict):
+        return payload
+    return {}
+
+
+async def create_guild_voice_channel(
+    server_id: int,
+    name: str,
+    *,
+    category_id: int | str | None = None,
+) -> dict:
+    payload: dict = {
+        "name": name,
+        "type": VOICE_CHANNEL_TYPE,
+    }
+    if category_id:
+        payload["parent_id"] = str(category_id)
+    payload = await _discord_post(
+        f"/guilds/{server_id}/channels",
+        payload,
     )
     if isinstance(payload, dict):
         return payload
@@ -203,6 +253,31 @@ async def create_user_dm_channel(user_id: int) -> dict:
     payload = await _discord_post(
         "/users/@me/channels",
         {"recipient_id": str(user_id)},
+    )
+    if isinstance(payload, dict):
+        return payload
+    return {}
+
+
+async def edit_channel_message(
+    channel_id: int,
+    message_id: int,
+    *,
+    content: str | None = None,
+    embeds: list[dict] | None = None,
+    components: list[dict] | None = None,
+) -> dict:
+    message_payload: dict = {"allowed_mentions": {"parse": []}}
+    if content is not None:
+        message_payload["content"] = content
+    if embeds is not None:
+        message_payload["embeds"] = embeds
+    if components is not None:
+        message_payload["components"] = components
+
+    payload = await _discord_patch(
+        f"/channels/{channel_id}/messages/{message_id}",
+        message_payload,
     )
     if isinstance(payload, dict):
         return payload

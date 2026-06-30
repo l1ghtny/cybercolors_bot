@@ -57,3 +57,8 @@ class ServerModerationSettingsUpdateModel(BaseModel):
 
 class ServerModerationCreateMuteRoleModel(BaseModel):
     role_name: str = Field(default="Muted", min_length=1, max_length=100)
+
+
+class ServerModerationSettingsTestResultModel(BaseModel):
+    ok: bool
+    error: str | None = None

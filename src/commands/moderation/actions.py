@@ -16,6 +16,7 @@ from src.db.database import get_async_session
 from src.db.models import ActionType, ModerationAction, ServerModerationSettings
 from src.modules.localization.service import get_server_locale, tr
 from src.modules.moderation.bot_services import (
+    build_moderator_action_receipt,
     case_choices,
     build_action_payload,
     fetch_active_rule_models,
@@ -25,6 +26,11 @@ from src.modules.moderation.bot_services import (
     rule_choices,
     rule_label,
     validate_target_for_moderation,
+)
+from src.modules.moderation.durations import (
+    action_duration_choices,
+    duration_unit_choices,
+    resolve_duration_selection,
 )
 from src.modules.moderation.mod_log import build_action_revert_log_message, send_mod_log_message
 from src.modules.moderation.public_notices import send_public_action_notice
@@ -149,7 +155,17 @@ class ActionManageView(discord.ui.View):
             return
         success_message = tr(locale, "action.revert_success", action_type=action.action_type.value, action_id=str(action.id)[:8], reverted=reverted)
         await send_public_action_notice(interaction, success_message)
-        await interaction.followup.send(success_message, ephemeral=True)
+        await interaction.followup.send(
+            build_moderator_action_receipt(
+                locale=locale,
+                server_id=interaction.guild.id,
+                public_message=success_message,
+                action=action,
+                extra_lines=[(tr(locale, "modlog.reverted_label"), reverted)],
+            ),
+            ephemeral=True,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
 
 
 def _action_embed(action, locale: str, server_id: int) -> discord.Embed:
@@ -166,6 +182,8 @@ def _action_embed(action, locale: str, server_id: int) -> discord.Embed:
         embed.add_field(name=tr(locale, "modlog.case_label"), value=action.case_title or action.case_id, inline=False)
     if action.expires_at:
         embed.add_field(name=tr(locale, "modlog.expires_at_label"), value=action.expires_at.isoformat(), inline=True)
+    if getattr(action, "created_at_label", None):
+        embed.add_field(name=tr(locale, "modlog.created_at_label"), value=action.created_at_label, inline=False)
     embed.add_field(name="Active", value=str(action.is_active), inline=True)
     embed.set_footer(text=f"Action ID: {action.id}")
     return embed
@@ -259,20 +277,36 @@ async def kick(
     )
     if result is None:
         return
-    _created, selected_rule_label = result
+    created, selected_rule_label = result
     locale = await get_server_locale(interaction.guild.id)
     success_message = tr(locale, "action.kick_success", mention=user.mention, rule=selected_rule_label)
     await send_public_action_notice(interaction, success_message)
-    await interaction.followup.send(success_message, ephemeral=True)
+    await interaction.followup.send(
+        build_moderator_action_receipt(
+            locale=locale,
+            server_id=interaction.guild.id,
+            public_message=success_message,
+            action=created,
+            rule=selected_rule_label,
+        ),
+        ephemeral=True,
+        allowed_mentions=discord.AllowedMentions.none(),
+    )
 
 
 @app_commands.checks.has_permissions(ban_members=True)
 @app_commands.command(name="ban", description="Ban a user with an optional expiration and log the action.")
+@app_commands.choices(
+    duration=action_duration_choices(include_permanent=True),
+    duration_unit=duration_unit_choices(),
+)
 async def ban(
     interaction: discord.Interaction,
     user: discord.Member,
     rule: str,
-    duration_minutes: app_commands.Range[int, 1, 43200] | None = None,
+    duration: app_commands.Choice[str] | None = None,
+    duration_value: app_commands.Range[int, 1, 999] | None = None,
+    duration_unit: app_commands.Choice[str] | None = None,
     commentary: str | None = None,
     case: str | None = None,
 ):
@@ -280,9 +314,22 @@ async def ban(
         await interaction.response.send_message(tr(None, "common.server_only"), ephemeral=True)
         return
     await interaction.response.defer(ephemeral=True)
+    try:
+        duration_selection = resolve_duration_selection(
+            preset=duration,
+            custom_value=duration_value,
+            custom_unit=duration_unit,
+            default_minutes=None,
+            allow_default=False,
+            allow_permanent=True,
+        )
+    except ValueError as error:
+        await interaction.followup.send(str(error), ephemeral=True)
+        return
+
     expires_at = None
-    if duration_minutes is not None:
-        expires_at = datetime.now(timezone.utc) + timedelta(minutes=duration_minutes)
+    if duration_selection.minutes is not None:
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=duration_selection.minutes)
     result = await _create_member_action(
         interaction=interaction,
         user=user,
@@ -294,12 +341,26 @@ async def ban(
     )
     if result is None:
         return
-    _created, selected_rule_label = result
+    created, selected_rule_label = result
     locale = await get_server_locale(interaction.guild.id)
-    duration = tr(locale, "action.ban_duration_suffix", duration=duration_minutes) if duration_minutes else ""
+    duration = (
+        tr(locale, "action.ban_duration_suffix", duration=duration_selection.label)
+        if duration_selection.minutes is not None
+        else ""
+    )
     success_message = tr(locale, "action.ban_success", mention=user.mention, rule=selected_rule_label, duration=duration)
     await send_public_action_notice(interaction, success_message)
-    await interaction.followup.send(success_message, ephemeral=True)
+    await interaction.followup.send(
+        build_moderator_action_receipt(
+            locale=locale,
+            server_id=interaction.guild.id,
+            public_message=success_message,
+            action=created,
+            rule=selected_rule_label,
+        ),
+        ephemeral=True,
+        allowed_mentions=discord.AllowedMentions.none(),
+    )
 
 
 @app_commands.checks.has_permissions(ban_members=True)
@@ -321,7 +382,20 @@ async def unban(interaction: discord.Interaction, user: discord.User, reason: st
         await session.commit()
     success_message = tr(locale, "action.unban_success", mention=user.mention, deactivated=deactivated)
     await send_public_action_notice(interaction, success_message)
-    await interaction.followup.send(success_message, ephemeral=True)
+    await interaction.followup.send(
+        build_moderator_action_receipt(
+            locale=locale,
+            server_id=interaction.guild.id,
+            public_message=success_message,
+            action_type="unban",
+            extra_lines=[
+                (tr(locale, "action.reason_label"), note),
+                (tr(locale, "modlog.closed_actions_label"), deactivated),
+            ],
+        ),
+        ephemeral=True,
+        allowed_mentions=discord.AllowedMentions.none(),
+    )
 
 
 @kick.autocomplete("rule")
@@ -381,6 +455,11 @@ async def actions_list(
             [
                 f"{tr(locale, 'modlog.target_label')}: <@{action.target_user_id}>",
                 f"{tr(locale, 'modlog.reason_label')}: {action.reason[:220]}",
+                *(
+                    [f"{tr(locale, 'modlog.created_at_label')}: {action.created_at_label}"]
+                    if getattr(action, "created_at_label", None)
+                    else []
+                ),
                 f"{tr(locale, 'modlog.action_id_label')}: [`{action.id[:8]}`]({_dashboard_action_url(interaction.guild.id, action.id)})",
                 f"Active: `{action.is_active}`",
             ]
@@ -440,4 +519,17 @@ async def action_revert(interaction: discord.Interaction, action_id: str, reason
         return
     success_message = tr(locale, "action.revert_success", action_type=action.action_type.value, action_id=str(action.id)[:8], reverted=reverted)
     await send_public_action_notice(interaction, success_message)
-    await interaction.followup.send(success_message, ephemeral=True)
+    await interaction.followup.send(
+        build_moderator_action_receipt(
+            locale=locale,
+            server_id=interaction.guild.id,
+            public_message=success_message,
+            action=action,
+            extra_lines=[
+                (tr(locale, "action.reason_label"), reason.strip() if reason else None),
+                (tr(locale, "modlog.reverted_label"), reverted),
+            ],
+        ),
+        ephemeral=True,
+        allowed_mentions=discord.AllowedMentions.none(),
+    )

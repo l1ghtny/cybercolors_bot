@@ -49,6 +49,9 @@ def to_server_ai_settings_read_model(settings: ServerAISettings) -> ServerAISett
         moderation_strictness=settings.moderation_strictness,
         moderation_action_mode=settings.moderation_action_mode,
         log_ai_decisions=settings.log_ai_decisions,
+        moderation_kill_switch_enabled=settings.moderation_kill_switch_enabled,
+        moderation_daily_token_limit=settings.moderation_daily_token_limit,
+        moderation_provider_timeout_seconds=settings.moderation_provider_timeout_seconds,
         updated_at=settings.updated_at,
     )
 
@@ -83,6 +86,12 @@ async def update_server_ai_settings(
         settings.moderation_action_mode = body.moderation_action_mode
     if body.log_ai_decisions is not None:
         settings.log_ai_decisions = body.log_ai_decisions
+    if body.moderation_kill_switch_enabled is not None:
+        settings.moderation_kill_switch_enabled = body.moderation_kill_switch_enabled
+    if "moderation_daily_token_limit" in body.model_fields_set:
+        settings.moderation_daily_token_limit = body.moderation_daily_token_limit
+    if body.moderation_provider_timeout_seconds is not None:
+        settings.moderation_provider_timeout_seconds = body.moderation_provider_timeout_seconds
 
     _validate_selected_mode(
         settings.answer_channel_mode,

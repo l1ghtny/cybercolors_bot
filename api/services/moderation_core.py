@@ -20,6 +20,7 @@ from api.models.moderation_cases import (
     ModerationCaseUserReadModel,
 )
 from api.models.user_profiles import NicknameRecordModel
+from api.services.moderation_import_metadata import action_import_metadata
 from src.db.models import (
     CaseStatus,
     DeletedMessage,
@@ -30,6 +31,7 @@ from src.db.models import (
     ModerationCaseRuleCitation,
     ModerationCaseUser,
     ModerationActionRuleCitation,
+    ModerationImportSourceItem,
     PastNickname,
     Server,
     User,
@@ -418,6 +420,7 @@ def to_moderation_history(result: Sequence[ModerationAction]) -> list[Moderation
     for action in result:
         rule_refs = _rule_refs_from_action(action)
         primary_rule = rule_refs[0] if rule_refs else None
+        import_metadata = action_import_metadata(action)
         payload.append(
             ModerationActionRead(
                 id=str(action.id),
@@ -444,6 +447,11 @@ def to_moderation_history(result: Sequence[ModerationAction]) -> list[Moderation
                 case_title=action.case.title if action.case is not None else None,
                 commentary=action.commentary,
                 created_at=action.created_at,
+                created_at_label=import_metadata["created_at_label"],
+                import_source=import_metadata["import_source"],
+                import_source_label=import_metadata["import_source_label"],
+                source_created_at_known=import_metadata["source_created_at_known"],
+                source_created_at_note=import_metadata["source_created_at_note"],
                 expires_at=action.expires_at,
                 is_active=action.is_active,
             )

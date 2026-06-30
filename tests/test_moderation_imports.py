@@ -2,6 +2,7 @@ import asyncio
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from sqlalchemy.orm import selectinload
 from sqlmodel import select
 
 from api.services.moderation_imports_discord import import_discord_baseline
@@ -10,6 +11,8 @@ from api.services.moderation_imports_service import (
     create_import_run,
     import_moderation_action,
 )
+from api.services.moderation_core import to_moderation_history
+from api.services.moderation_import_metadata import JUNIPER_UNKNOWN_DATE_NOTE_RU
 from src.db.database import engine, get_async_session
 from src.db.models import (
     ActionType,
@@ -89,6 +92,65 @@ async def _quiet_import_idempotency_scenario() -> None:
         ).all()
         assert len(action_rows) == 1
         assert len(source_rows) == 1
+        await session.rollback()
+
+
+async def _juniper_unknown_date_metadata_scenario() -> None:
+    server_id = _make_discord_id()
+    target_id = _make_discord_id()
+
+    async with get_async_session() as session:
+        session.add(Server(server_id=server_id, server_name="juniper-import-server", bot_active=True))
+        session.add(GlobalUser(discord_id=target_id, username="target"))
+        await session.flush()
+
+        run = await create_import_run(
+            session,
+            server_id=server_id,
+            source=ModerationImportSource.JUNIPER,
+            dry_run=False,
+        )
+        result = await import_moderation_action(
+            session,
+            run,
+            ImportedModerationActionPayload(
+                source=ModerationImportSource.JUNIPER,
+                source_item_type="juniper_warns_xlsx",
+                source_item_id="Лист1:2",
+                server_id=server_id,
+                action_type=ActionType.WARN,
+                target_user_id=target_id,
+                target_username="target",
+                reason="правило 3️⃣",
+                rule_codes=("3",),
+                commentary=JUNIPER_UNKNOWN_DATE_NOTE_RU,
+                created_at=None,
+                is_active=True,
+                raw_payload={"row_number": 2},
+            ),
+        )
+
+        assert result.action is not None
+        action = (
+            await session.exec(
+                select(ModerationAction)
+                .where(ModerationAction.id == result.action.id)
+                .options(
+                    selectinload(ModerationAction.global_user_target),
+                    selectinload(ModerationAction.global_user_moderator),
+                    selectinload(ModerationAction.import_source_items),
+                    selectinload(ModerationAction.rule_citations),
+                    selectinload(ModerationAction.rule),
+                )
+            )
+        ).one()
+
+        payload = to_moderation_history([action])[0]
+        assert payload.import_source == "juniper"
+        assert payload.import_source_label == "Juniper"
+        assert payload.source_created_at_known is False
+        assert payload.created_at_label == JUNIPER_UNKNOWN_DATE_NOTE_RU
+        assert payload.source_created_at_note == JUNIPER_UNKNOWN_DATE_NOTE_RU
         await session.rollback()
 
 
@@ -194,6 +256,11 @@ async def _discord_baseline_scenario(monkeypatch) -> None:
 
 def test_import_moderation_action_is_idempotent_and_quiet():
     asyncio.run(_quiet_import_idempotency_scenario())
+    asyncio.run(engine.dispose())
+
+
+def test_juniper_import_without_source_date_returns_display_metadata():
+    asyncio.run(_juniper_unknown_date_metadata_scenario())
     asyncio.run(engine.dispose())
 
 

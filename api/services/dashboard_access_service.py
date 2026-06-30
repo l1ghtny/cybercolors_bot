@@ -379,6 +379,43 @@ def _guild_admin_or_owner(guild_payload: dict) -> bool:
     return is_owner or is_admin
 
 
+def _guild_access_flags(guild_payload: dict) -> tuple[bool, bool]:
+    is_owner = bool(guild_payload.get("owner"))
+    permissions = int(guild_payload.get("permissions", 0))
+    administrator_flag = 1 << 3
+    is_admin = bool(permissions & administrator_flag)
+    return is_owner, is_admin
+
+
+async def get_current_user_guild_access_flags(
+    server_id: int,
+    access_token: str,
+) -> tuple[bool, bool]:
+    guild_payload = await _get_user_guild_payload(access_token=access_token, server_id=server_id)
+    return _guild_access_flags(guild_payload)
+
+
+async def get_dashboard_member_role_ids(server_id: int, user_id: int) -> set[int]:
+    user_role_ids = _get_cached_member_role_ids(server_id=server_id, user_id=user_id)
+    if user_role_ids is not None:
+        return user_role_ids
+
+    member_roles_lock = await _get_member_roles_lock(server_id=server_id, user_id=user_id)
+    async with member_roles_lock:
+        user_role_ids = _get_cached_member_role_ids(server_id=server_id, user_id=user_id)
+        if user_role_ids is not None:
+            return user_role_ids
+
+        member_payload = await fetch_guild_member(server_id=server_id, user_id=user_id)
+        if not member_payload:
+            return set()
+        user_role_ids = {
+            int(role_id) for role_id in member_payload.get("roles", []) if str(role_id).isdigit()
+        }
+        _store_cached_member_role_ids(server_id=server_id, user_id=user_id, role_ids=user_role_ids)
+        return user_role_ids
+
+
 async def assert_server_admin_or_owner(
     server_id: int,
     access_token: str,
@@ -421,19 +458,9 @@ async def assert_dashboard_access(
     if not allowed_role_ids:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No dashboard access to this server")
 
-    user_role_ids = _get_cached_member_role_ids(server_id=server_id, user_id=caller_user_id)
-    if user_role_ids is None:
-        member_roles_lock = await _get_member_roles_lock(server_id=server_id, user_id=caller_user_id)
-        async with member_roles_lock:
-            user_role_ids = _get_cached_member_role_ids(server_id=server_id, user_id=caller_user_id)
-            if user_role_ids is None:
-                member_payload = await fetch_guild_member(server_id=server_id, user_id=caller_user_id)
-                if not member_payload:
-                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No dashboard access to this server")
-                user_role_ids = {
-                    int(role_id) for role_id in member_payload.get("roles", []) if str(role_id).isdigit()
-                }
-                _store_cached_member_role_ids(server_id=server_id, user_id=caller_user_id, role_ids=user_role_ids)
+    user_role_ids = await get_dashboard_member_role_ids(server_id=server_id, user_id=caller_user_id)
+    if not user_role_ids:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No dashboard access to this server")
 
     if not user_role_ids.intersection(allowed_role_ids):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No dashboard access to this server")

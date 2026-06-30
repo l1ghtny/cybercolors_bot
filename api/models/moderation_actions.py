@@ -47,6 +47,11 @@ class ModerationActionRead(BaseModel):
     case_title: str | None = None
     commentary: str | None = None
     created_at: datetime
+    created_at_label: str | None = None
+    import_source: str | None = None
+    import_source_label: str | None = None
+    source_created_at_known: bool = True
+    source_created_at_note: str | None = None
     expires_at: datetime | None = None
     is_active: bool
 
@@ -63,6 +68,11 @@ class ModerationActionSummaryModel(BaseModel):
     case_id: str | None = None
     case_title: str | None = None
     created_at: datetime
+    created_at_label: str | None = None
+    import_source: str | None = None
+    import_source_label: str | None = None
+    source_created_at_known: bool = True
+    source_created_at_note: str | None = None
     expires_at: datetime | None = None
     is_active: bool
     rules_count: int = 0

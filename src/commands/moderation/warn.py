@@ -6,6 +6,7 @@ from src.db.models import ActionType
 from src.modules.localization.service import get_server_locale, tr
 from src.modules.moderation.public_notices import send_public_action_notice
 from src.modules.moderation.bot_services import (
+    build_moderator_action_receipt,
     case_choices,
     create_bot_moderation_action,
     fetch_active_rule_models,
@@ -74,7 +75,7 @@ async def warn(
                 selected_rule_label=selected_rule_label,
                 commentary=commentary_text,
             )
-            await create_bot_moderation_action(
+            created_action = await create_bot_moderation_action(
                 session=session,
                 interaction=interaction,
                 user=user,
@@ -99,7 +100,17 @@ async def warn(
 
     success_message = tr(locale, "warn.success", mention=user.mention, rule=selected_rule_label)
     await send_public_action_notice(interaction, success_message)
-    await interaction.followup.send(success_message, ephemeral=True)
+    await interaction.followup.send(
+        build_moderator_action_receipt(
+            locale=locale,
+            server_id=interaction.guild.id,
+            public_message=success_message,
+            action=created_action,
+            rule=selected_rule_label,
+        ),
+        ephemeral=True,
+        allowed_mentions=discord.AllowedMentions.none(),
+    )
 
 
 @warn.autocomplete("rule")

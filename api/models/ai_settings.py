@@ -28,6 +28,10 @@ def _normalize_discord_ids(value: list[str] | None, field_name: str) -> list[str
     return normalized
 
 
+class ServerAISettingsPermissionsModel(BaseModel):
+    can_edit: bool = False
+
+
 class ServerAISettingsReadModel(BaseModel):
     server_id: str
     answer_channel_mode: AIChannelMode
@@ -41,7 +45,11 @@ class ServerAISettingsReadModel(BaseModel):
     moderation_strictness: AIModerationStrictness
     moderation_action_mode: AIModerationActionMode
     log_ai_decisions: bool
+    moderation_kill_switch_enabled: bool
+    moderation_daily_token_limit: int | None = Field(default=None, ge=1)
+    moderation_provider_timeout_seconds: int = Field(default=20, ge=1, le=120)
     updated_at: datetime
+    permissions: ServerAISettingsPermissionsModel = Field(default_factory=ServerAISettingsPermissionsModel)
 
 
 class ServerAISettingsUpdateModel(BaseModel):
@@ -56,6 +64,9 @@ class ServerAISettingsUpdateModel(BaseModel):
     moderation_strictness: AIModerationStrictness | None = None
     moderation_action_mode: AIModerationActionMode | None = None
     log_ai_decisions: bool | None = None
+    moderation_kill_switch_enabled: bool | None = None
+    moderation_daily_token_limit: int | None = Field(default=None, ge=1)
+    moderation_provider_timeout_seconds: int | None = Field(default=None, ge=1, le=120)
 
     @field_validator("answer_allowed_channel_ids")
     @classmethod
@@ -79,3 +90,28 @@ class ServerAISettingsUpdateModel(BaseModel):
         if self.moderation_channel_mode == "selected" and self.moderation_included_channel_ids == []:
             raise ValueError("moderation_included_channel_ids cannot be empty when moderation_channel_mode is selected")
         return self
+
+
+class AIChannelPermissionHealthModel(BaseModel):
+    channel_id: str | None = None
+    channel_name: str | None = None
+    purpose: Literal["moderation", "mod_log"]
+    configured: bool = True
+    exists: bool = False
+    ok: bool = False
+    can_view_channel: bool = False
+    can_read_message_history: bool = False
+    can_send_messages: bool | None = None
+    can_embed_links: bool | None = None
+    reason: str | None = None
+
+
+class ServerAISettingsHealthModel(BaseModel):
+    server_id: str
+    ok: bool
+    checked_at: datetime
+    moderation_enabled: bool
+    moderation_channel_mode: AIChannelMode
+    moderation_channels: list[AIChannelPermissionHealthModel] = Field(default_factory=list)
+    mod_log_channel: AIChannelPermissionHealthModel
+    warnings: list[str] = Field(default_factory=list)

@@ -22,6 +22,7 @@ from src.db.models import (
 )
 from src.modules.moderation.bot_services import (
     build_action_payload,
+    build_moderator_action_receipt,
     create_bot_moderation_action,
     fetch_active_rule_models,
     find_rule,
@@ -90,6 +91,46 @@ def test_build_action_payload_uses_rule_id_without_bot_api_url(monkeypatch):
     assert payload.target_user_joined_at.tzinfo is None
 
 
+def test_build_moderator_action_receipt_has_private_details(monkeypatch):
+    monkeypatch.setenv("DASHBOARD_BASE_URL", "https://dash.example/")
+    action_id = uuid4()
+    case_id = uuid4()
+    expires_at = datetime(2026, 1, 2, 3, 4, 5)
+    action = SimpleNamespace(
+        id=action_id,
+        action_type=ActionType.MUTE,
+        case_id=case_id,
+        commentary="internal moderator note",
+        expires_at=expires_at,
+    )
+
+    receipt = build_moderator_action_receipt(
+        locale="en",
+        server_id=123,
+        public_message="<@456> muted for `60` minutes by rule `1 No spam`.",
+        action=action,
+        rule="1 No spam",
+    )
+
+    assert "**Moderator receipt**" in receipt
+    assert "Public notice: <@456> muted" in receipt
+    assert f"https://dash.example/dashboard/123/moderation/actions/{action_id}" in receipt
+    assert f"https://dash.example/dashboard/123/moderation/cases/{case_id}" in receipt
+    assert "Rule: `1 No spam`" in receipt
+    assert "Commentary: internal moderator note" in receipt
+    assert "Expires At: `2026-01-02T03:04:05`" in receipt
+
+    localized = build_moderator_action_receipt(
+        locale="ru",
+        server_id=123,
+        public_message="public",
+        action=action,
+        rule="1 No spam",
+    )
+    assert tr("ru", "action.private_receipt_title") in localized
+    assert tr("ru", "action.public_notice_label") in localized
+
+
 def test_build_action_log_message_links_dashboard_and_uses_rule_label(monkeypatch):
     monkeypatch.setenv("DASHBOARD_BASE_URL", "https://dash.example/")
     action_id = uuid4()
@@ -130,7 +171,7 @@ def test_build_action_log_message_links_dashboard_and_uses_rule_label(monkeypatc
     assert "**Reason:** rule breach" in message
     assert message.count("**Commentary:** context note") == 1
     assert "Commentary: context note" not in message.replace("**Commentary:** context note", "")
-    assert "**Rule:** `1 No insults`" in message
+    assert "**Rule:** `Rule 1\ufe0f\u20e3: No insults`" in message
     assert "Rule ID" not in message
     assert str(rule_id) not in message
     assert "**Case:** [Case Alpha]" in message
@@ -177,7 +218,7 @@ def test_build_action_log_message_links_dashboard_and_uses_rule_label(monkeypatc
         target_username="target",
     )
     assert "**Reason:**" not in duplicate_message
-    assert "**Rule:** `1 No insults`" in duplicate_message
+    assert "**Rule:** `Rule 1\ufe0f\u20e3: No insults`" in duplicate_message
     assert "**Commentary:** context note" in duplicate_message
 
     duplicate_embed = _build_action_log_embed(

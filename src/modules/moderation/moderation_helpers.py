@@ -14,6 +14,7 @@ from src.db.models import (
     GlobalUser,
     MessageLog,
     Server,
+    TempVoiceLog,
     User,
 )
 
@@ -181,10 +182,20 @@ async def check_if_server_exists(server: d.Guild, session: AsyncSession):
 
 async def log_message(message: d.Message, session: AsyncSession):
     """Logs a message to the message_log table for later retrieval (e.g., if deleted)."""
+    temp_log = (
+        await session.exec(
+            select(TempVoiceLog).where(
+                TempVoiceLog.server_id == message.guild.id,
+                TempVoiceLog.channel_id == message.channel.id,
+                TempVoiceLog.deleted_at.is_(None),
+            )
+        )
+    ).first()
     insert_stmt = (
         pg_insert(MessageLog)
         .values(
             message_id=message.id,
+            log_id=temp_log.id if temp_log else None,
             user_id=message.author.id,
             channel_id=message.channel.id,
             content=message.content,

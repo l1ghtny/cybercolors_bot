@@ -10,16 +10,19 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.services.moderation_core import get_or_create_server_record, naive_utcnow
+from api.services.moderation_import_metadata import unknown_source_date_note
 from src.db.models import (
     ActionType,
     GlobalUser,
     ModerationAction,
+    ModerationActionRuleCitation,
     ModerationImportConfidence,
     ModerationImportItemStatus,
     ModerationImportRun,
     ModerationImportRunStatus,
     ModerationImportSource,
     ModerationImportSourceItem,
+    ModerationRule,
 )
 
 IMPORT_SYSTEM_USER_ID = 0
@@ -38,6 +41,7 @@ class ImportedModerationActionPayload:
     moderator_user_id: int | None = None
     moderator_username: str | None = None
     reason: str | None = None
+    rule_codes: tuple[str, ...] = ()
     commentary: str | None = None
     created_at: datetime | None = None
     expires_at: datetime | None = None
@@ -88,6 +92,56 @@ async def _ensure_global_user(session: AsyncSession, user_id: int, username: str
 
 async def _ensure_import_system_user(session: AsyncSession) -> GlobalUser:
     return await _ensure_global_user(session, IMPORT_SYSTEM_USER_ID, IMPORT_SYSTEM_USERNAME)
+
+
+async def _resolve_rules_by_code(
+    session: AsyncSession,
+    *,
+    server_id: int,
+    rule_codes: tuple[str, ...],
+) -> list[ModerationRule]:
+    normalized_codes = []
+    seen = set()
+    for code in rule_codes:
+        normalized = str(code).strip()
+        if not normalized or normalized in seen:
+            continue
+        normalized_codes.append(normalized)
+        seen.add(normalized)
+    if not normalized_codes:
+        return []
+    rows = (
+        await session.exec(
+            select(ModerationRule).where(
+                ModerationRule.server_id == server_id,
+                ModerationRule.code.in_(normalized_codes),
+                ModerationRule.is_active == True,
+            )
+        )
+    ).all()
+    by_code = {str(rule.code): rule for rule in rows if rule.code is not None}
+    return [by_code[code] for code in normalized_codes if code in by_code]
+
+
+async def _add_action_rule_citations(
+    session: AsyncSession,
+    *,
+    action: ModerationAction,
+    rules: list[ModerationRule],
+) -> None:
+    for rule in rules:
+        session.add(
+            ModerationActionRuleCitation(
+                action_id=action.id,
+                rule_id=rule.id,
+                server_id=action.server_id,
+                rule_code_snapshot=rule.code,
+                rule_title_snapshot=rule.title,
+                cited_at=action.created_at,
+            )
+        )
+    if rules:
+        await session.flush()
 
 
 async def create_import_run(
@@ -229,8 +283,11 @@ async def import_moderation_action(
         "target_user_id": str(payload.target_user_id),
         "moderator_user_id": str(payload.moderator_user_id or IMPORT_SYSTEM_USER_ID),
         "reason": payload.reason,
+        "rule_codes": list(payload.rule_codes),
         "commentary": payload.commentary,
         "created_at": payload.created_at,
+        "source_created_at_known": payload.created_at is not None,
+        "source_created_at_note": None if payload.created_at is not None else unknown_source_date_note(),
         "expires_at": payload.expires_at,
         "is_active": payload.is_active,
     }
@@ -245,6 +302,11 @@ async def import_moderation_action(
         await _ensure_import_system_user(session)
     else:
         await _ensure_global_user(session, moderator_user_id, payload.moderator_username)
+    resolved_rules = await _resolve_rules_by_code(
+        session,
+        server_id=payload.server_id,
+        rule_codes=payload.rule_codes,
+    )
 
     item = ModerationImportSourceItem(
         import_run_id=run.id,
@@ -266,6 +328,7 @@ async def import_moderation_action(
         server_id=payload.server_id,
         target_user_id=payload.target_user_id,
         moderator_user_id=moderator_user_id,
+        rule_id=resolved_rules[0].id if resolved_rules else None,
         reason=(payload.reason or f"Imported {payload.action_type.value} from {payload.source.value}").strip(),
         commentary=payload.commentary,
         created_at=payload.created_at or naive_utcnow(),
@@ -274,6 +337,7 @@ async def import_moderation_action(
     )
     session.add(action)
     await session.flush()
+    await _add_action_rule_citations(session=session, action=action, rules=resolved_rules)
 
     item.status = ModerationImportItemStatus.IMPORTED.value
     item.moderation_action_id = action.id

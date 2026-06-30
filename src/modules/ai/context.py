@@ -189,4 +189,4 @@ def context_to_prompt_block(context: AIContext) -> str:
         "server_notes": context.server_notes,
         "admin_notes": context.admin_notes,
     }
-    return json.dumps(payload, ensure_ascii=True, default=str, indent=2)
+    return json.dumps(payload, ensure_ascii=False, default=str, indent=2)

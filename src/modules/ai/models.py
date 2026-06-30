@@ -4,6 +4,7 @@ from typing import Any, Literal
 
 AITask = Literal["moderation", "assistant"]
 AIMessageRole = Literal["system", "user", "assistant", "tool"]
+AIImageSource = Literal["attachment", "custom_emoji"]
 ModerationSeverity = Literal["none", "low", "medium", "high"]
 ModerationAction = Literal["none", "watch", "warn", "mute", "kick", "ban", "manual_review"]
 
@@ -12,10 +13,41 @@ DEFAULT_AI_MODEL = "gpt-5.4-nano"
 
 
 @dataclass(slots=True)
+class AIImageInput:
+    url: str
+    source: AIImageSource
+    label: str | None = None
+    content_type: str | None = None
+    size: int | None = None
+    detail: Literal["low", "high", "auto"] = "low"
+
+
+@dataclass(slots=True)
 class AIMessage:
     role: AIMessageRole
     content: str
     name: str | None = None
+    images: list[AIImageInput] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class AIToolSpec:
+    name: str
+    description: str
+    parameters: dict[str, Any]
+
+
+@dataclass(slots=True)
+class AIToolCall:
+    id: str
+    name: str
+    arguments: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class AIToolResult:
+    call_id: str
+    output: dict[str, Any] | list[dict[str, Any]] | str
 
 
 @dataclass(slots=True)
@@ -27,6 +59,10 @@ class AIRequest:
     temperature: float | None = None
     max_output_tokens: int | None = 1024
     metadata: dict[str, Any] = field(default_factory=dict)
+    tools: list[AIToolSpec] = field(default_factory=list)
+    tool_results: list[AIToolResult] = field(default_factory=list)
+    max_tool_calls: int | None = None
+    previous_response_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -35,7 +71,10 @@ class AIResponse:
     model: str
     provider: str
     total_tokens: int = 0
+    tool_call_count: int = 0
     raw: Any | None = None
+    tool_calls: list[AIToolCall] = field(default_factory=list)
+    id: str | None = None
 
 
 @dataclass(slots=True)
@@ -57,6 +96,13 @@ class MessageModerationInput:
     channel_id: int | None = None
     message_id: int | None = None
     author_display_name: str | None = None
+    author_is_bot: bool = False
+    server_locale: str | None = None
+    bot_user_id: int | None = None
+    mentioned_users: list[dict[str, Any]] = field(default_factory=list)
+    current_bot_mentioned: bool = False
+    answer_flow_invocation: bool = False
+    images: list[AIImageInput] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -66,6 +112,8 @@ class AssistantInput:
     author_user_id: int | None = None
     channel_id: int | None = None
     conversation: list[AIMessage] = field(default_factory=list)
+    images: list[AIImageInput] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

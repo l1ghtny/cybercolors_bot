@@ -1,5 +1,8 @@
 import os
 
+from api.services.ai_settings import can_invoke_answer_flow
+from src.db.database import get_async_session
+from src.db.models import ServerAISettings
 from src.modules.chat_bot.create_response import create_one_response, create_response_to_dialog
 from src.misc_files.check_if_message_has_reply import check_replies
 
@@ -15,8 +18,8 @@ async def decide_on_response(message, client):
         else:
             if verify_user(messages_raw, message, client):
                 messages_processed = await organise_messages(messages_raw, client)
-                messages_processed.append({'role': 'user', 'content': message.content})
-                bot_response, token_total = await create_response_to_dialog(messages_processed)
+                messages_processed.append({'role': 'user', 'content': await remove_bot_mention(message, client)})
+                bot_response, token_total = await create_response_to_dialog(messages_processed, message=message)
             else:
                 bot_response = 'В цепочке ответов более одного пользователя. Я могу поддерживать диалог только с одним пользователем, извини'
                 token_total = 0
@@ -33,16 +36,29 @@ async def check_bot_mention(message_to_check, client):
 
 
 async def check_for_channel(message_to_check_for_channel, client):
-    # TODO: move the settings about the channel to the database
-    bot_channel_id = int(os.getenv('chat_gpt_channel_id'))
-    bot_den_channel_id = int(os.getenv('new_channel_chat_gpt_id'))
-    bot_channel = client.get_channel(bot_channel_id)
-    bot_den_channel = client.get_channel(bot_den_channel_id)
-    if bot_channel == message_to_check_for_channel.channel or bot_den_channel == message_to_check_for_channel.channel:
-        allowed_channel = True
-    else:
-        allowed_channel = False
-    return allowed_channel, bot_channel
+    guild = getattr(message_to_check_for_channel, "guild", None)
+    channel = getattr(message_to_check_for_channel, "channel", None)
+    author = getattr(message_to_check_for_channel, "author", None)
+    if guild is not None and channel is not None:
+        async with get_async_session() as session:
+            settings = await session.get(ServerAISettings, guild.id)
+            if settings is not None:
+                role_ids = [role.id for role in getattr(author, "roles", [])]
+                return (
+                    can_invoke_answer_flow(settings, channel_id=channel.id, role_ids=role_ids),
+                    channel,
+                )
+
+    legacy_channel_ids = []
+    for env_name in ("chat_gpt_channel_id", "new_channel_chat_gpt_id"):
+        raw_channel_id = os.getenv(env_name)
+        if raw_channel_id and raw_channel_id.isdigit():
+            legacy_channel_ids.append(int(raw_channel_id))
+
+    if not legacy_channel_ids or channel is None:
+        return False, None
+
+    return channel.id in set(legacy_channel_ids), channel
 
 
 async def remove_bot_mention(message_to_remove_mention, client):

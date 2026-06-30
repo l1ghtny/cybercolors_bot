@@ -18,6 +18,7 @@ class ServerOverviewStatsModel(BaseModel):
     birthdays_count: int = 0
     messages_today: int = 0
     active_users_today: int = 0
+    ai_pending_suggestions: int = 0
     last_message_at: datetime | None = None
 
 
@@ -27,6 +28,8 @@ class ServerOverviewSetupModel(BaseModel):
     birthday_channel_configured: bool = False
     birthday_role_configured: bool = False
     verified_role_configured: bool = False
+    newcomer_role_configured: bool = False
+    newcomer_restriction_enabled: bool = False
     lockdown_enabled: bool = False
     locale_code: str = "en"
 

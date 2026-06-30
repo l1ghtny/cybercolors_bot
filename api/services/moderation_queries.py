@@ -10,6 +10,7 @@ from src.db.models import (
     ModerationAction,
     ModerationActionDeletedMessageLink,
     ModerationActionRuleCitation,
+    ModerationImportSourceItem,
 )
 
 
@@ -64,6 +65,7 @@ async def query_moderation_actions(
         selectinload(ModerationAction.rule),
         selectinload(ModerationAction.case),
         selectinload(ModerationAction.rule_citations).selectinload(ModerationActionRuleCitation.rule),
+        selectinload(ModerationAction.import_source_items),
     ).order_by(ModerationAction.created_at.desc())
     if limit is not None:
         statement = statement.limit(limit)

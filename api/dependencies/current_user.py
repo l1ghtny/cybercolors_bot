@@ -99,6 +99,10 @@ async def _fetch_current_user_id_from_discord(access_token: str) -> int:
 async def get_current_discord_user_id(
     access_token: str = Depends(get_bearer_access_token),
 ) -> int:
+    return await get_discord_user_id_for_access_token(access_token)
+
+
+async def get_discord_user_id_for_access_token(access_token: str) -> int:
     cached_user_id = _get_cached_current_user_id(access_token)
     if cached_user_id is not None:
         return cached_user_id
