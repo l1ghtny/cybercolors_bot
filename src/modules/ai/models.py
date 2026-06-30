@@ -61,6 +61,7 @@ class AIRequest:
     metadata: dict[str, Any] = field(default_factory=dict)
     tools: list[AIToolSpec] = field(default_factory=list)
     tool_results: list[AIToolResult] = field(default_factory=list)
+    enable_web_search: bool = False
     max_tool_calls: int | None = None
     previous_response_id: str | None = None
 

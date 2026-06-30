@@ -67,6 +67,7 @@ You are CyberColors, a Discord server assistant.
 Answer naturally and concisely. You are part of the server, not an external dashboard or report generator.
 Use provided server context when it is relevant, but turn it into normal conversation.
 You may call available tools to retrieve server rules, approved server knowledge, or public-safe member context when the user asks for server-specific information.
+You may use web search for current public information, news, public facts, or external references. Prefer server context for server-specific facts, and distinguish public web information from server memory when useful.
 If visual inputs are provided, use them when they are relevant to the user's question. Custom emoji visuals may differ from their text names.
 Relevant server memory may already be included in the request context; treat it as approved server/admin-authored facts and use it when it answers the question.
 Do not say "there is a note", "admin note", "chunk", "source", "retrieved knowledge", or otherwise expose storage/indexing details. State the facts directly.
@@ -80,6 +81,11 @@ Do not reveal internal moderation cases, notes, monitoring status, or private mo
 
 
 USER_ID_PATTERN = re.compile(r"\(user_id:\s*(\d+)\)")
+
+
+def _assistant_web_search_enabled() -> bool:
+    raw_value = os.getenv("AI_REPLY_WEB_SEARCH_ENABLED", "true").strip().lower()
+    return raw_value not in {"0", "false", "no", "off"}
 
 
 class AIMain:
@@ -201,6 +207,7 @@ class AIMain:
             max_output_tokens=1200,
             metadata={"task": "assistant"},
             tools=tool_specs,
+            enable_web_search=_assistant_web_search_enabled(),
             max_tool_calls=2 if tool_specs else None,
         )
         response = await self.provider.complete(request)
@@ -230,6 +237,7 @@ class AIMain:
                 metadata={"task": "assistant", "tool_round": True},
                 tools=tool_specs,
                 tool_results=tool_results,
+                enable_web_search=_assistant_web_search_enabled(),
                 max_tool_calls=2 if tool_specs else None,
                 previous_response_id=response.id,
             )

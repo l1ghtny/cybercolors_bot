@@ -58,3 +58,43 @@ def test_openai_provider_formats_multimodal_message_content():
             "detail": "low",
         },
     ]
+
+
+def test_openai_provider_adds_web_search_tool_when_enabled():
+    client = FakeClient()
+    provider = OpenAIProvider(client=client)
+
+    asyncio.run(
+        provider.complete(
+            AIRequest(
+                task="assistant",
+                model="test-model",
+                system_prompt="Answer.",
+                messages=[AIMessage(role="user", content="What happened today?")],
+                enable_web_search=True,
+            )
+        )
+    )
+
+    assert client.responses.kwargs is not None
+    assert client.responses.kwargs["tools"] == [{"type": "web_search"}]
+    assert client.responses.kwargs["tool_choice"] == "auto"
+
+
+def test_openai_provider_does_not_add_web_search_by_default():
+    client = FakeClient()
+    provider = OpenAIProvider(client=client)
+
+    asyncio.run(
+        provider.complete(
+            AIRequest(
+                task="moderation",
+                model="test-model",
+                system_prompt="Review.",
+                messages=[AIMessage(role="user", content="message")],
+            )
+        )
+    )
+
+    assert client.responses.kwargs is not None
+    assert "tools" not in client.responses.kwargs

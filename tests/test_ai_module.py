@@ -428,6 +428,7 @@ def test_answer_runs_user_facing_tool_call_loop():
     assert response.total_tokens == 12
     assert len(provider.requests) == 2
     assert provider.requests[0].tools[0].name == "get_active_rules"
+    assert provider.requests[0].enable_web_search is True
     assert provider.requests[0].max_tool_calls == 2
     assert provider.requests[1].previous_response_id == "resp-1"
     assert provider.requests[1].tool_results[0].call_id == "call-1"
@@ -436,6 +437,18 @@ def test_answer_runs_user_facing_tool_call_loop():
         "tool": "get_active_rules",
         "data": [{"id": "rule-1", "title": "No spam"}],
     }
+
+
+def test_answer_can_disable_web_search_with_env(monkeypatch):
+    monkeypatch.setenv("AI_REPLY_WEB_SEARCH_ENABLED", "false")
+    provider = FakeProvider("No search.")
+    ai = AIMain(provider=provider, model="test-model")
+
+    response = asyncio.run(ai.answer(AssistantInput(content="hello")))
+
+    assert response.content == "No search."
+    assert provider.last_request is not None
+    assert provider.last_request.enable_web_search is False
 
 
 def test_answer_rejects_tool_call_outside_current_server_scope():

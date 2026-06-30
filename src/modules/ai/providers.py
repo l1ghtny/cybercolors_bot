@@ -57,8 +57,11 @@ class OpenAIProvider:
             create_kwargs["temperature"] = request.temperature
         if request.previous_response_id is not None:
             create_kwargs["previous_response_id"] = request.previous_response_id
+        response_tools: list[dict[str, Any]] = []
+        if request.enable_web_search:
+            response_tools.append({"type": "web_search"})
         if request.tools:
-            create_kwargs["tools"] = [
+            response_tools.extend(
                 {
                     "type": "function",
                     "name": tool.name,
@@ -67,7 +70,9 @@ class OpenAIProvider:
                     "strict": False,
                 }
                 for tool in request.tools
-            ]
+            )
+        if response_tools:
+            create_kwargs["tools"] = response_tools
             create_kwargs["tool_choice"] = "auto"
             create_kwargs["parallel_tool_calls"] = False
         if request.max_tool_calls is not None:
