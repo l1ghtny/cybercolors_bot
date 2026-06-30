@@ -39,6 +39,13 @@ class FakeMessage:
     attachments = []
 
 
+class FakeImageAttachment:
+    filename = "image.png"
+    content_type = "image/png"
+    size = 1024
+    url = "https://cdn.discordapp.com/attachments/1/image.png"
+
+
 def test_create_ai_response_times_out(monkeypatch):
     import src.modules.chat_bot.create_response as create_response
 
@@ -112,6 +119,83 @@ def test_create_ai_response_logs_success(monkeypatch):
     assert session.added.message_id == 111
     assert session.added.total_tokens == 9
     assert session.added.tool_call_count == 1
+
+
+def test_create_ai_response_passes_current_message_images(monkeypatch):
+    import src.modules.chat_bot.create_response as create_response
+    from src.modules.ai.models import AIResponse
+
+    class ImageMessage(FakeMessage):
+        attachments = [FakeImageAttachment()]
+
+    class CapturingAI:
+        def __init__(self):
+            self.assistant_input = None
+
+        async def answer(self, assistant_input, *_args, **_kwargs):
+            self.assistant_input = assistant_input
+            return AIResponse(content="seen", model="test-model", provider="fake")
+
+    ai = CapturingAI()
+    monkeypatch.setattr(create_response, "get_async_session", lambda: FakeSessionContext())
+    monkeypatch.setattr(create_response, "ai_main_class", ai)
+
+    asyncio.run(
+        _create_ai_response(
+            content="what is this?",
+            message=ImageMessage(),
+            conversation=[],
+        )
+    )
+
+    assert ai.assistant_input is not None
+    assert len(ai.assistant_input.images) == 1
+    assert ai.assistant_input.images[0].url == FakeImageAttachment.url
+
+
+def test_create_response_to_dialog_preserves_conversation_and_current_images(monkeypatch):
+    import src.modules.chat_bot.create_response as create_response
+    from src.modules.ai.models import AIImageInput, AIResponse
+
+    previous_image = AIImageInput(
+        url="https://cdn.discordapp.com/attachments/1/previous.png",
+        source="attachment",
+        label="previous.png",
+        content_type="image/png",
+    )
+    current_image = AIImageInput(
+        url="https://cdn.discordapp.com/attachments/1/current.png",
+        source="attachment",
+        label="current.png",
+        content_type="image/png",
+    )
+
+    class CapturingAI:
+        def __init__(self):
+            self.assistant_input = None
+
+        async def answer(self, assistant_input, *_args, **_kwargs):
+            self.assistant_input = assistant_input
+            return AIResponse(content="seen", model="test-model", provider="fake")
+
+    ai = CapturingAI()
+    monkeypatch.setattr(create_response, "get_async_session", lambda: FakeSessionContext())
+    monkeypatch.setattr(create_response, "ai_main_class", ai)
+
+    asyncio.run(
+        create_response.create_response_to_dialog(
+            [
+                {"role": "user", "content": "", "images": [previous_image]},
+                {"role": "assistant", "content": "What should I inspect?"},
+                {"role": "user", "content": "this one", "images": [current_image]},
+            ],
+            message=FakeMessage(),
+        )
+    )
+
+    assert ai.assistant_input is not None
+    assert ai.assistant_input.images == [current_image]
+    assert ai.assistant_input.conversation[0].images == [previous_image]
 
 
 def test_decide_on_response_localizes_reply_thread_limit(monkeypatch):

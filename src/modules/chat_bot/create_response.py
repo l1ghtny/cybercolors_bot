@@ -38,17 +38,24 @@ async def create_one_response(message, client):
 
 async def create_response_to_dialog(message_list, message=None):
     conversation = [
-        AIMessage(role=item["role"], content=item["content"])
+        AIMessage(role=item["role"], content=item["content"], images=item.get("images") or [])
         for item in message_list
-        if item.get("role") in {"user", "assistant"} and item.get("content")
+        if item.get("role") in {"user", "assistant"} and (item.get("content") or item.get("images"))
     ]
-    content = conversation.pop().content if conversation and conversation[-1].role == "user" else ""
+    current_images = []
+    if conversation and conversation[-1].role == "user":
+        latest_message = conversation.pop()
+        content = latest_message.content
+        current_images = latest_message.images
+    else:
+        content = ""
     if message is not None:
         content = _expand_message_mentions(content, message=message, client=None)
     return await _create_ai_response(
         content=content,
         message=message,
         conversation=conversation,
+        images=current_images,
     )
 
 
@@ -57,6 +64,7 @@ async def _create_ai_response(
     content: str,
     message,
     conversation: list[AIMessage],
+    images: list | None = None,
 ) -> tuple[str | None, int]:
     guild = getattr(message, "guild", None)
     author = getattr(message, "author", None)
@@ -67,7 +75,7 @@ async def _create_ai_response(
         author_user_id=getattr(author, "id", None),
         channel_id=getattr(channel, "id", None),
         conversation=conversation,
-        images=ai_images_from_discord_message(message) if message is not None else [],
+        images=images if images is not None else (ai_images_from_discord_message(message) if message is not None else []),
         metadata={"message_id": getattr(message, "id", None)},
     )
     started_at = answer_log_started_at()

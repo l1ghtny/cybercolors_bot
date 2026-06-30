@@ -1,5 +1,6 @@
 import re
 from collections.abc import Iterable
+from urllib.parse import urlparse
 
 from src.modules.ai.models import AIImageInput
 
@@ -12,6 +13,13 @@ SUPPORTED_IMAGE_TYPES = {
     "image/jpeg",
     "image/png",
     "image/webp",
+}
+IMAGE_TYPES_BY_EXTENSION = {
+    ".gif": "image/gif",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
 }
 
 
@@ -78,14 +86,14 @@ def append_image_context(content: str, images: list[AIImageInput]) -> str:
 def _attachment_images(attachments) -> list[AIImageInput]:
     images: list[AIImageInput] = []
     for attachment in attachments:
-        content_type = getattr(attachment, "content_type", None)
-        if not content_type or content_type.lower().split(";", 1)[0] not in SUPPORTED_IMAGE_TYPES:
+        url = getattr(attachment, "url", None) or getattr(attachment, "proxy_url", None)
+        if not url:
+            continue
+        content_type = _attachment_content_type(attachment, str(url))
+        if content_type not in SUPPORTED_IMAGE_TYPES:
             continue
         size = getattr(attachment, "size", None)
         if size is not None and int(size) > MAX_AI_IMAGE_BYTES:
-            continue
-        url = getattr(attachment, "url", None) or getattr(attachment, "proxy_url", None)
-        if not url:
             continue
         images.append(
             AIImageInput(
@@ -98,3 +106,19 @@ def _attachment_images(attachments) -> list[AIImageInput]:
             )
         )
     return images
+
+
+def _attachment_content_type(attachment, url: str) -> str | None:
+    raw_content_type = getattr(attachment, "content_type", None)
+    if raw_content_type:
+        return raw_content_type.lower().split(";", 1)[0].strip()
+
+    filename = getattr(attachment, "filename", None)
+    for candidate in (filename, urlparse(url).path):
+        if not candidate:
+            continue
+        lowered = str(candidate).lower()
+        for extension, content_type in IMAGE_TYPES_BY_EXTENSION.items():
+            if lowered.endswith(extension):
+                return content_type
+    return None

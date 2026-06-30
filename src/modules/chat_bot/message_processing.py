@@ -4,6 +4,7 @@ from api.services.ai_settings import can_invoke_answer_flow
 from src.db.database import get_async_session
 from src.db.models import ServerAISettings
 from src.modules.chat_bot.create_response import create_one_response, create_response_to_dialog
+from src.modules.ai.discord_media import ai_images_from_discord_message
 from src.modules.localization.service import tr
 from src.misc_files.check_if_message_has_reply import check_replies
 
@@ -20,7 +21,13 @@ async def decide_on_response(message, client, *, locale: str | None = None):
             token_total = 0
         elif verify_user(messages_raw, message, client):
             messages_processed = await organise_messages(messages_raw, client)
-            messages_processed.append({"role": "user", "content": await remove_bot_mention(message, client)})
+            messages_processed.append(
+                {
+                    "role": "user",
+                    "content": await remove_bot_mention(message, client),
+                    "images": ai_images_from_discord_message(message),
+                }
+            )
             bot_response, token_total = await create_response_to_dialog(messages_processed, message=message)
         else:
             bot_response = tr(locale, "ai_reply.thread_multi_user")
@@ -84,6 +91,7 @@ async def count_replies(message):
             {
                 "author": message.author.id,
                 "content": message.content,
+                "images": ai_images_from_discord_message(message),
             }
         )
     return n, messages_raw
@@ -97,13 +105,13 @@ async def organise_messages(messages, client):
             content = i["content"]
             new_message = content.replace(f"<@{client.user.id}>", "")
             new_message = new_message.replace(f"<@!{client.user.id}>", "")
-            messages_processed.append({"role": "user", "content": new_message})
+            messages_processed.append({"role": "user", "content": new_message, "images": i.get("images") or []})
         elif i["author"] == client.user.id:
             new_message = i["content"]
             messages_processed.append({"role": "assistant", "content": new_message})
         else:
             new_message = i["content"]
-            messages_processed.append({"role": "user", "content": new_message})
+            messages_processed.append({"role": "user", "content": new_message, "images": i.get("images") or []})
     return messages_processed
 
 

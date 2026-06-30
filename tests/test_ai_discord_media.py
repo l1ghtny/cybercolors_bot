@@ -46,3 +46,31 @@ def test_ai_images_from_discord_message_filters_to_supported_images():
     assert [image.source for image in images] == ["attachment", "custom_emoji"]
     assert images[0].label == "photo.png"
     assert images[1].label == ":party:"
+
+
+def test_ai_images_from_discord_message_infers_image_type_from_filename():
+    message = SimpleNamespace(
+        content="what is this?",
+        attachments=[
+            SimpleNamespace(
+                id=1,
+                filename="photo.jpg",
+                content_type=None,
+                size=2048,
+                url="https://cdn.discordapp.com/attachments/1/photo.jpg?ex=abc",
+            ),
+            SimpleNamespace(
+                id=2,
+                filename="archive.zip",
+                content_type=None,
+                size=2048,
+                url="https://cdn.discordapp.com/attachments/1/archive.zip",
+            ),
+        ],
+    )
+
+    images = ai_images_from_discord_message(message)
+
+    assert len(images) == 1
+    assert images[0].label == "photo.jpg"
+    assert images[0].content_type == "image/jpeg"
