@@ -1,0 +1,11 @@
+.git
+.venv
+.venv2
+.pytest_cache
+.idea
+.ai
+.codex-remote-attachments
+__pycache__
+*.pyc
+logs
+.env

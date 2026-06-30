@@ -1,0 +1,14 @@
+FROM python:3.13-alpine
+
+WORKDIR /home/discord-bot/
+RUN mkdir logs
+
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+ADD src ./src
+ADD api ./api
+ADD alembic ./alembic
+COPY alembic.ini .
+
+CMD ["python", "-m", "src.workers.newcomer_release_worker"]

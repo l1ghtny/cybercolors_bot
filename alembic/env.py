@@ -9,6 +9,7 @@ from alembic import context
 from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel import SQLModel
+from src.db.config import get_database_url
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -31,7 +32,7 @@ target_metadata = SQLModel.metadata
 
 def run_migrations_offline():
     """Run migrations in 'offline' mode."""
-    url = os.getenv("DATABASE_URL")
+    url = get_database_url()
     context.configure(
         url=url, target_metadata=target_metadata, literal_binds=True, dialect_opts={"paramstyle": "named"}
     )
@@ -49,7 +50,7 @@ def do_run_migrations(connection):
 
 async def run_migrations_online():
     """Run migrations in 'online' mode."""
-    connectable = create_async_engine(os.getenv("DATABASE_URL"))
+    connectable = create_async_engine(get_database_url())
 
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)

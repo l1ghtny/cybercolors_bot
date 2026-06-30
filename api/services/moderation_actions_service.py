@@ -1,4 +1,5 @@
 from datetime import datetime
+import json
 import logging
 import os
 from uuid import UUID
@@ -14,7 +15,12 @@ from api.models.moderation_actions import (
     ModerationActionRead,
     ModerationActionSummaryModel,
 )
-from api.models.moderation_cases import DeletedMessageCreateModel, DeletedMessageReadModel
+from api.models.moderation_cases import (
+    DeletedAttachmentReadModel,
+    DeletedMessageAttachmentModel,
+    DeletedMessageCreateModel,
+    DeletedMessageReadModel,
+)
 from api.services.discord_guilds import (
     add_guild_member_role,
     ban_guild_member,
@@ -25,6 +31,7 @@ from api.services.discord_guilds import (
 )
 from api.services.moderation_core import (
     build_actor,
+    deleted_message_deletion_type,
     ensure_case_writable_for_actions,
     naive_utcnow,
     to_deleted_message_read,
@@ -1061,3 +1068,82 @@ async def browse_deleted_messages_for_server(
         await to_deleted_message_read(item, session, channel_name=channel_names.get(item.channel_id))
         for item in messages
     ]
+
+
+def _deleted_message_attachments(raw: str | None) -> list[DeletedMessageAttachmentModel]:
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [
+        DeletedMessageAttachmentModel.model_validate(item)
+        for item in parsed
+        if isinstance(item, dict)
+    ]
+
+
+async def browse_deleted_attachments_for_server(
+    session: AsyncSession,
+    server_id: int,
+    author_user_id: str | None = None,
+    channel_id: str | None = None,
+    since: datetime | None = None,
+    kind: str = "image",
+    deletion_type: str | None = None,
+    sort_by: str = "deleted_at",
+    limit: int = 200,
+) -> list[DeletedAttachmentReadModel]:
+    messages = await query_deleted_messages(
+        session=session,
+        server_id=server_id,
+        author_user_id=int(author_user_id) if author_user_id else None,
+        channel_id=int(channel_id) if channel_id else None,
+        since=since,
+        limit=1000,
+    )
+    channel_names = await _get_channel_names(server_id)
+    rows: list[DeletedAttachmentReadModel] = []
+    for message in messages:
+        message_deletion_type = deleted_message_deletion_type(message)
+        if deletion_type and message_deletion_type != deletion_type:
+            continue
+        attachments = _deleted_message_attachments(message.attachments_json)
+        if kind == "image":
+            attachments = [
+                attachment
+                for attachment in attachments
+                if (attachment.content_type or "").lower().startswith("image/")
+            ]
+        if not attachments:
+            continue
+        read_model = await to_deleted_message_read(
+            message,
+            session,
+            channel_name=channel_names.get(message.channel_id),
+        )
+        for attachment in attachments:
+            rows.append(
+                DeletedAttachmentReadModel(
+                    deleted_message_id=str(message.id),
+                    server_id=str(message.server_id),
+                    message_id=str(message.message_id),
+                    channel_id=str(message.channel_id),
+                    channel_name=channel_names.get(message.channel_id),
+                    deleted_at=message.deleted_at,
+                    deletion_type=message_deletion_type,
+                    author=read_model.author,
+                    deleted_by=read_model.deleted_by,
+                    attachment=attachment,
+                )
+            )
+
+    if sort_by == "deletion_type":
+        type_order = {"self": 0, "moderator": 1, "unknown": 2}
+        rows.sort(key=lambda row: (type_order.get(row.deletion_type, 99), -row.deleted_at.timestamp()))
+    else:
+        rows.sort(key=lambda row: row.deleted_at, reverse=True)
+    return rows[:limit]

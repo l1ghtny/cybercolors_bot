@@ -1,0 +1,32 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cybercolors-migration
+  namespace: cybercolors
+spec:
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migration
+          image: localhost:32000/cybercolors-backend:latest
+          imagePullPolicy: Always
+          command: ["alembic", "upgrade", "head"]
+          envFrom:
+            - configMapRef:
+                name: cybercolors-config
+            - secretRef:
+                name: cybercolors-app-secrets
+                optional: true
+          env:
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: cybercolors-db-pguser-backend
+                  key: user
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cybercolors-db-pguser-backend
+                  key: password

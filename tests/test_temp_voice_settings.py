@@ -57,6 +57,7 @@ async def _temp_voice_settings_scenario(monkeypatch) -> None:
                 enabled=True,
                 trigger_channel_id=str(trigger_channel_id),
                 archive_channel_id=str(archive_channel_id),
+                archive_post_mode="off",
                 channel_name_template="{display_name}'s room",
                 owner_manage_channel_enabled=True,
             ),
@@ -66,11 +67,13 @@ async def _temp_voice_settings_scenario(monkeypatch) -> None:
         assert settings.enabled is True
         assert settings.trigger_channel_id == trigger_channel_id
         assert settings.archive_channel_id == archive_channel_id
+        assert settings.archive_post_mode == "off"
         assert settings.channel_name_template == "{display_name}'s room"
 
         read_model = await to_server_temp_voice_read_model(server_id, settings)
         assert read_model.trigger_channel_name == "Join to Create"
         assert read_model.archive_channel_name == "voice-archives"
+        assert read_model.archive_post_mode == "off"
 
         created = await create_temp_voice_trigger_channel_and_attach(
             session=session,

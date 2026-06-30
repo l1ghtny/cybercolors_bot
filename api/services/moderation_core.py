@@ -410,9 +410,18 @@ async def to_deleted_message_read(
         attachments_json=deleted_message.attachments_json,
         attachments=attachments,
         deleted_at=deleted_message.deleted_at,
+        deletion_type=deleted_message_deletion_type(deleted_message),
         author=author,
         deleted_by=deleted_by,
     )
+
+
+def deleted_message_deletion_type(deleted_message: DeletedMessage) -> str:
+    if deleted_message.deleted_by_user_id is None:
+        return "unknown"
+    if deleted_message.author_user_id is not None and deleted_message.deleted_by_user_id == deleted_message.author_user_id:
+        return "self"
+    return "moderator"
 
 
 def to_moderation_history(result: Sequence[ModerationAction]) -> list[ModerationActionRead]:

@@ -114,6 +114,46 @@ def test_create_ai_response_logs_success(monkeypatch):
     assert session.added.tool_call_count == 1
 
 
+def test_decide_on_response_localizes_reply_thread_limit(monkeypatch):
+    import src.modules.chat_bot.message_processing as message_processing
+
+    class FakeClient:
+        user = type("BotUser", (), {"id": 999})()
+
+    async def fake_count_replies(_message):
+        return message_processing.REPLY_THREAD_LIMIT + 1, []
+
+    monkeypatch.setattr(message_processing, "check_replies", lambda _message: True)
+    monkeypatch.setattr(message_processing, "count_replies", fake_count_replies)
+
+    content, tokens = asyncio.run(
+        message_processing.decide_on_response(FakeMessage(), FakeClient(), locale="en")
+    )
+
+    assert "up to 8 messages" in content
+    assert tokens == 0
+
+
+def test_decide_on_response_localizes_multi_user_reply_thread(monkeypatch):
+    import src.modules.chat_bot.message_processing as message_processing
+
+    class FakeClient:
+        user = type("BotUser", (), {"id": 999})()
+
+    async def fake_count_replies(_message):
+        return 1, [{"author": 111, "content": "hello"}]
+
+    monkeypatch.setattr(message_processing, "check_replies", lambda _message: True)
+    monkeypatch.setattr(message_processing, "count_replies", fake_count_replies)
+
+    content, tokens = asyncio.run(
+        message_processing.decide_on_response(FakeMessage(), FakeClient(), locale="ru")
+    )
+
+    assert "одним участником" in content
+    assert tokens == 0
+
+
 def test_look_for_bot_reply_edits_placeholder_on_failure(monkeypatch):
     import src.modules.on_message_processing.gpt_bot_reply as gpt_bot_reply
 
@@ -147,7 +187,7 @@ def test_look_for_bot_reply_edits_placeholder_on_failure(monkeypatch):
     async def fake_check_for_channel(_message, _client):
         return True, _message.channel
 
-    async def fake_decide_on_response(_message, _client):
+    async def fake_decide_on_response(_message, _client, **_kwargs):
         raise RuntimeError("provider failed")
 
     async def fake_get_server_locale(_server_id):

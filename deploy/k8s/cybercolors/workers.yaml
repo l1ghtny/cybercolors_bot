@@ -1,0 +1,149 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cybercolors-indexer-worker
+  namespace: cybercolors
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: cybercolors-indexer-worker
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: cybercolors-indexer-worker
+    spec:
+      containers:
+        - name: worker
+          image: localhost:32000/cybercolors-backend:latest
+          imagePullPolicy: Always
+          command: ["python", "scripts/run_ai_knowledge_worker.py"]
+          envFrom:
+            - configMapRef:
+                name: cybercolors-config
+            - secretRef:
+                name: cybercolors-app-secrets
+                optional: true
+          env:
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: cybercolors-db-pguser-backend
+                  key: user
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cybercolors-db-pguser-backend
+                  key: password
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 768Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cybercolors-newcomer-release-worker
+  namespace: cybercolors
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: cybercolors-newcomer-release-worker
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: cybercolors-newcomer-release-worker
+    spec:
+      containers:
+        - name: worker
+          image: localhost:32000/cybercolors-backend:latest
+          imagePullPolicy: Always
+          command: ["python", "-m", "src.workers.newcomer_release_worker"]
+          envFrom:
+            - configMapRef:
+                name: cybercolors-config
+            - secretRef:
+                name: cybercolors-app-secrets
+                optional: true
+          env:
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: cybercolors-db-pguser-backend
+                  key: user
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cybercolors-db-pguser-backend
+                  key: password
+          resources:
+            requests:
+              cpu: 50m
+              memory: 192Mi
+            limits:
+              cpu: 300m
+              memory: 512Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cybercolors-bot
+  namespace: cybercolors
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: cybercolors-bot
+  template:
+    metadata:
+      labels:
+        app: cybercolors-bot
+    spec:
+      containers:
+        - name: bot
+          image: localhost:32000/cybercolors-backend:latest
+          imagePullPolicy: Always
+          command: ["python", "main.py"]
+          envFrom:
+            - configMapRef:
+                name: cybercolors-config
+            - secretRef:
+                name: cybercolors-app-secrets
+                optional: true
+          env:
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: cybercolors-db-pguser-backend
+                  key: user
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cybercolors-db-pguser-backend
+                  key: password
+          resources:
+            requests:
+              cpu: 100m
+              memory: 384Mi
+            limits:
+              cpu: 750m
+              memory: 1Gi

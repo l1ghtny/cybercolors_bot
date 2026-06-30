@@ -12,6 +12,7 @@ from api.services.moderation_rules_service import (
 )
 from src.db.database import get_async_session
 from src.modules.localization.service import get_server_locale, tr
+from src.modules.moderation.bot_rbac import ensure_bot_permission
 from src.modules.moderation.bot_services import fetch_active_rule_models, rule_label
 
 
@@ -107,6 +108,8 @@ async def rules_import_message(interaction: discord.Interaction, message_link: s
         return
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "moderation.rules.manage", locale=locale):
+        return
 
     match = MESSAGE_LINK_RE.match(message_link.strip())
     if not match:
@@ -144,6 +147,8 @@ async def rules_import_messages(
         return
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "moderation.rules.manage", locale=locale):
+        return
 
     links_raw = re.split(r"[\s,]+", message_links.strip())
     links = [item for item in links_raw if item]
@@ -198,6 +203,8 @@ async def rule_add(
         return
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "moderation.rules.manage", locale=locale):
+        return
 
     try:
         async with get_async_session() as session:
@@ -230,6 +237,8 @@ async def rules_list(interaction: discord.Interaction):
         return
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "moderation.rules.view", locale=locale):
+        return
 
     try:
         async with get_async_session() as session:
@@ -258,6 +267,8 @@ async def rules_parse_guide(interaction: discord.Interaction):
         return
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "moderation.rules.view", locale=locale):
+        return
 
     try:
         guide = get_rule_parse_guide(locale=locale)
@@ -284,6 +295,8 @@ async def import_rules_from_message_context(interaction: discord.Interaction, me
 
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "moderation.rules.manage", locale=locale):
+        return
     await _import_rules_from_message(
         interaction=interaction,
         channel_id=message.channel.id,

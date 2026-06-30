@@ -98,8 +98,7 @@ from src.views.birthday.settings import BirthdaysButtonsSelect, GuildAlreadyExis
 
 load_dotenv()
 # Grab the API token from the .env file.
-DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-DISCORD_TOKEN_TEST = os.getenv('DISCORD_TOKEN_TEST')
+DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN") or os.getenv("DISCORD_TOKEN_TEST") or os.getenv("DISCORD_TOKEN")
 TEST_GUILD_ID = os.getenv('TEST_GUILD_ID')
 
 intents = discord.Intents.all()
@@ -642,4 +641,7 @@ async def on_guild_remove(guild: discord.Guild):
 
 
 # EXECUTES THE BOT WITH THE SPECIFIED TOKEN.
-client.run(DISCORD_TOKEN_TEST, root_logger=True)
+if not DISCORD_TOKEN:
+    raise RuntimeError("DISCORD_BOT_TOKEN, DISCORD_TOKEN_TEST, or DISCORD_TOKEN must be set")
+
+client.run(DISCORD_TOKEN, root_logger=True)

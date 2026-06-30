@@ -234,7 +234,12 @@ async def _archive_channel_chat(
 ) -> tuple[int | None, int | None]:
     async with get_async_session() as session:
         mod_settings = await session.get(ServerModerationSettings, guild.id)
-        archive_channel_id = settings.archive_channel_id or (mod_settings.mod_log_channel_id if mod_settings else None)
+        if settings.archive_post_mode == "off":
+            return None, None
+        if settings.archive_post_mode == "archive_channel":
+            archive_channel_id = settings.archive_channel_id
+        else:
+            archive_channel_id = settings.archive_channel_id or (mod_settings.mod_log_channel_id if mod_settings else None)
         if archive_channel_id is None:
             return None, None
         transcript = await _transcript_text(session, temp_log)

@@ -34,6 +34,10 @@ class MonitoredUserReadModel(BaseModel):
     id: str
     server_id: str
     reason: str | None = None
+    source: str = "manual"
+    release_due_at: datetime | None = None
+    released_at: datetime | None = None
+    release_error: str | None = None
     is_active: bool
     created_at: datetime
     updated_at: datetime

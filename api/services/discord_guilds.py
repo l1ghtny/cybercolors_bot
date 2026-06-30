@@ -9,7 +9,7 @@ VOICE_CHANNEL_TYPE = 2
 
 
 def _get_bot_token() -> str:
-    token = os.getenv("DISCORD_TOKEN_TEST") or os.getenv("DISCORD_TOKEN")
+    token = os.getenv("DISCORD_BOT_TOKEN") or os.getenv("DISCORD_TOKEN_TEST") or os.getenv("DISCORD_TOKEN")
     if not token:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -306,6 +306,12 @@ async def create_direct_message(user_id: int, content: str) -> dict:
 
 async def add_guild_member_role(server_id: int, user_id: int, role_id: int) -> None:
     await _discord_put(f"/guilds/{server_id}/members/{user_id}/roles/{role_id}")
+
+
+async def remove_guild_member_role(server_id: int, user_id: int, role_id: int) -> None:
+    await _discord_delete(f"/guilds/{server_id}/members/{user_id}/roles/{role_id}")
+
+
 async def ban_guild_member(server_id: int, user_id: int, delete_message_seconds: int = 0) -> None:
     await _discord_put(
         f"/guilds/{server_id}/bans/{user_id}",

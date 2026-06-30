@@ -424,6 +424,8 @@ TRANSLATIONS["en"].update(
         "ai_reply.provider_unavailable": "Sorry, the AI provider is not available right now. Please try again later.",
         "ai_reply.jailbreak": "The bot has jailbreak protection enabled. I will ask an admin to review this.",
         "ai_reply.long_answer_title": "Long answer:",
+        "ai_reply.thread_limit": "Sorry, I can keep only up to {limit} messages in one reply thread. Mention me again in a new message to start fresh.",
+        "ai_reply.thread_multi_user": "Sorry, I can continue a reply-thread conversation with only one user at a time.",
         "security.newcomer_role_suggestion": (
             "**Recommended newcomer role**\n"
             "Name: `{role_name}`\n"
@@ -443,6 +445,8 @@ TRANSLATIONS["en"].update(
         ),
         "security.manual_release": "manual",
         "modlog.created_at_label": "Date",
+        "rbac.command_denied": "You do not have the required dashboard permission for this command: `{permission}`.",
+        "rbac.check_failed": "Could not verify your command permissions: {error}",
     }
 )
 
@@ -460,6 +464,8 @@ TRANSLATIONS["ru"].update(
         "ai_reply.provider_unavailable": "\u0418\u0437\u0432\u0438\u043d\u0438, AI-\u043f\u0440\u043e\u0432\u0430\u0439\u0434\u0435\u0440 \u0441\u0435\u0439\u0447\u0430\u0441 \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u0435\u043d. \u041f\u043e\u043f\u0440\u043e\u0431\u0443\u0439 \u043f\u043e\u0437\u0436\u0435.",
         "ai_reply.jailbreak": "\u0423 \u0431\u043e\u0442\u0430 \u0432\u043a\u043b\u044e\u0447\u0435\u043d\u0430 \u0437\u0430\u0449\u0438\u0442\u0430 \u043e\u0442 jailbreak-\u0437\u0430\u043f\u0440\u043e\u0441\u043e\u0432. \u042f \u043f\u043e\u043f\u0440\u043e\u0448\u0443 \u0430\u0434\u043c\u0438\u043d\u0430 \u043f\u0440\u043e\u0432\u0435\u0440\u0438\u0442\u044c \u044d\u0442\u043e.",
         "ai_reply.long_answer_title": "\u0414\u043b\u0438\u043d\u043d\u044b\u0439 \u043e\u0442\u0432\u0435\u0442:",
+        "ai_reply.thread_limit": "\u0418\u0437\u0432\u0438\u043d\u0438, \u044f \u043c\u043e\u0433\u0443 \u0434\u0435\u0440\u0436\u0430\u0442\u044c \u0432 \u043e\u0434\u043d\u043e\u0439 \u0446\u0435\u043f\u043e\u0447\u043a\u0435 \u043e\u0442\u0432\u0435\u0442\u043e\u0432 \u043d\u0435 \u0431\u043e\u043b\u044c\u0448\u0435 {limit} \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0439. \u0423\u043f\u043e\u043c\u044f\u043d\u0438 \u043c\u0435\u043d\u044f \u0432 \u043d\u043e\u0432\u043e\u043c \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0438, \u0447\u0442\u043e\u0431\u044b \u043d\u0430\u0447\u0430\u0442\u044c \u0437\u0430\u043d\u043e\u0432\u043e.",
+        "ai_reply.thread_multi_user": "\u0418\u0437\u0432\u0438\u043d\u0438, \u044f \u043c\u043e\u0433\u0443 \u043f\u0440\u043e\u0434\u043e\u043b\u0436\u0430\u0442\u044c \u0434\u0438\u0430\u043b\u043e\u0433 \u0432 \u0446\u0435\u043f\u043e\u0447\u043a\u0435 \u043e\u0442\u0432\u0435\u0442\u043e\u0432 \u0442\u043e\u043b\u044c\u043a\u043e \u0441 \u043e\u0434\u043d\u0438\u043c \u0443\u0447\u0430\u0441\u0442\u043d\u0438\u043a\u043e\u043c.",
         "security.newcomer_role_suggestion": (
             "**\u0420\u0435\u043a\u043e\u043c\u0435\u043d\u0434\u043e\u0432\u0430\u043d\u043d\u0430\u044f \u0440\u043e\u043b\u044c \u043d\u043e\u0432\u0438\u0447\u043a\u0430**\n"
             "\u0418\u043c\u044f: `{role_name}`\n"
@@ -479,5 +485,7 @@ TRANSLATIONS["ru"].update(
         ),
         "security.manual_release": "\u0432\u0440\u0443\u0447\u043d\u0443\u044e",
         "modlog.created_at_label": "\u0414\u0430\u0442\u0430",
+        "rbac.command_denied": "\u0423 \u0432\u0430\u0441 \u043d\u0435\u0442 \u043d\u0443\u0436\u043d\u043e\u0433\u043e dashboard-\u043f\u0440\u0430\u0432\u0430 \u0434\u043b\u044f \u044d\u0442\u043e\u0439 \u043a\u043e\u043c\u0430\u043d\u0434\u044b: `{permission}`.",
+        "rbac.check_failed": "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u0440\u043e\u0432\u0435\u0440\u0438\u0442\u044c \u0432\u0430\u0448\u0438 \u043f\u0440\u0430\u0432\u0430 \u0434\u043b\u044f \u043a\u043e\u043c\u0430\u043d\u0434\u044b: {error}",
     }
 )

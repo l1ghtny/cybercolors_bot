@@ -1,0 +1,122 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: cybercolors-backend
+  namespace: cybercolors
+spec:
+  selector:
+    app: cybercolors-backend
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cybercolors-backend-canary
+  namespace: cybercolors
+spec:
+  selector:
+    app: cybercolors-backend
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cybercolors-backend
+  namespace: cybercolors
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: cybercolors-backend
+  template:
+    metadata:
+      labels:
+        app: cybercolors-backend
+    spec:
+      containers:
+        - name: api
+          image: localhost:32000/cybercolors-backend:latest
+          imagePullPolicy: Always
+          command: ["fastapi", "run", "api.api_main:app", "--host", "0.0.0.0", "--port", "8000"]
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: cybercolors-config
+            - secretRef:
+                name: cybercolors-app-secrets
+                optional: true
+          env:
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: cybercolors-db-pguser-backend
+                  key: user
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cybercolors-db-pguser-backend
+                  key: password
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 768Mi
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: cybercolors-backend
+  namespace: cybercolors
+spec:
+  replicas: 2
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: cybercolors-backend
+  workloadRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: cybercolors-backend
+    scaleDown: progressively
+  strategy:
+    canary:
+      stableService: cybercolors-backend
+      canaryService: cybercolors-backend-canary
+      maxSurge: 25%
+      maxUnavailable: 0
+      minPodsPerReplicaSet: 1
+      steps:
+        - setWeight: 0
+        - pause: {}
+        - setWeight: 5
+        - pause: {}
+        - setWeight: 20
+        - pause: {}
+        - setWeight: 50
+        - pause: {}
+      trafficRouting:
+        nginx:
+          stableIngress: cybercolors-backend
+          canaryIngressAnnotations:
+            nginx.ingress.kubernetes.io/canary-weight: "0"

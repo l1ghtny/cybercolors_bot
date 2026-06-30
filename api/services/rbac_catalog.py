@@ -35,6 +35,8 @@ PERMISSIONS: tuple[PermissionDefinition, ...] = (
     PermissionDefinition("birthdays.settings.view", "read", "View birthday settings", "View birthday settings."),
     PermissionDefinition("replies.view", "read", "View replies", "View bot replies."),
     PermissionDefinition("ai.settings.view", "read", "View AI settings", "View AI settings and moderation suggestions."),
+    PermissionDefinition("ai.suggestions.view", "read", "View AI suggestions", "View AI moderation suggestions."),
+    PermissionDefinition("ai.decisions.view", "read", "View AI decisions", "View AI moderation decision logs."),
     PermissionDefinition("ai.knowledge.view", "read", "View AI knowledge", "View AI knowledge sources, indexing status, and retrieval previews."),
     PermissionDefinition("moderation.actions.apply.warn", "moderation", "Apply warns", "Warn members from the dashboard or bot."),
     PermissionDefinition("moderation.actions.apply.mute", "moderation", "Apply mutes", "Mute and unmute members."),

@@ -28,6 +28,7 @@ from api.services.moderation_cases_service import (
 from src.db.database import get_async_session
 from src.db.models import CaseStatus, CaseUserRole, EvidenceType
 from src.modules.localization.service import get_server_locale, tr
+from src.modules.moderation.bot_rbac import ensure_bot_permission, has_bot_permission
 from src.modules.moderation.bot_services import (
     case_choices,
     fetch_active_rule_models,
@@ -77,6 +78,8 @@ async def case_create(
 
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "moderation.cases.manage", locale=locale):
+        return
     summary_text = summary.strip() if summary else None
 
     try:
@@ -124,6 +127,12 @@ async def case_create(
 async def case_create_rule_autocomplete(interaction: discord.Interaction, current: str):
     if interaction.guild_id is None:
         return []
+    if not await has_bot_permission(
+        guild_id=interaction.guild_id,
+        user_id=interaction.user.id,
+        permission_key="moderation.cases.manage",
+    ):
+        return []
 
     try:
         async with get_async_session() as session:
@@ -150,6 +159,8 @@ async def cases_list(
 
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "moderation.cases.view", locale=locale):
+        return
 
     try:
         async with get_async_session() as session:
@@ -239,6 +250,14 @@ class CaseDashboardView(discord.ui.View):
 async def _case_autocomplete(interaction: discord.Interaction, current: str):
     if interaction.guild_id is None:
         return []
+    command_name = getattr(getattr(interaction, "command", None), "name", "")
+    permission_key = "moderation.cases.view" if command_name == "show" else "moderation.cases.manage"
+    if not await has_bot_permission(
+        guild_id=interaction.guild_id,
+        user_id=interaction.user.id,
+        permission_key=permission_key,
+    ):
+        return []
     try:
         async with get_async_session() as session:
             cases = await list_cases(session=session, server_id=interaction.guild_id, limit=25)
@@ -249,6 +268,12 @@ async def _case_autocomplete(interaction: discord.Interaction, current: str):
 
 async def _open_case_autocomplete(interaction: discord.Interaction, current: str):
     if interaction.guild_id is None:
+        return []
+    if not await has_bot_permission(
+        guild_id=interaction.guild_id,
+        user_id=interaction.user.id,
+        permission_key="moderation.cases.manage",
+    ):
         return []
     try:
         async with get_async_session() as session:
@@ -296,6 +321,8 @@ async def case_show(interaction: discord.Interaction, case: str):
         return
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "moderation.cases.view", locale=locale):
+        return
     try:
         async with get_async_session() as session:
             details = await get_case_details(session=session, server_id=interaction.guild.id, case_id=_parse_case_id(case))
@@ -333,6 +360,8 @@ async def _set_case_status(interaction: discord.Interaction, case: str, status: 
         return
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "moderation.cases.manage", locale=locale):
+        return
     try:
         async with get_async_session() as session:
             updated = await update_case_status(
@@ -357,6 +386,8 @@ async def case_note(interaction: discord.Interaction, case: str, note: str, inte
         return
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "moderation.cases.manage", locale=locale):
+        return
     try:
         async with get_async_session() as session:
             created = await add_case_note(
@@ -382,6 +413,8 @@ async def case_evidence(interaction: discord.Interaction, case: str, evidence_ty
         return
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "moderation.cases.manage", locale=locale):
+        return
     parsed_type = EvidenceType.LINK if evidence_type.value == "link" else EvidenceType.NOTE
     try:
         async with get_async_session() as session:
@@ -412,6 +445,8 @@ async def case_add_user(interaction: discord.Interaction, case: str, user: disco
         return
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "moderation.cases.manage", locale=locale):
+        return
     parsed_role = CaseUserRole.TARGET if role.value == "target" else CaseUserRole.RELATED
     try:
         async with get_async_session() as session:
@@ -438,6 +473,8 @@ async def case_remove_user(interaction: discord.Interaction, case: str, user: di
         return
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "moderation.cases.manage", locale=locale):
+        return
     try:
         async with get_async_session() as session:
             updated = await remove_user_from_case(session=session, server_id=interaction.guild.id, case_id=_parse_case_id(case), user_id=user.id)
@@ -456,6 +493,8 @@ async def case_add_rule(interaction: discord.Interaction, case: str, rule: str):
         return
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "moderation.cases.manage", locale=locale):
+        return
     try:
         async with get_async_session() as session:
             rules = await fetch_active_rule_models(session=session, server_id=interaction.guild.id)
@@ -484,6 +523,8 @@ async def case_remove_rule(interaction: discord.Interaction, case: str, rule: st
         return
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "moderation.cases.manage", locale=locale):
+        return
     try:
         async with get_async_session() as session:
             updated = await remove_case_rule(session=session, server_id=interaction.guild.id, case_id=_parse_case_id(case), rule_id=UUID(rule))
@@ -502,6 +543,8 @@ async def case_link_action(interaction: discord.Interaction, case: str, action_i
         return
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "moderation.cases.manage", locale=locale):
+        return
     try:
         async with get_async_session() as session:
             updated = await link_action_to_case(session=session, server_id=interaction.guild.id, case_id=_parse_case_id(case), moderation_action_id=action_id, linked_by_user_id=interaction.user.id)
@@ -520,6 +563,8 @@ async def case_unlink_action(interaction: discord.Interaction, case: str, action
         return
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "moderation.cases.manage", locale=locale):
+        return
     try:
         async with get_async_session() as session:
             updated = await remove_action_from_case(session=session, server_id=interaction.guild.id, case_id=_parse_case_id(case), action_id=UUID(action_id))

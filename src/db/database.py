@@ -6,12 +6,12 @@ from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from src.db.config import get_database_url
+
 load_dotenv()
 
 # It's a good practice to load environment variables once
-DATABASE_URL = os.getenv("DATABASE_URL")
-if not DATABASE_URL:
-    raise ValueError("DATABASE_URL environment variable is not set")
+DATABASE_URL = get_database_url()
 
 # Engine tuning for long-lived API processes:
 # - pool_pre_ping avoids stale idle connections causing first-request 500s

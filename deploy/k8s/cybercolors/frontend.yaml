@@ -1,0 +1,114 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: cybercolors-frontend
+  namespace: cybercolors
+spec:
+  selector:
+    app: cybercolors-frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cybercolors-frontend-canary
+  namespace: cybercolors
+spec:
+  selector:
+    app: cybercolors-frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cybercolors-frontend
+  namespace: cybercolors
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: cybercolors-frontend
+  template:
+    metadata:
+      labels:
+        app: cybercolors-frontend
+    spec:
+      containers:
+        - name: frontend
+          image: localhost:32000/cybercolors-frontend:latest
+          imagePullPolicy: Always
+          env:
+            - name: PUBLIC_API_BASE_URL
+              value: https://cybercolors-api.lightny.pro
+            - name: PUBLIC_DISCORD_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: cybercolors-app-secrets
+                  key: DISCORD_CLIENT_ID
+                  optional: true
+            - name: PUBLIC_DISCORD_REDIRECT_URI
+              value: https://cybercolors.lightny.pro/
+          ports:
+            - name: http
+              containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 384Mi
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: cybercolors-frontend
+  namespace: cybercolors
+spec:
+  replicas: 2
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: cybercolors-frontend
+  workloadRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: cybercolors-frontend
+    scaleDown: progressively
+  strategy:
+    canary:
+      stableService: cybercolors-frontend
+      canaryService: cybercolors-frontend-canary
+      maxSurge: 25%
+      maxUnavailable: 0
+      steps:
+        - setWeight: 0
+        - pause: {}
+        - setWeight: 5
+        - pause: {}
+        - setWeight: 20
+        - pause: {}
+        - setWeight: 50
+        - pause: {}
+      trafficRouting:
+        nginx:
+          stableIngress: cybercolors-frontend
+          canaryIngressAnnotations:
+            nginx.ingress.kubernetes.io/canary-weight: "0"

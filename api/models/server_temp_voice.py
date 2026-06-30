@@ -1,6 +1,9 @@
 from datetime import datetime
+from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
+
+TEMP_VOICE_ARCHIVE_POST_MODES = {"mod_log_fallback", "archive_channel", "off"}
 
 
 class TempVoiceChannelRefModel(BaseModel):
@@ -20,6 +23,7 @@ class ServerTempVoiceSettingsReadModel(BaseModel):
     trigger_channel_name: str | None = None
     archive_channel_id: str | None = None
     archive_channel_name: str | None = None
+    archive_post_mode: str
     channel_name_template: str
     owner_manage_channel_enabled: bool
     updated_at: datetime
@@ -30,8 +34,20 @@ class ServerTempVoiceSettingsUpdateModel(BaseModel):
     enabled: bool | None = None
     trigger_channel_id: str | None = Field(default=None, pattern=r"^\d*$")
     archive_channel_id: str | None = Field(default=None, pattern=r"^\d*$")
+    archive_post_mode: str | None = None
     channel_name_template: str | None = Field(default=None, min_length=1, max_length=100)
     owner_manage_channel_enabled: bool | None = None
+
+    @field_validator("archive_post_mode")
+    @classmethod
+    def validate_archive_post_mode(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if cleaned not in TEMP_VOICE_ARCHIVE_POST_MODES:
+            allowed = ", ".join(sorted(TEMP_VOICE_ARCHIVE_POST_MODES))
+            raise ValueError(f"archive_post_mode must be one of: {allowed}")
+        return cleaned
 
     @field_validator("channel_name_template")
     @classmethod
@@ -58,3 +74,44 @@ class ServerTempVoiceCreateTriggerChannelModel(BaseModel):
         if not cleaned:
             raise ValueError("name cannot be blank")
         return cleaned
+
+
+class TempVoiceArchiveAttachmentModel(BaseModel):
+    storage_key: str | None = None
+    file_name: str | None = None
+    content_type: str | None = None
+    deleted: bool = False
+
+
+class TempVoiceArchiveMessageModel(BaseModel):
+    id: str
+    message_id: str
+    user_id: str | None = None
+    content: str | None = None
+    created_at: datetime
+    deleted_at: datetime | None = None
+    deleted: bool = False
+    reply_to_message_id: str | None = None
+    attachments: list[TempVoiceArchiveAttachmentModel] = Field(default_factory=list)
+
+
+class TempVoiceArchiveSummaryModel(BaseModel):
+    id: UUID
+    server_id: str
+    channel_id: str
+    channel_name: str
+    trigger_channel_id: str | None = None
+    owner_user_id: str | None = None
+    created_at: datetime
+    deleted_at: datetime | None = None
+    archive_channel_id: str | None = None
+    archive_message_id: str | None = None
+    archive_jump_url: str | None = None
+    message_count: int
+    deleted_message_count: int
+    attachment_count: int
+    deleted_attachment_count: int
+
+
+class TempVoiceArchiveDetailModel(TempVoiceArchiveSummaryModel):
+    messages: list[TempVoiceArchiveMessageModel] = Field(default_factory=list)

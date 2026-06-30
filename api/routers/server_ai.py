@@ -51,7 +51,11 @@ server_ai_router = APIRouter(
 )
 
 
-@server_ai_router.get("/suggestions", response_model=AIModerationDecisionListModel)
+@server_ai_router.get(
+    "/suggestions",
+    response_model=AIModerationDecisionListModel,
+    dependencies=[Depends(require_server_permission("ai.suggestions.view"))],
+)
 async def get_ai_suggestions(
     server_id: int,
     status: AISuggestionStatusFilter = Query(default="pending"),
@@ -74,7 +78,7 @@ async def approve_suggestion(
     suggestion_id: UUID,
     body: AIApproveSuggestionModel | None = None,
     session: AsyncSession = Depends(get_session),
-    current_user_id: int = Depends(require_server_dashboard_access),
+    current_user_id: int = Depends(require_server_permission("ai.suggestions.review")),
 ):
     return await approve_ai_suggestion(
         session=session,
@@ -91,7 +95,7 @@ async def tweak_suggestion(
     suggestion_id: UUID,
     body: AITweakSuggestionModel,
     session: AsyncSession = Depends(get_session),
-    current_user_id: int = Depends(require_server_dashboard_access),
+    current_user_id: int = Depends(require_server_permission("ai.suggestions.review")),
 ):
     return await tweak_ai_suggestion(
         session=session,
@@ -108,7 +112,7 @@ async def dismiss_suggestion(
     suggestion_id: UUID,
     body: AIDismissSuggestionModel | None = None,
     session: AsyncSession = Depends(get_session),
-    current_user_id: int = Depends(require_server_dashboard_access),
+    current_user_id: int = Depends(require_server_permission("ai.suggestions.review")),
 ):
     return await dismiss_ai_suggestion(
         session=session,
@@ -119,7 +123,11 @@ async def dismiss_suggestion(
     )
 
 
-@server_ai_router.get("/decisions", response_model=AIModerationDecisionListModel)
+@server_ai_router.get(
+    "/decisions",
+    response_model=AIModerationDecisionListModel,
+    dependencies=[Depends(require_server_permission("ai.decisions.view"))],
+)
 async def get_ai_decisions(
     server_id: int,
     status: AISuggestionStatusFilter = Query(default="all"),

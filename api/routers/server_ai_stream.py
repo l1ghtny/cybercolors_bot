@@ -9,6 +9,7 @@ from starlette.responses import StreamingResponse
 from api.dependencies.current_user import get_discord_user_id_for_access_token
 from api.services.ai_moderation import get_ai_suggestion_stream_state
 from api.services.dashboard_access_service import assert_dashboard_access
+from api.services.rbac_service import assert_user_has_permission
 from src.db.database import get_async_session, get_session
 
 server_ai_stream_router = APIRouter(prefix="/servers/{server_id}/ai", tags=["servers:ai"])
@@ -37,6 +38,13 @@ async def require_ai_stream_dashboard_access(
         session=session,
         server_id=server_id,
         caller_user_id=current_user_id,
+        access_token=resolved_token,
+    )
+    await assert_user_has_permission(
+        session=session,
+        server_id=server_id,
+        user_id=current_user_id,
+        permission_key="ai.suggestions.view",
         access_token=resolved_token,
     )
 

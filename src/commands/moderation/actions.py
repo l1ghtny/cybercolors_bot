@@ -27,6 +27,7 @@ from src.modules.moderation.bot_services import (
     rule_label,
     validate_target_for_moderation,
 )
+from src.modules.moderation.bot_rbac import ensure_bot_permission, has_bot_permission
 from src.modules.moderation.durations import (
     action_duration_choices,
     duration_unit_choices,
@@ -133,6 +134,8 @@ class ActionManageView(discord.ui.View):
             return
         await interaction.response.defer(ephemeral=True)
         locale = await get_server_locale(interaction.guild.id)
+        if not await ensure_bot_permission(interaction, "moderation.actions.revert", locale=locale):
+            return
         custom_id = interaction.message.embeds[0].footer.text if interaction.message and interaction.message.embeds else ""
         action_id = custom_id.replace("Action ID: ", "").strip()
         async with get_async_session() as session:
@@ -267,6 +270,9 @@ async def kick(
         await interaction.response.send_message(tr(None, "common.server_only"), ephemeral=True)
         return
     await interaction.response.defer(ephemeral=True)
+    locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "moderation.actions.apply.kick", locale=locale):
+        return
     result = await _create_member_action(
         interaction=interaction,
         user=user,
@@ -278,7 +284,6 @@ async def kick(
     if result is None:
         return
     created, selected_rule_label = result
-    locale = await get_server_locale(interaction.guild.id)
     success_message = tr(locale, "action.kick_success", mention=user.mention, rule=selected_rule_label)
     await send_public_action_notice(interaction, success_message)
     await interaction.followup.send(
@@ -314,6 +319,9 @@ async def ban(
         await interaction.response.send_message(tr(None, "common.server_only"), ephemeral=True)
         return
     await interaction.response.defer(ephemeral=True)
+    locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "moderation.actions.apply.ban", locale=locale):
+        return
     try:
         duration_selection = resolve_duration_selection(
             preset=duration,
@@ -342,7 +350,6 @@ async def ban(
     if result is None:
         return
     created, selected_rule_label = result
-    locale = await get_server_locale(interaction.guild.id)
     duration = (
         tr(locale, "action.ban_duration_suffix", duration=duration_selection.label)
         if duration_selection.minutes is not None
@@ -371,6 +378,8 @@ async def unban(interaction: discord.Interaction, user: discord.User, reason: st
         return
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "moderation.actions.apply.ban", locale=locale):
+        return
     note = reason.strip() if reason else "Manual unban"
     try:
         await interaction.guild.unban(user, reason=f"Unbanned by {interaction.user} ({interaction.user.id}). {note}")
@@ -403,6 +412,18 @@ async def unban(interaction: discord.Interaction, user: discord.User, reason: st
 async def action_rule_autocomplete(interaction: discord.Interaction, current: str):
     if interaction.guild_id is None:
         return []
+    command_name = getattr(getattr(interaction, "command", None), "name", "")
+    permission_key = (
+        "moderation.actions.apply.ban"
+        if command_name == "ban"
+        else "moderation.actions.apply.kick"
+    )
+    if not await has_bot_permission(
+        guild_id=interaction.guild_id,
+        user_id=interaction.user.id,
+        permission_key=permission_key,
+    ):
+        return []
     try:
         async with get_async_session() as session:
             rules = await fetch_active_rule_models(session=session, server_id=interaction.guild_id)
@@ -415,6 +436,18 @@ async def action_rule_autocomplete(interaction: discord.Interaction, current: st
 @ban.autocomplete("case")
 async def action_case_autocomplete(interaction: discord.Interaction, current: str):
     if interaction.guild_id is None:
+        return []
+    command_name = getattr(getattr(interaction, "command", None), "name", "")
+    permission_key = (
+        "moderation.actions.apply.ban"
+        if command_name == "ban"
+        else "moderation.actions.apply.kick"
+    )
+    if not await has_bot_permission(
+        guild_id=interaction.guild_id,
+        user_id=interaction.user.id,
+        permission_key=permission_key,
+    ):
         return []
     target = getattr(getattr(interaction, "namespace", None), "user", None)
     target_id = getattr(target, "id", None)
@@ -438,6 +471,8 @@ async def actions_list(
         return
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "moderation.actions.view", locale=locale):
+        return
     async with get_async_session() as session:
         actions = await list_action_summaries(
             session=session,
@@ -476,6 +511,8 @@ async def action_manage(interaction: discord.Interaction, action_id: str):
         return
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "moderation.actions.view", locale=locale):
+        return
     try:
         async with get_async_session() as session:
             action = await get_action_details(session=session, server_id=interaction.guild.id, action_id=UUID(action_id))
@@ -499,6 +536,8 @@ async def action_revert(interaction: discord.Interaction, action_id: str, reason
         return
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "moderation.actions.revert", locale=locale):
+        return
     async with get_async_session() as session:
         action = await _fetch_action_for_server(session, interaction.guild.id, action_id)
     if action is None:

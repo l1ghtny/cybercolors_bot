@@ -240,8 +240,22 @@ class DeletedMessageReadModel(BaseModel):
     attachments_json: str | None = None
     attachments: list[DeletedMessageAttachmentModel] = Field(default_factory=list)
     deleted_at: datetime
+    deletion_type: str
     author: ModerationActorModel | None = None
     deleted_by: ModerationActorModel | None = None
+
+
+class DeletedAttachmentReadModel(BaseModel):
+    deleted_message_id: str
+    server_id: str
+    message_id: str
+    channel_id: str
+    channel_name: str | None = None
+    deleted_at: datetime
+    deletion_type: str
+    author: ModerationActorModel | None = None
+    deleted_by: ModerationActorModel | None = None
+    attachment: DeletedMessageAttachmentModel
 
 
 class DeletedMessageLinkModel(BaseModel):

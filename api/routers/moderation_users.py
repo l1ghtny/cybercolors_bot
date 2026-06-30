@@ -167,6 +167,7 @@ async def get_monitored_users(
     server_id: int,
     active_only: bool = Query(default=True),
     include_counts: bool = Query(default=False),
+    source: str | None = Query(default=None, pattern=r"^(manual|newcomer)$"),
     session: AsyncSession = Depends(get_session),
 ):
     return await list_monitored_users_service(
@@ -174,6 +175,7 @@ async def get_monitored_users(
         server_id=server_id,
         active_only=active_only,
         include_counts=include_counts,
+        source=source,
     )
 
 

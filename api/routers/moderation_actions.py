@@ -11,17 +11,23 @@ from api.dependencies.current_user import (
     get_optional_current_discord_user_id,
     resolve_actor_user_id,
 )
-from api.dependencies.server_access import require_server_dashboard_access
+from api.dependencies.server_access import require_server_dashboard_access, require_server_permission
 from api.services.dashboard_access_service import assert_dashboard_access
 from api.models.moderation_actions import (
     ModerationActionCreate,
     ModerationActionRead,
     ModerationActionSummaryModel,
 )
-from api.models.moderation_cases import DeletedMessageCreateModel, DeletedMessageLinkModel, DeletedMessageReadModel
+from api.models.moderation_cases import (
+    DeletedAttachmentReadModel,
+    DeletedMessageCreateModel,
+    DeletedMessageLinkModel,
+    DeletedMessageReadModel,
+)
 from api.services.moderation_core import to_moderation_history
 from api.services.moderation_actions_service import (
     add_deleted_message_for_action as add_deleted_message_for_action_service,
+    browse_deleted_attachments_for_server,
     browse_deleted_messages_for_server,
     create_action as create_action_service,
     get_action_details as get_action_details_service,
@@ -305,6 +311,36 @@ async def get_moderation_action_details(
     session: AsyncSession = Depends(get_session),
 ):
     return await get_action_details_service(session=session, server_id=server_id, action_id=action_id)
+
+@moderation_actions_router.get(
+    "/deleted-attachments/{server_id}",
+    response_model=list[DeletedAttachmentReadModel],
+    dependencies=[Depends(require_server_dashboard_access)],
+)
+async def browse_deleted_attachments(
+    server_id: int,
+    author_user_id: str | None = Query(default=None, pattern=r"^\d+$"),
+    channel_id: str | None = Query(default=None, pattern=r"^\d+$"),
+    since: datetime | None = Query(default=None),
+    kind: str = Query(default="image", pattern=r"^(image|all)$"),
+    deletion_type: str | None = Query(default=None, pattern=r"^(self|moderator|unknown)$"),
+    sort_by: str = Query(default="deleted_at", pattern=r"^(deleted_at|deletion_type)$"),
+    limit: int = Query(default=200, ge=1, le=1000),
+    session: AsyncSession = Depends(get_session),
+    _: int = Depends(require_server_permission("moderation.actions.view")),
+):
+    return await browse_deleted_attachments_for_server(
+        session=session,
+        server_id=server_id,
+        author_user_id=author_user_id,
+        channel_id=channel_id,
+        since=since,
+        kind=kind,
+        deletion_type=deletion_type,
+        sort_by=sort_by,
+        limit=limit,
+    )
+
 
 @moderation_actions_router.get(
     "/deleted-messages/{server_id}",

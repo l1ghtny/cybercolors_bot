@@ -1,3 +1,4 @@
+from datetime import datetime
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -35,6 +36,10 @@ async def _to_monitored_user_read(
         id=str(item.id),
         server_id=str(item.server_id),
         reason=item.reason,
+        source=item.source,
+        release_due_at=item.release_due_at,
+        released_at=item.released_at,
+        release_error=item.release_error,
         is_active=item.is_active,
         created_at=item.created_at,
         updated_at=item.updated_at,
@@ -181,10 +186,13 @@ async def list_monitored_users(
     server_id: int,
     active_only: bool = True,
     include_counts: bool = False,
+    source: str | None = None,
 ) -> list[MonitoredUserReadModel]:
     statement = select(MonitoredUser).where(MonitoredUser.server_id == server_id)
     if active_only:
         statement = statement.where(MonitoredUser.is_active.is_(True))
+    if source is not None:
+        statement = statement.where(MonitoredUser.source == source)
     statement = statement.order_by(MonitoredUser.updated_at.desc())
     rows = (await session.exec(statement)).all()
     counts_map = (
@@ -205,6 +213,8 @@ async def upsert_monitored_user(
     user_id: int,
     reason: str | None,
     added_by_user_id: int,
+    source: str = "manual",
+    release_due_at: datetime | None = None,
 ) -> MonitoredUserReadModel:
     await build_actor(session, server_id, user_id)
     await build_actor(session, server_id, added_by_user_id, require_membership=True)
@@ -223,6 +233,10 @@ async def upsert_monitored_user(
         existing.is_active = True
         if reason is not None:
             existing.reason = reason
+        existing.source = source
+        existing.release_due_at = release_due_at
+        existing.released_at = None
+        existing.release_error = None
         existing.added_by_user_id = added_by_user_id
         existing.updated_at = naive_utcnow()
         session.add(existing)
@@ -243,6 +257,8 @@ async def upsert_monitored_user(
         user_id=user_id,
         added_by_user_id=added_by_user_id,
         reason=reason,
+        source=source,
+        release_due_at=release_due_at,
         is_active=True,
     )
     session.add(item)

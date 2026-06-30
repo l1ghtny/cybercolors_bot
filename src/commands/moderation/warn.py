@@ -17,6 +17,7 @@ from src.modules.moderation.bot_services import (
     rule_label,
     validate_target_for_moderation,
 )
+from src.modules.moderation.bot_rbac import ensure_bot_permission, has_bot_permission
 
 
 @app_commands.command(
@@ -37,6 +38,8 @@ async def warn(
 
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "moderation.actions.apply.warn", locale=locale):
+        return
 
     try:
         async with get_async_session() as session:
@@ -117,6 +120,12 @@ async def warn(
 async def warn_rule_autocomplete(interaction: discord.Interaction, current: str):
     if interaction.guild_id is None:
         return []
+    if not await has_bot_permission(
+        guild_id=interaction.guild_id,
+        user_id=interaction.user.id,
+        permission_key="moderation.actions.apply.warn",
+    ):
+        return []
 
     try:
         async with get_async_session() as session:
@@ -130,6 +139,12 @@ async def warn_rule_autocomplete(interaction: discord.Interaction, current: str)
 @warn.autocomplete("case")
 async def warn_case_autocomplete(interaction: discord.Interaction, current: str):
     if interaction.guild_id is None:
+        return []
+    if not await has_bot_permission(
+        guild_id=interaction.guild_id,
+        user_id=interaction.user.id,
+        permission_key="moderation.actions.apply.warn",
+    ):
         return []
 
     target = getattr(getattr(interaction, "namespace", None), "user", None)

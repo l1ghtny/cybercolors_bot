@@ -8,7 +8,7 @@ from src.modules.logs_setup import logger
 
 load_dotenv(override=True)
 
-t_key = os.getenv("timezonedb_key")
+t_key = os.getenv("TIMEZONEDB_KEY") or os.getenv("timezonedb_key")
 
 logger = logger.logging.getLogger("bot")
 

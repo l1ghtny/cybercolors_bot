@@ -40,6 +40,9 @@ def test_rbac_catalog_contains_presets_and_permission_keys():
     assert "localization.settings.edit" in permission_keys
     assert "temp_voice.settings.edit" in permission_keys
     assert "temp_voice.settings.view" in permission_keys
+    assert "ai.suggestions.view" in permission_keys
+    assert "ai.decisions.view" in permission_keys
+    assert "ai.suggestions.review" in permission_keys
     assert "admin" in preset_keys
     assert "moderator" in preset_keys
 
@@ -75,11 +78,20 @@ def test_settings_write_routes_use_feature_permissions():
         ("PUT", "/servers/{server_id}/security/permissions"): {"security.settings.edit"},
         ("PUT", "/servers/{server_id}/security/lockdown"): {"security.lockdown.manage"},
         ("GET", "/servers/{server_id}/temp-voice"): {"temp_voice.settings.view"},
+        ("GET", "/servers/{server_id}/temp-voice/archives"): {"temp_voice.settings.view"},
+        ("GET", "/servers/{server_id}/temp-voice/archives/{log_id}"): {"temp_voice.settings.view"},
+        ("GET", "/servers/{server_id}/temp-voice/archives/{log_id}/transcript.txt"): {"temp_voice.settings.view"},
         ("PUT", "/servers/{server_id}/temp-voice"): {"temp_voice.settings.edit"},
         ("POST", "/servers/{server_id}/temp-voice/trigger-channel/create"): {"temp_voice.settings.edit"},
+        ("GET", "/moderation/deleted-attachments/{server_id}"): {"moderation.actions.view"},
         ("PUT", "/servers/{server_id}/moderation-settings"): {"moderation.settings.edit"},
         ("POST", "/servers/{server_id}/moderation-settings/create-mute-role"): {"moderation.settings.edit"},
         ("PUT", "/servers/{server_id}/ai-settings"): {"ai.settings.edit"},
+        ("GET", "/servers/{server_id}/ai/suggestions"): {"ai.suggestions.view"},
+        ("POST", "/servers/{server_id}/ai/suggestions/{suggestion_id}/approve"): {"ai.suggestions.review"},
+        ("POST", "/servers/{server_id}/ai/suggestions/{suggestion_id}/tweak"): {"ai.suggestions.review"},
+        ("POST", "/servers/{server_id}/ai/suggestions/{suggestion_id}/dismiss"): {"ai.suggestions.review"},
+        ("GET", "/servers/{server_id}/ai/decisions"): {"ai.decisions.view"},
         ("GET", "/servers/{server_id}/ai/knowledge"): {"ai.knowledge.view"},
         ("POST", "/servers/{server_id}/ai/knowledge"): {"ai.knowledge.manage"},
         ("POST", "/servers/{server_id}/ai/knowledge/search"): {"ai.knowledge.view"},

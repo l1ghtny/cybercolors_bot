@@ -4,25 +4,27 @@ from api.services.ai_settings import can_invoke_answer_flow
 from src.db.database import get_async_session
 from src.db.models import ServerAISettings
 from src.modules.chat_bot.create_response import create_one_response, create_response_to_dialog
+from src.modules.localization.service import tr
 from src.misc_files.check_if_message_has_reply import check_replies
 
+REPLY_THREAD_LIMIT = 8
 
-async def decide_on_response(message, client):
+
+async def decide_on_response(message, client, *, locale: str | None = None):
     if check_replies(message) is False:
         bot_response, token_total = await create_one_response(message, client)
     else:
         n, messages_raw = await count_replies(message)
-        if n > 8:
-            bot_response = 'Извини, я могу запомнить только пять запросов, не более. Если хочешь пообщаться, обратись ко мне заново'
+        if n > REPLY_THREAD_LIMIT:
+            bot_response = tr(locale, "ai_reply.thread_limit", limit=REPLY_THREAD_LIMIT)
             token_total = 0
+        elif verify_user(messages_raw, message, client):
+            messages_processed = await organise_messages(messages_raw, client)
+            messages_processed.append({"role": "user", "content": await remove_bot_mention(message, client)})
+            bot_response, token_total = await create_response_to_dialog(messages_processed, message=message)
         else:
-            if verify_user(messages_raw, message, client):
-                messages_processed = await organise_messages(messages_raw, client)
-                messages_processed.append({'role': 'user', 'content': await remove_bot_mention(message, client)})
-                bot_response, token_total = await create_response_to_dialog(messages_processed, message=message)
-            else:
-                bot_response = 'В цепочке ответов более одного пользователя. Я могу поддерживать диалог только с одним пользователем, извини'
-                token_total = 0
+            bot_response = tr(locale, "ai_reply.thread_multi_user")
+            token_total = 0
     return bot_response, token_total
 
 
@@ -64,7 +66,8 @@ async def check_for_channel(message_to_check_for_channel, client):
 async def remove_bot_mention(message_to_remove_mention, client):
     content = message_to_remove_mention.content
     bot_id = client.user.id
-    new_content = content.replace(f'<@{bot_id}>', '')
+    new_content = content.replace(f"<@{bot_id}>", "")
+    new_content = new_content.replace(f"<@!{bot_id}>", "")
     return new_content
 
 
@@ -77,10 +80,12 @@ async def count_replies(message):
         reference = message.reference
         my_message_id = reference.message_id
         message = await channel.fetch_message(my_message_id)
-        messages_raw.append({
-            "author": message.author.id,
-            "content": message.content
-        })
+        messages_raw.append(
+            {
+                "author": message.author.id,
+                "content": message.content,
+            }
+        )
     return n, messages_raw
 
 
@@ -88,27 +93,23 @@ async def organise_messages(messages, client):
     messages.reverse()
     messages_processed = []
     for i in messages:
-        if i['content'].startswith(f'<@{client.user.id}>'):
-            content = i['content']
-            new_message = content.replace(f'<@{client.user.id}>', '')
-            messages_processed.append({'role': 'user', 'content': new_message})
-        elif i['author'] == client.user.id:
-            new_message = i['content']
-            messages_processed.append({'role': 'assistant', 'content': new_message})
+        if i["content"].startswith(f"<@{client.user.id}>"):
+            content = i["content"]
+            new_message = content.replace(f"<@{client.user.id}>", "")
+            new_message = new_message.replace(f"<@!{client.user.id}>", "")
+            messages_processed.append({"role": "user", "content": new_message})
+        elif i["author"] == client.user.id:
+            new_message = i["content"]
+            messages_processed.append({"role": "assistant", "content": new_message})
         else:
-            new_message = i['content']
-            messages_processed.append({'role': 'user', 'content': new_message})
+            new_message = i["content"]
+            messages_processed.append({"role": "user", "content": new_message})
     return messages_processed
 
 
 def verify_user(messages, message, client):
-    user_verified = False
-    messages_authors = []
-    for i in messages:
-        messages_authors.append(i['author'])
+    messages_authors = [i["author"] for i in messages]
     unique = set(messages_authors)
-    unique.remove(client.user.id)
+    unique.discard(client.user.id)
     unique.add(message.author.id)
-    if len(unique) == 1:
-        user_verified = not user_verified
-    return user_verified
+    return len(unique) == 1

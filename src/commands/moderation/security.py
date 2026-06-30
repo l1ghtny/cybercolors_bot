@@ -18,6 +18,7 @@ from api.services.server_security import (
 from src.db.database import get_async_session
 from src.db.models import ServerSecuritySettings
 from src.modules.localization.service import get_server_locale, tr
+from src.modules.moderation.bot_rbac import ensure_bot_permission
 
 
 def _utcnow_naive() -> datetime:
@@ -53,6 +54,8 @@ async def security_set_verified_role(interaction: discord.Interaction, role: dis
         return
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "security.settings.edit", locale=locale):
+        return
 
     async with get_async_session() as session:
         settings = await get_or_create_server_security_settings(session=session, server_id=interaction.guild.id, server_name=interaction.guild.name)
@@ -80,6 +83,8 @@ async def security_newcomer_role_suggestion(interaction: discord.Interaction):
         return
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "security.settings.edit", locale=locale):
+        return
     suggestion = build_newcomer_role_suggestion()
     await interaction.followup.send(
         tr(
@@ -113,6 +118,8 @@ async def security_set_newcomer_role(
         return
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "security.settings.edit", locale=locale):
+        return
     async with get_async_session() as session:
         settings = await update_newcomer_role(
             session=session,
@@ -158,6 +165,8 @@ async def security_create_newcomer_role(
         return
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "security.settings.edit", locale=locale):
+        return
     try:
         color = _parse_color_hex(color_hex)
         body = ServerSecurityCreateNewcomerRoleModel(
@@ -211,6 +220,8 @@ async def security_capture_permissions(interaction: discord.Interaction, mode: a
         return
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "security.settings.edit", locale=locale):
+        return
     settings = await _get_or_create_security_settings(interaction.guild.id, interaction.guild.name)
     role = interaction.guild.get_role(settings.verified_role_id) if settings.verified_role_id else None
     if not role:
@@ -246,6 +257,8 @@ async def security_lockdown(interaction: discord.Interaction, enabled: bool):
         return
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "security.lockdown.manage", locale=locale):
+        return
     settings = await _get_or_create_security_settings(interaction.guild.id, interaction.guild.name)
     role = interaction.guild.get_role(settings.verified_role_id) if settings.verified_role_id else None
     if not role:
@@ -294,6 +307,8 @@ async def verify_member(interaction: discord.Interaction, user: discord.Member):
         return
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "security.settings.edit", locale=locale):
+        return
     settings = await _get_or_create_security_settings(interaction.guild.id, interaction.guild.name)
     role = interaction.guild.get_role(settings.verified_role_id) if settings.verified_role_id else None
     if not role:

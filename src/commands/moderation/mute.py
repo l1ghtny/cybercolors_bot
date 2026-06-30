@@ -26,6 +26,7 @@ from src.modules.moderation.bot_services import (
     rule_label,
     validate_target_for_moderation,
 )
+from src.modules.moderation.bot_rbac import ensure_bot_permission, has_bot_permission
 from src.modules.moderation.durations import (
     action_duration_choices,
     duration_unit_choices,
@@ -79,6 +80,8 @@ async def _apply_mute_overwrites(guild: discord.Guild, role: discord.Role) -> tu
 async def moderation_settings(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "moderation.settings.view", locale=locale):
+        return
     not_configured = tr(locale, "common.not_configured")
     async with get_async_session() as session:
         settings = await get_or_create_server_moderation_settings(
@@ -126,6 +129,9 @@ async def moderation_settings(interaction: discord.Interaction):
 )
 async def moderation_set_mute_role(interaction: discord.Interaction, role: discord.Role):
     await interaction.response.defer(ephemeral=True)
+    locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "moderation.settings.edit", locale=locale):
+        return
     async with get_async_session() as session:
         await update_server_moderation_settings(
             session=session,
@@ -134,7 +140,6 @@ async def moderation_set_mute_role(interaction: discord.Interaction, role: disco
         )
         await session.commit()
 
-    locale = await get_server_locale(interaction.guild.id)
     await interaction.followup.send(tr(locale, "settings.mute_role_set", role_name=role.name), ephemeral=True)
 
 
@@ -146,6 +151,8 @@ async def moderation_set_mute_role(interaction: discord.Interaction, role: disco
 async def moderation_set_log_channel(interaction: discord.Interaction, channel: discord.TextChannel):
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "moderation.settings.edit", locale=locale):
+        return
     try:
         async with get_async_session() as session:
             await update_server_moderation_settings(
@@ -171,6 +178,8 @@ async def moderation_set_log_channel(interaction: discord.Interaction, channel: 
 async def moderation_clear_log_channel(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "moderation.settings.edit", locale=locale):
+        return
     async with get_async_session() as session:
         await update_server_moderation_settings(
             session=session,
@@ -195,6 +204,8 @@ async def moderation_clear_log_channel(interaction: discord.Interaction):
 async def moderation_set_language(interaction: discord.Interaction, language: app_commands.Choice[str]):
     await interaction.response.defer(ephemeral=True)
     current_locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "localization.settings.edit", locale=current_locale):
+        return
     requested = language.value.lower().strip()
     if not is_supported_locale(requested):
         await interaction.followup.send(
@@ -223,6 +234,9 @@ async def moderation_set_language(interaction: discord.Interaction, language: ap
 )
 async def moderation_create_mute_role(interaction: discord.Interaction, role_name: str = "Muted"):
     await interaction.response.defer(ephemeral=True)
+    locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "moderation.settings.edit", locale=locale):
+        return
     role = await interaction.guild.create_role(
         name=role_name,
         permissions=discord.Permissions.none(),
@@ -238,7 +252,6 @@ async def moderation_create_mute_role(interaction: discord.Interaction, role_nam
         )
         await session.commit()
 
-    locale = await get_server_locale(interaction.guild.id)
     await interaction.followup.send(
         tr(locale, "settings.mute_role_created", role_name=role.name, edited=edited, failed=failed),
         ephemeral=True,
@@ -258,6 +271,8 @@ async def moderation_set_mute_defaults(
 ):
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "moderation.settings.edit", locale=locale):
+        return
     if default_minutes > max_minutes:
         await interaction.followup.send(tr(locale, "settings.default_over_max"), ephemeral=True)
         return
@@ -307,6 +322,8 @@ async def mute(
 ):
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "moderation.actions.apply.mute", locale=locale):
+        return
 
     try:
         async with get_async_session() as session:
@@ -426,6 +443,12 @@ async def mute(
 async def mute_rule_autocomplete(interaction: discord.Interaction, current: str):
     if interaction.guild_id is None:
         return []
+    if not await has_bot_permission(
+        guild_id=interaction.guild_id,
+        user_id=interaction.user.id,
+        permission_key="moderation.actions.apply.mute",
+    ):
+        return []
     try:
         async with get_async_session() as session:
             rules = await fetch_active_rule_models(session=session, server_id=interaction.guild_id)
@@ -437,6 +460,12 @@ async def mute_rule_autocomplete(interaction: discord.Interaction, current: str)
 @mute.autocomplete("case")
 async def mute_case_autocomplete(interaction: discord.Interaction, current: str):
     if interaction.guild_id is None:
+        return []
+    if not await has_bot_permission(
+        guild_id=interaction.guild_id,
+        user_id=interaction.user.id,
+        permission_key="moderation.actions.apply.mute",
+    ):
         return []
 
     target = getattr(getattr(interaction, "namespace", None), "user", None)
@@ -466,6 +495,8 @@ async def unmute(
 ):
     await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "moderation.actions.apply.mute", locale=locale):
+        return
     note = reason.strip() if reason else tr(locale, "common.manual_unmute_reason")
     moderation_target_error = validate_target_for_moderation(interaction, user, locale)
     if moderation_target_error:

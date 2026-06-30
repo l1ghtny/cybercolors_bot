@@ -7,6 +7,10 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 ADD src ./src
+ADD api ./api
+ADD alembic ./alembic
+ADD scripts ./scripts
 COPY main.py .
+COPY alembic.ini .
 
 CMD [ "python", "main.py" ]
