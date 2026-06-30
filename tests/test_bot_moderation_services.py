@@ -7,7 +7,12 @@ from sqlmodel import select
 
 from api.models.moderation_actions import ModerationActionCreate
 from api.models.moderation_rules import ModerationRuleReadModel
-from api.services.moderation_actions_service import _build_action_log_embed, _build_action_log_message, create_action
+from api.services.moderation_actions_service import (
+    _build_action_log_embed,
+    _build_action_log_message,
+    create_action,
+    revert_action,
+)
 from api.services.moderation_rules_service import create_manual_rule
 from src.db.database import engine, get_async_session
 from src.modules.localization.service import tr
@@ -635,6 +640,127 @@ def test_create_action_ban_effect_calls_discord_ban():
 
     assert len(banned_users) == 1
     assert banned_users[0]["delete_message_seconds"] == 0
+
+
+async def _revert_ban_action_scenario(unbanned_users: list[dict]) -> None:
+    async def fake_unban_guild_member(server_id: int, user_id: int) -> None:
+        unbanned_users.append({"server_id": server_id, "user_id": user_id})
+
+    import api.services.moderation_actions_service as action_service
+
+    original_unban = action_service.unban_guild_member
+    action_service.unban_guild_member = fake_unban_guild_member
+
+    server_id = _make_discord_id()
+    moderator_id = _make_discord_id()
+    target_id = _make_discord_id()
+
+    try:
+        async with get_async_session() as session:
+            session.add(Server(server_id=server_id, server_name="revert-ban-server", bot_active=True))
+            session.add(GlobalUser(discord_id=moderator_id, username="moderator"))
+            session.add(GlobalUser(discord_id=target_id, username="target"))
+            action = ModerationAction(
+                action_type=ActionType.BAN,
+                moderator_user_id=moderator_id,
+                reason="bad behavior",
+                target_user_id=target_id,
+                server_id=server_id,
+                is_active=True,
+            )
+            session.add(action)
+            await session.flush()
+            action_id = action.id
+
+            read, discord_changed = await revert_action(
+                session=session,
+                server_id=server_id,
+                action_id=action_id,
+                moderator_user_id=moderator_id,
+                reason="appeal accepted",
+            )
+            await session.commit()
+
+        async with get_async_session() as session:
+            stored = await session.get(ModerationAction, action_id)
+            assert stored.is_active is False
+            assert stored.expires_at is not None
+        assert read.is_active is False
+        assert discord_changed is True
+    finally:
+        action_service.unban_guild_member = original_unban
+        await engine.dispose()
+
+
+def test_revert_ban_action_unbans_and_closes_action():
+    unbanned_users: list[dict] = []
+    asyncio.run(_revert_ban_action_scenario(unbanned_users))
+
+    assert len(unbanned_users) == 1
+
+
+async def _revert_mute_action_scenario(removed_roles: list[dict]) -> None:
+    async def fake_fetch_guild_member(server_id: int, user_id: int) -> dict:
+        return {"user": {"id": str(user_id)}, "roles": [str(mute_role_id)]}
+
+    async def fake_remove_guild_member_role(server_id: int, user_id: int, role_id: int) -> None:
+        removed_roles.append({"server_id": server_id, "user_id": user_id, "role_id": role_id})
+
+    import api.services.moderation_actions_service as action_service
+
+    original_fetch_member = action_service.fetch_guild_member
+    original_remove_role = action_service.remove_guild_member_role
+    action_service.fetch_guild_member = fake_fetch_guild_member
+    action_service.remove_guild_member_role = fake_remove_guild_member_role
+
+    server_id = _make_discord_id()
+    moderator_id = _make_discord_id()
+    target_id = _make_discord_id()
+    mute_role_id = _make_discord_id()
+
+    try:
+        async with get_async_session() as session:
+            session.add(Server(server_id=server_id, server_name="revert-mute-server", bot_active=True))
+            session.add(GlobalUser(discord_id=moderator_id, username="moderator"))
+            session.add(GlobalUser(discord_id=target_id, username="target"))
+            session.add(ServerModerationSettings(server_id=server_id, mute_role_id=mute_role_id))
+            action = ModerationAction(
+                action_type=ActionType.MUTE,
+                moderator_user_id=moderator_id,
+                reason="spam",
+                target_user_id=target_id,
+                server_id=server_id,
+                is_active=True,
+            )
+            session.add(action)
+            await session.flush()
+            action_id = action.id
+
+            read, discord_changed = await revert_action(
+                session=session,
+                server_id=server_id,
+                action_id=action_id,
+                moderator_user_id=moderator_id,
+                reason=None,
+            )
+            await session.commit()
+
+        async with get_async_session() as session:
+            stored = await session.get(ModerationAction, action_id)
+            assert stored.is_active is False
+        assert read.is_active is False
+        assert discord_changed is True
+    finally:
+        action_service.fetch_guild_member = original_fetch_member
+        action_service.remove_guild_member_role = original_remove_role
+        await engine.dispose()
+
+
+def test_revert_mute_action_removes_mute_role_and_closes_action():
+    removed_roles: list[dict] = []
+    asyncio.run(_revert_mute_action_scenario(removed_roles))
+
+    assert len(removed_roles) == 1
 
 
 def test_default_dashboard_base_url_is_modral(monkeypatch):

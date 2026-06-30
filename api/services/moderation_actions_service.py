@@ -27,7 +27,10 @@ from api.services.discord_guilds import (
     create_channel_message,
     create_direct_message,
     fetch_guild_channels,
+    fetch_guild_member,
     kick_guild_member,
+    remove_guild_member_role,
+    unban_guild_member,
 )
 from api.services.moderation_core import (
     build_actor,
@@ -59,6 +62,7 @@ from src.db.models import (
     ServerModerationSettings,
 )
 from src.modules.localization.service import normalize_locale_code, tr
+from src.modules.moderation.mod_log import build_action_revert_log_message
 from src.modules.moderation.moderation_helpers import check_if_server_exists, check_if_user_exists
 from src.modules.moderation.mute_management import deactivate_user_mutes
 
@@ -863,6 +867,116 @@ async def get_action_details(
     if action.server_id != server_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Moderation action not found")
     return to_moderation_history([action])[0]
+
+
+async def _apply_discord_revert_for_action(
+    *,
+    session: AsyncSession,
+    action: ModerationAction,
+) -> bool:
+    if action.action_type == ActionType.MUTE:
+        settings = await session.get(ServerModerationSettings, action.server_id)
+        if not settings or not settings.mute_role_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Mute role is not configured for this server",
+            )
+        member = await fetch_guild_member(action.server_id, action.target_user_id)
+        member_role_ids = {int(role_id) for role_id in (member or {}).get("roles", [])}
+        if int(settings.mute_role_id) not in member_role_ids:
+            return False
+        try:
+            await remove_guild_member_role(
+                server_id=action.server_id,
+                user_id=action.target_user_id,
+                role_id=settings.mute_role_id,
+            )
+        except HTTPException as exc:
+            if exc.status_code == status.HTTP_404_NOT_FOUND:
+                return False
+            raise
+        return True
+
+    if action.action_type == ActionType.BAN:
+        try:
+            await unban_guild_member(action.server_id, action.target_user_id)
+        except HTTPException as exc:
+            if exc.status_code == status.HTTP_404_NOT_FOUND:
+                return False
+            raise
+        return True
+
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail="This action type cannot be reverted from Discord",
+    )
+
+
+async def _send_action_revert_to_mod_log(
+    *,
+    session: AsyncSession,
+    action: ModerationAction,
+    moderator_user_id: int,
+    reason: str,
+    discord_changed: bool,
+) -> None:
+    settings = await session.get(ServerModerationSettings, action.server_id)
+    if not settings or not settings.mod_log_channel_id:
+        return
+
+    locale = await _get_server_locale(session=session, server_id=action.server_id)
+    content = build_action_revert_log_message(
+        action_type=action.action_type.value if hasattr(action.action_type, "value") else str(action.action_type),
+        action_id=str(action.id),
+        target_user_id=action.target_user_id,
+        moderator_user_id=moderator_user_id,
+        reason=reason,
+        reverted=discord_changed,
+        locale=locale,
+    )
+    try:
+        await create_channel_message(channel_id=settings.mod_log_channel_id, content=content)
+    except Exception as error:
+        logger.warning(
+            "Failed to send moderation action revert log to channel %s for server %s: %s",
+            settings.mod_log_channel_id,
+            action.server_id,
+            error,
+        )
+
+
+async def revert_action(
+    *,
+    session: AsyncSession,
+    server_id: int,
+    action_id: UUID,
+    moderator_user_id: int,
+    reason: str | None = None,
+) -> tuple[ModerationActionRead, bool]:
+    action = await _load_action_for_read(session=session, action_id=action_id)
+    if action.server_id != server_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Moderation action not found")
+    if not action.is_active:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This action is already inactive")
+
+    resolved_reason = (reason or "").strip() or f"Reverted from dashboard by {moderator_user_id}"
+    discord_changed = await _apply_discord_revert_for_action(session=session, action=action)
+
+    action.is_active = False
+    action.expires_at = action.expires_at or naive_utcnow()
+    session.add(action)
+    await session.flush()
+
+    await _send_action_revert_to_mod_log(
+        session=session,
+        action=action,
+        moderator_user_id=moderator_user_id,
+        reason=resolved_reason,
+        discord_changed=discord_changed,
+    )
+
+    action = await _load_action_for_read(session=session, action_id=action_id)
+    return to_moderation_history([action])[0], discord_changed
 
 
 async def get_user_history_summary_by_search(

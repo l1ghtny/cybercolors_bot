@@ -77,3 +77,12 @@ class ModerationActionSummaryModel(BaseModel):
     is_active: bool
     rules_count: int = 0
     deleted_messages_count: int = 0
+
+
+class ModerationActionRevertRequest(BaseModel):
+    reason: str | None = None
+
+
+class ModerationActionRevertRead(BaseModel):
+    action: ModerationActionRead
+    discord_changed: bool

@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import List
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.dependencies.auth import get_bearer_access_token
@@ -16,6 +16,8 @@ from api.services.dashboard_access_service import assert_dashboard_access
 from api.models.moderation_actions import (
     ModerationActionCreate,
     ModerationActionRead,
+    ModerationActionRevertRead,
+    ModerationActionRevertRequest,
     ModerationActionSummaryModel,
 )
 from api.models.moderation_cases import (
@@ -36,6 +38,7 @@ from api.services.moderation_actions_service import (
     get_user_history_summary_by_search,
     list_action_summaries,
     link_existing_deleted_message_to_action as link_existing_deleted_message_to_action_service,
+    revert_action as revert_action_service,
 )
 from src.db.database import get_session
 from src.db.models import ModerationAction
@@ -250,6 +253,27 @@ async def list_moderation_actions(
         target_user_id=int(target_user_id) if target_user_id else None,
         limit=limit,
     )
+
+
+@moderation_actions_router.post(
+    "/actions/{server_id}/{action_id}/revert",
+    response_model=ModerationActionRevertRead,
+)
+async def revert_moderation_action(
+    server_id: int,
+    action_id: UUID,
+    body: ModerationActionRevertRequest = Body(default_factory=ModerationActionRevertRequest),
+    session: AsyncSession = Depends(get_session),
+    current_user_id: int = Depends(require_server_permission("moderation.actions.revert")),
+):
+    action, discord_changed = await revert_action_service(
+        session=session,
+        server_id=server_id,
+        action_id=action_id,
+        moderator_user_id=current_user_id,
+        reason=body.reason,
+    )
+    return ModerationActionRevertRead(action=action, discord_changed=discord_changed)
 
 
 
