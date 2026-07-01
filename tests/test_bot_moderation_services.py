@@ -763,6 +763,49 @@ def test_revert_mute_action_removes_mute_role_and_closes_action():
     assert len(removed_roles) == 1
 
 
+async def _revert_warn_action_scenario() -> None:
+    server_id = _make_discord_id()
+    moderator_id = _make_discord_id()
+    target_id = _make_discord_id()
+
+    async with get_async_session() as session:
+        session.add(Server(server_id=server_id, server_name="revert-warn-server", bot_active=True))
+        session.add(GlobalUser(discord_id=moderator_id, username="moderator"))
+        session.add(GlobalUser(discord_id=target_id, username="target"))
+        action = ModerationAction(
+            action_type=ActionType.WARN,
+            moderator_user_id=moderator_id,
+            reason="rule break",
+            target_user_id=target_id,
+            server_id=server_id,
+            is_active=True,
+        )
+        session.add(action)
+        await session.flush()
+        action_id = action.id
+
+        read, discord_changed = await revert_action(
+            session=session,
+            server_id=server_id,
+            action_id=action_id,
+            moderator_user_id=moderator_id,
+            reason="warn accepted by mistake",
+        )
+        await session.commit()
+
+    async with get_async_session() as session:
+        stored = await session.get(ModerationAction, action_id)
+        assert stored.is_active is False
+        assert stored.expires_at is not None
+    assert read.is_active is False
+    assert discord_changed is False
+    await engine.dispose()
+
+
+def test_revert_warn_action_closes_action_without_discord_effect():
+    asyncio.run(_revert_warn_action_scenario())
+
+
 def test_default_dashboard_base_url_is_modral(monkeypatch):
     from api.services.moderation_actions_service import _dashboard_action_url
 

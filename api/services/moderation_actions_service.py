@@ -874,6 +874,9 @@ async def _apply_discord_revert_for_action(
     session: AsyncSession,
     action: ModerationAction,
 ) -> bool:
+    if action.action_type == ActionType.WARN:
+        return False
+
     if action.action_type == ActionType.MUTE:
         settings = await session.get(ServerModerationSettings, action.server_id)
         if not settings or not settings.mute_role_id:
