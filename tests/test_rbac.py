@@ -88,6 +88,7 @@ def test_settings_write_routes_use_feature_permissions():
         ("GET", "/servers/{server_id}/temp-voice/archives/{log_id}/transcript.txt"): {"temp_voice.settings.view"},
         ("PUT", "/servers/{server_id}/temp-voice"): {"temp_voice.settings.edit"},
         ("POST", "/servers/{server_id}/temp-voice/trigger-channel/create"): {"temp_voice.settings.edit"},
+        ("GET", "/moderation/message-log/{server_id}"): {"moderation.actions.view"},
         ("GET", "/moderation/deleted-attachments/{server_id}"): {"moderation.actions.view"},
         ("PUT", "/servers/{server_id}/moderation-settings"): {"moderation.settings.edit"},
         ("POST", "/servers/{server_id}/moderation-settings/create-mute-role"): {"moderation.settings.edit"},

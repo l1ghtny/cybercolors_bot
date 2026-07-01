@@ -18,8 +18,12 @@ from src.db.database import engine, get_async_session
 from src.modules.localization.service import tr
 from src.db.models import (
     ActionType,
+    AttachmentLog,
+    DeletedMessage,
     GlobalUser,
+    MessageLog,
     ModerationAction,
+    ModerationActionDeletedMessageLink,
     ModerationActionRuleCitation,
     Server,
     ServerModerationSettings,
@@ -386,6 +390,136 @@ async def _mute_effect_scenario(added_roles: list[dict]) -> None:
 def test_create_action_mute_effect_assigns_role_and_deactivates_previous_mutes():
     added_roles: list[dict] = []
     asyncio.run(_mute_effect_scenario(added_roles))
+
+
+async def _action_message_cleanup_scenario(deleted_messages: list[dict]) -> None:
+    import api.services.moderation_actions_service as action_service
+
+    original_delete_channel_message = action_service.delete_channel_message
+
+    async def fake_delete_channel_message(channel_id: int, message_id: int) -> None:
+        deleted_messages.append({"channel_id": channel_id, "message_id": message_id})
+
+    action_service.delete_channel_message = fake_delete_channel_message
+
+    server_id = _make_discord_id()
+    moderator_id = _make_discord_id()
+    target_id = _make_discord_id()
+    other_user_id = _make_discord_id()
+    channel_id = _make_discord_id()
+    selected_message_id = _make_discord_id()
+    recent_message_id = _make_discord_id()
+    other_message_id = _make_discord_id()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    try:
+        async with get_async_session() as session:
+            session.add(Server(server_id=server_id, server_name="cleanup-server", bot_active=True))
+            session.add(GlobalUser(discord_id=moderator_id, username="moderator"))
+            session.add(GlobalUser(discord_id=target_id, username="target"))
+            session.add(GlobalUser(discord_id=other_user_id, username="other"))
+            session.add(User(user_id=moderator_id, server_id=server_id, server_nickname="mod", is_member=True))
+            session.add(User(user_id=target_id, server_id=server_id, server_nickname="target", is_member=True))
+            session.add(User(user_id=other_user_id, server_id=server_id, server_nickname="other", is_member=True))
+            await session.flush()
+            session.add(
+                MessageLog(
+                    message_id=selected_message_id,
+                    server_id=server_id,
+                    channel_id=channel_id,
+                    user_id=target_id,
+                    content="selected message",
+                    created_at=now,
+                )
+            )
+            session.add(
+                AttachmentLog(
+                    message_id=selected_message_id,
+                    storage_key="https://cdn.example/selected.png",
+                    file_name="selected.png",
+                    content_type="image/png",
+                )
+            )
+            session.add(
+                MessageLog(
+                    message_id=recent_message_id,
+                    server_id=server_id,
+                    channel_id=channel_id,
+                    user_id=target_id,
+                    content="recent message",
+                    created_at=now,
+                )
+            )
+            session.add(
+                MessageLog(
+                    message_id=other_message_id,
+                    server_id=server_id,
+                    channel_id=channel_id,
+                    user_id=other_user_id,
+                    content="other message",
+                    created_at=now,
+                )
+            )
+            payload = ModerationActionCreate(
+                action_type=ActionType.WARN,
+                moderator_user_id=moderator_id,
+                reason="cleanup warn",
+                target_user_id=target_id,
+                target_user_name="target",
+                target_user_joined_at=now,
+                target_user_server_nickname="target",
+                server_id=server_id,
+                server_name="cleanup-server",
+                message_cleanup={
+                    "message_ids": [str(selected_message_id), str(other_message_id)],
+                    "recent_period_minutes": 60,
+                    "recent_limit": 5,
+                },
+            )
+            created = await create_action(
+                session=session,
+                action=payload,
+                moderator_user_id=moderator_id,
+                apply_discord_effects=False,
+            )
+            created_action_id = created.id
+            await session.commit()
+
+        async with get_async_session() as session:
+            remaining_logs = (
+                await session.exec(select(MessageLog).where(MessageLog.server_id == server_id))
+            ).all()
+            deleted_rows = (
+                await session.exec(
+                    select(DeletedMessage).where(DeletedMessage.server_id == server_id)
+                )
+            ).all()
+            link_rows = (
+                await session.exec(
+                    select(ModerationActionDeletedMessageLink).where(
+                        ModerationActionDeletedMessageLink.moderation_action_id == created_action_id
+                    )
+                )
+            ).all()
+
+        assert [row.message_id for row in remaining_logs] == [other_message_id]
+        assert sorted(row.message_id for row in deleted_rows) == sorted(
+            [selected_message_id, recent_message_id]
+        )
+        assert all(row.deleted_by_user_id == moderator_id for row in deleted_rows)
+        assert len(link_rows) == 2
+        selected_deleted = next(row for row in deleted_rows if row.message_id == selected_message_id)
+        assert "selected.png" in (selected_deleted.attachments_json or "")
+    finally:
+        action_service.delete_channel_message = original_delete_channel_message
+        await engine.dispose()
+
+
+def test_create_action_can_delete_and_link_target_messages():
+    deleted_messages: list[dict] = []
+    asyncio.run(_action_message_cleanup_scenario(deleted_messages))
+
+    assert len(deleted_messages) == 2
 
 
 async def _discord_effect_runs_after_action_flush_scenario(effect_observations: list[dict]) -> None:

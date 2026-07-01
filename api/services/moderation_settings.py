@@ -15,7 +15,8 @@ from api.services.discord_guilds import (
     fetch_guild_roles,
 )
 from api.services.moderation_core import naive_utcnow
-from src.db.models import Server, ServerModerationSettings
+from src.db.models import Server, ServerLocalizationSettings, ServerModerationSettings
+from src.modules.localization.service import normalize_locale_code, tr
 
 
 async def get_or_create_server_moderation_settings(
@@ -196,9 +197,11 @@ async def check_mod_log_setting(
                 ok=False,
                 error="Configured moderation log channel must be a text or announcement channel",
             )
+        localization_settings = await session.get(ServerLocalizationSettings, server_id)
+        locale = normalize_locale_code(localization_settings.locale_code if localization_settings else None)
         await create_channel_message(
             channel_id=settings.mod_log_channel_id,
-            content="Moderation log test message. If you can see this, the CyberColors bot can post here.",
+            content=tr(locale, "settings.mod_log_test_message"),
         )
     except HTTPException as exc:
         return ServerModerationSettingsTestResultModel(ok=False, error=str(exc.detail))

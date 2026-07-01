@@ -78,6 +78,9 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
             "Creates or links a moderation case when requested, creates a warn action, and commits it.",
             "Posts a public action notice in the channel and an ephemeral moderator receipt.",
         ],
+        notes=[
+            "The dashboard action form can also delete selected or recent target-user messages and link them to the action as deleted-message evidence.",
+        ],
     ),
     BotCommandDocModel(
         id="mod.mute",
@@ -107,6 +110,9 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
             "Checks the mute role exists and is below the bot role.",
             "Resolves the duration from preset or custom fields within the server maximum.",
             "Logs the mute action, applies Discord effects, posts a public notice, and returns an ephemeral receipt.",
+        ],
+        notes=[
+            "The dashboard action form can also delete selected or recent target-user messages and link them to the action as deleted-message evidence.",
         ],
     ),
     BotCommandDocModel(
@@ -171,6 +177,9 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
             "Validates target hierarchy and selected rule.",
             "Creates the moderation action with Discord ban effects enabled.",
             "Posts public notice and an ephemeral moderator receipt.",
+        ],
+        notes=[
+            "The dashboard action form can also delete selected or recent target-user messages and link them to the action as deleted-message evidence.",
         ],
     ),
     BotCommandDocModel(
@@ -643,9 +652,13 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         components=[
             _component("button", "Open dashboard", "Link button to the moderation action in the dashboard."),
             _component("button", "Add info in dashboard", "Second dashboard link button for adding details."),
+            _component("dashboard", "Delete messages", "Dashboard action form can delete selected or recent target-user messages and attach them to the action."),
             _component("button", "Revert", "Danger button enabled for active mute and ban actions."),
         ],
-        workflow=["Loads action details, sends an action embed, and displays dashboard links plus a conditional revert button."],
+        workflow=[
+            "Loads action details, sends an action embed, and displays dashboard links plus a conditional revert button.",
+            "Deleted-message evidence is managed in the dashboard, including linking existing deleted messages and cleanup performed while applying an action.",
+        ],
     ),
     BotCommandDocModel(
         id="mod.actions.revert",
@@ -911,6 +924,10 @@ RU_COMPONENTS_BY_LABEL: dict[str, tuple[str, str]] = {
     "Birthday role": ("Роль дня рождения", "Выбор роли Discord, которую бот выдает именинникам."),
     "Create default": ("Создать стандартный", "Создает стандартный текстовый канал для дней рождения."),
     "Delete": ("Удалить", "Подтверждает удаление."),
+    "Delete messages": (
+        "Удалить сообщения",
+        "Опция панели управления: удаляет выбранные или недавние сообщения цели и привязывает их к действию.",
+    ),
     "Cancel": ("Отмена", "Оставляет запись без изменений."),
     "Matching triggers": ("Найденные триггеры", "Если совпадений несколько, позволяет выбрать нужный триггер."),
     "Open case": ("Открыть дело", "Кнопка-ссылка на дело в панели управления."),

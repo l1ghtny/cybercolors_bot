@@ -1,10 +1,47 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from api.models.moderation_cases import ModerationRuleRef
 from src.db.models import ActionType
+
+
+class ModerationActionMessageCleanupCreate(BaseModel):
+    message_ids: list[str] = Field(default_factory=list)
+    recent_period_minutes: int | None = Field(default=None, ge=1, le=10080)
+    recent_limit: int = Field(default=25, ge=1, le=100)
+    channel_ids: list[str] = Field(default_factory=list)
+
+    @field_validator("message_ids", "channel_ids")
+    @classmethod
+    def validate_discord_ids(cls, value: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        for item in value:
+            candidate = str(item).strip()
+            if not candidate:
+                continue
+            if not candidate.isdigit():
+                raise ValueError("Discord IDs must contain only digits")
+            if candidate not in cleaned:
+                cleaned.append(candidate)
+        return cleaned
+
+    @model_validator(mode="after")
+    def validate_cleanup_requested(self):
+        if not self.message_ids and self.recent_period_minutes is None:
+            raise ValueError("Select message_ids or recent_period_minutes")
+        return self
+
+
+class ModerationMessageLogReadModel(BaseModel):
+    message_id: str
+    server_id: str
+    channel_id: str
+    channel_name: str | None = None
+    author_user_id: str
+    content: str
+    created_at: datetime
 
 
 class ModerationActionCreate(BaseModel):
@@ -22,6 +59,7 @@ class ModerationActionCreate(BaseModel):
     target_user_server_nickname: str | None
     server_id: int
     server_name: str
+    message_cleanup: ModerationActionMessageCleanupCreate | None = None
 
     @model_validator(mode="after")
     def validate_reason_or_rule(self):

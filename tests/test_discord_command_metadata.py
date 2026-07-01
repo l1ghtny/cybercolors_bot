@@ -200,6 +200,7 @@ def test_bot_command_catalog_exposes_moderation_command_details():
     assert {component.label for component in command.components} == {
         "Open dashboard",
         "Add info in dashboard",
+        "Delete messages",
         "Revert",
     }
 

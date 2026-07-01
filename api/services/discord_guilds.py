@@ -249,6 +249,10 @@ async def create_channel_message(
     return {}
 
 
+async def delete_channel_message(channel_id: int, message_id: int) -> None:
+    await _discord_delete(f"/channels/{channel_id}/messages/{message_id}")
+
+
 async def create_user_dm_channel(user_id: int) -> dict:
     payload = await _discord_post(
         "/users/@me/channels",

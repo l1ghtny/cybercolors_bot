@@ -13,8 +13,10 @@ from api.dependencies.current_user import (
 )
 from api.dependencies.server_access import require_server_dashboard_access, require_server_permission
 from api.services.dashboard_access_service import assert_dashboard_access
+from api.services.rbac_service import assert_user_has_permission
 from api.models.moderation_actions import (
     ModerationActionCreate,
+    ModerationMessageLogReadModel,
     ModerationActionRead,
     ModerationActionRevertRead,
     ModerationActionRevertRequest,
@@ -36,6 +38,7 @@ from api.services.moderation_actions_service import (
     get_deleted_messages_for_action as get_deleted_messages_for_action_service,
     get_server_history_summary,
     get_user_history_summary_by_search,
+    list_message_logs_for_server,
     list_action_summaries,
     link_existing_deleted_message_to_action as link_existing_deleted_message_to_action_service,
     revert_action as revert_action_service,
@@ -74,6 +77,13 @@ async def require_action_body_dashboard_access(
         session=session,
         server_id=action.server_id,
         caller_user_id=current_user_id,
+        access_token=access_token,
+    )
+    await assert_user_has_permission(
+        session=session,
+        server_id=action.server_id,
+        user_id=current_user_id,
+        permission_key=f"moderation.actions.apply.{action.action_type.value}",
         access_token=access_token,
     )
     return current_user_id
@@ -251,6 +261,30 @@ async def list_moderation_actions(
         session=session,
         server_id=server_id,
         target_user_id=int(target_user_id) if target_user_id else None,
+        limit=limit,
+    )
+
+
+@moderation_actions_router.get(
+    "/message-log/{server_id}",
+    response_model=list[ModerationMessageLogReadModel],
+    dependencies=[Depends(require_server_dashboard_access)],
+)
+async def browse_message_log(
+    server_id: int,
+    user_id: str | None = Query(default=None, pattern=r"^\d+$"),
+    channel_id: str | None = Query(default=None, pattern=r"^\d+$"),
+    since: datetime | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=200),
+    session: AsyncSession = Depends(get_session),
+    _: int = Depends(require_server_permission("moderation.actions.view")),
+):
+    return await list_message_logs_for_server(
+        session=session,
+        server_id=server_id,
+        user_id=user_id,
+        channel_id=channel_id,
+        since=since,
         limit=limit,
     )
 

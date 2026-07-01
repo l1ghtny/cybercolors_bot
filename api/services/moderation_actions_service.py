@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import logging
 import os
@@ -12,6 +12,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.models.moderation_actions import (
     ModerationActionCreate,
+    ModerationMessageLogReadModel,
     ModerationActionRead,
     ModerationActionSummaryModel,
 )
@@ -26,6 +27,7 @@ from api.services.discord_guilds import (
     ban_guild_member,
     create_channel_message,
     create_direct_message,
+    delete_channel_message,
     fetch_guild_channels,
     fetch_guild_member,
     kick_guild_member,
@@ -48,8 +50,10 @@ from api.services.moderation_queries import (
 )
 from src.db.models import (
     ActionType,
+    AttachmentLog,
     DeletedMessage,
     GlobalUser,
+    MessageLog,
     ModerationAction,
     ModerationActionDeletedMessageLink,
     ModerationActionRuleCitation,
@@ -758,6 +762,13 @@ async def create_action(
             cited_at=db_action.created_at,
         )
 
+    await _delete_and_link_cleanup_messages_for_action(
+        session=session,
+        action=action,
+        action_id=db_action.id,
+        moderator_user_id=moderator_user_id,
+    )
+
     db_action = await _load_action_for_read(session=session, action_id=db_action.id)
 
     if apply_discord_effects:
@@ -1059,6 +1070,173 @@ async def _get_channel_names(server_id: int) -> dict[int, str]:
         return {int(ch["id"]): ch.get("name", "") for ch in channels}
     except Exception:
         return {}
+
+
+async def list_message_logs_for_server(
+    session: AsyncSession,
+    server_id: int,
+    user_id: str | None = None,
+    channel_id: str | None = None,
+    since: datetime | None = None,
+    limit: int = 100,
+) -> list[ModerationMessageLogReadModel]:
+    statement = select(MessageLog).where(MessageLog.server_id == server_id)
+    if user_id:
+        statement = statement.where(MessageLog.user_id == int(user_id))
+    if channel_id:
+        statement = statement.where(MessageLog.channel_id == int(channel_id))
+    if since:
+        statement = statement.where(MessageLog.created_at >= since)
+    statement = statement.order_by(MessageLog.created_at.desc(), MessageLog.message_id.desc()).limit(limit)
+    messages = (await session.exec(statement)).all()
+    channel_names = await _get_channel_names(server_id)
+    return [
+        ModerationMessageLogReadModel(
+            message_id=str(message.message_id),
+            server_id=str(message.server_id),
+            channel_id=str(message.channel_id),
+            channel_name=channel_names.get(message.channel_id),
+            author_user_id=str(message.user_id),
+            content=message.content,
+            created_at=message.created_at,
+        )
+        for message in messages
+    ]
+
+
+async def _message_logs_for_action_cleanup(
+    session: AsyncSession,
+    action: ModerationActionCreate,
+) -> list[MessageLog]:
+    cleanup = action.message_cleanup
+    if cleanup is None:
+        return []
+
+    collected: dict[int, MessageLog] = {}
+    if cleanup.message_ids:
+        explicit_ids = [int(item) for item in cleanup.message_ids]
+        explicit_rows = (
+            await session.exec(
+                select(MessageLog).where(
+                    MessageLog.server_id == action.server_id,
+                    MessageLog.user_id == action.target_user_id,
+                    MessageLog.message_id.in_(explicit_ids),
+                )
+            )
+        ).all()
+        for row in explicit_rows:
+            collected[row.message_id] = row
+
+    if cleanup.recent_period_minutes is not None:
+        since = naive_utcnow() - timedelta(minutes=cleanup.recent_period_minutes)
+        recent_statement = select(MessageLog).where(
+            MessageLog.server_id == action.server_id,
+            MessageLog.user_id == action.target_user_id,
+            MessageLog.created_at >= since,
+        )
+        if cleanup.channel_ids:
+            recent_statement = recent_statement.where(
+                MessageLog.channel_id.in_([int(item) for item in cleanup.channel_ids])
+            )
+        recent_statement = recent_statement.order_by(
+            MessageLog.created_at.desc(),
+            MessageLog.message_id.desc(),
+        ).limit(cleanup.recent_limit)
+        recent_rows = (await session.exec(recent_statement)).all()
+        for row in recent_rows:
+            collected[row.message_id] = row
+
+    return sorted(collected.values(), key=lambda item: (item.created_at, item.message_id), reverse=True)
+
+
+async def _move_deleted_message_logs_to_action(
+    session: AsyncSession,
+    *,
+    messages: list[MessageLog],
+    action_id: UUID,
+    deleted_by_user_id: int,
+) -> int:
+    if not messages:
+        return 0
+
+    message_ids = [message.message_id for message in messages]
+    attachment_rows = (
+        await session.exec(select(AttachmentLog).where(AttachmentLog.message_id.in_(message_ids)))
+    ).all()
+    attachments_by_message_id: dict[int, list[AttachmentLog]] = {}
+    for attachment in attachment_rows:
+        attachments_by_message_id.setdefault(attachment.message_id, []).append(attachment)
+
+    deleted_at = naive_utcnow()
+    moved_count = 0
+    for message in messages:
+        attachments = attachments_by_message_id.get(message.message_id, [])
+        attachments_json = (
+            json.dumps(
+                [
+                    {
+                        "storage_key": attachment.storage_key,
+                        "file_name": attachment.file_name,
+                        "content_type": attachment.content_type,
+                    }
+                    for attachment in attachments
+                ]
+            )
+            if attachments
+            else None
+        )
+        deleted_message = DeletedMessage(
+            server_id=message.server_id,
+            message_id=message.message_id,
+            channel_id=message.channel_id,
+            author_user_id=message.user_id,
+            content=message.content,
+            attachments_json=attachments_json,
+            deleted_at=deleted_at,
+            deleted_by_user_id=deleted_by_user_id,
+        )
+        session.add(deleted_message)
+        await session.flush()
+        session.add(
+            ModerationActionDeletedMessageLink(
+                moderation_action_id=action_id,
+                deleted_message_id=deleted_message.id,
+                linked_by_user_id=deleted_by_user_id,
+                linked_at=deleted_at,
+            )
+        )
+        for attachment in attachments:
+            await session.delete(attachment)
+        await session.delete(message)
+        moved_count += 1
+    await session.flush()
+    return moved_count
+
+
+async def _delete_and_link_cleanup_messages_for_action(
+    session: AsyncSession,
+    *,
+    action: ModerationActionCreate,
+    action_id: UUID,
+    moderator_user_id: int,
+) -> int:
+    messages = await _message_logs_for_action_cleanup(session=session, action=action)
+    if not messages:
+        return 0
+
+    for message in messages:
+        try:
+            await delete_channel_message(channel_id=message.channel_id, message_id=message.message_id)
+        except HTTPException as exc:
+            if exc.status_code != status.HTTP_404_NOT_FOUND:
+                raise
+
+    return await _move_deleted_message_logs_to_action(
+        session=session,
+        messages=messages,
+        action_id=action_id,
+        deleted_by_user_id=moderator_user_id,
+    )
 
 
 async def add_deleted_message_for_action(

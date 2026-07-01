@@ -2,7 +2,8 @@ import asyncio
 from uuid import uuid4
 
 from api.services.moderation_settings import check_mod_log_setting, check_mute_role_setting
-from src.db.models import Server, ServerModerationSettings
+from src.db.models import Server, ServerLocalizationSettings, ServerModerationSettings
+from src.modules.localization.service import tr
 
 
 def _make_discord_id() -> int:
@@ -10,14 +11,17 @@ def _make_discord_id() -> int:
 
 
 class FakeSession:
-    def __init__(self, settings: ServerModerationSettings):
+    def __init__(self, settings: ServerModerationSettings, locale_code: str | None = None):
         self.settings = settings
+        self.locale_code = locale_code
 
     async def get(self, model, key):
         if model is Server:
             return Server(server_id=key, server_name="moderation-settings-test", bot_active=True)
         if model is ServerModerationSettings:
             return self.settings
+        if model is ServerLocalizationSettings and self.locale_code:
+            return ServerLocalizationSettings(server_id=key, locale_code=self.locale_code)
         return None
 
 
@@ -67,10 +71,27 @@ async def _moderation_settings_test_scenario(monkeypatch) -> None:
     assert sent_messages == [
         {
             "channel_id": mod_log_channel_id,
-            "content": (
-                "Moderation log test message. "
-                "If you can see this, the CyberColors bot can post here."
-            ),
+            "content": tr("en", "settings.mod_log_test_message"),
+            "embeds": None,
+        }
+    ]
+
+    sent_messages.clear()
+    ru_session = FakeSession(
+        ServerModerationSettings(
+            server_id=server_id,
+            mute_role_id=mute_role_id,
+            mod_log_channel_id=mod_log_channel_id,
+        ),
+        locale_code="ru",
+    )
+    ru_result = await check_mod_log_setting(session=ru_session, server_id=server_id)
+
+    assert ru_result.ok is True
+    assert sent_messages == [
+        {
+            "channel_id": mod_log_channel_id,
+            "content": tr("ru", "settings.mod_log_test_message"),
             "embeds": None,
         }
     ]

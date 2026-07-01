@@ -1,4 +1,15 @@
+from src.modules.localization.catalog import TRANSLATIONS
 from src.modules.localization.service import tr
+
+
+def test_ru_catalog_source_values_are_not_mojibake():
+    mojibake_markers = ("Ã", "Â", "\ufffd")
+    broken = [
+        key
+        for key, value in TRANSLATIONS["ru"].items()
+        if any(marker in value for marker in mojibake_markers)
+    ]
+    assert broken == []
 
 
 def test_ru_settings_labels_are_not_mojibake():
