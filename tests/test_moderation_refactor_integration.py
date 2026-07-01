@@ -32,6 +32,7 @@ from api.services.moderation_users_service import build_user_profile_card, list_
 from src.db.database import get_async_session
 from src.db.models import (
     ActionType,
+    Birthday,
     CaseStatus,
     GlobalUser,
     ModerationActionRuleCitation,
@@ -390,11 +391,18 @@ async def _scenario_monitoring_cross_refs_and_profile_rule_stats() -> None:
         assert exc.value.status_code == 400
         assert exc.value.detail == "user_not_in_case"
 
+        session.add(Birthday(user_id=target_id, day=7, month=11, timezone="Europe/Moscow"))
+        await session.flush()
+
         profile = await build_user_profile_card(
             session=session,
             server_id=server_id,
             user_id=target_id,
         )
+        assert profile.birthday is not None
+        assert profile.birthday.day == 7
+        assert profile.birthday.month == 11
+        assert profile.birthday.timezone == "Europe/Moscow"
         assert profile.monitored is True
         assert profile.monitored_summary is not None
         assert profile.top_rules_violated

@@ -10,6 +10,7 @@ from api.models.user_profiles import (
     MonitoredUserSummaryModel,
     TopRuleViolationModel,
     UserActivitySummaryModel,
+    UserBirthdayModel,
     UserModerationActionSummaryModel,
     UserModerationCaseSummaryModel,
     UserProfileCardModel,
@@ -18,6 +19,7 @@ from api.services.moderation_actions_service import list_action_summaries
 from api.services.moderation_cases_service import list_cases as list_cases_service
 from api.services.moderation_core import get_nickname_history, to_nickname_record
 from src.db.models import (
+    Birthday,
     CaseStatus,
     GlobalUser,
     MessageLog,
@@ -58,6 +60,7 @@ async def build_user_profile_card(
 
     membership = (await session.exec(select(User).where(User.server_id == server_id, User.user_id == user_id))).first()
     display_name = membership.server_nickname if membership and membership.server_nickname else (global_user.username or str(user_id))
+    birthday = await session.get(Birthday, user_id)
 
     activity_totals = (
         await session.exec(
@@ -257,6 +260,11 @@ async def build_user_profile_card(
         joined_discord=global_user.joined_discord,
         is_member=membership.is_member if membership else False,
         flagged_absent_at=membership.flagged_absent_at if membership else None,
+        birthday=(
+            UserBirthdayModel(day=birthday.day, month=birthday.month, timezone=birthday.timezone)
+            if birthday
+            else None
+        ),
         activity=activity_payload,
         nickname_history=[to_nickname_record(item) for item in nickname_history],
         moderation_actions_count=int(actions_count),

@@ -64,6 +64,7 @@ def _full_profile() -> dict:
         "joined_discord": "2026-01-01T00:00:00",
         "is_member": True,
         "flagged_absent_at": "2026-02-01T00:00:00",
+        "birthday": {"day": 7, "month": 11, "timezone": "Europe/Moscow"},
         "activity": {"message_count": 25},
         "nickname_history": [{"nickname": "old"}],
         "moderation_actions_count": 2,
@@ -91,6 +92,7 @@ def test_public_member_profile_filters_internal_moderation_data():
     assert public_profile["visibility"] == "public_answer"
     assert public_profile["avatar_hash"] == "avatar"
     assert public_profile["joined_discord"] == "2026-01-01T00:00:00"
+    assert public_profile["birthday"] == {"day": 7, "month": 11, "timezone": "Europe/Moscow"}
     assert public_profile["activity"] == {"message_count": 25}
     assert public_profile["nickname_history"] == [{"nickname": "old"}]
     assert public_profile["moderation_actions_count"] == 2
@@ -117,6 +119,7 @@ def test_moderation_member_profile_keeps_full_profile():
     assert moderation_profile["recent_cases"] == full_profile["recent_cases"]
     assert moderation_profile["monitored"] is True
     assert moderation_profile["monitored_summary"] == full_profile["monitored_summary"]
+    assert moderation_profile["birthday"] == full_profile["birthday"]
     assert moderation_profile["activity"] == full_profile["activity"]
 
 

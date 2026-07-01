@@ -50,6 +50,12 @@ class UserActivityLeaderboardItemModel(BaseModel):
     period_end: datetime | None = None
 
 
+class UserBirthdayModel(BaseModel):
+    day: int
+    month: int
+    timezone: str | None = None
+
+
 class NicknameLogModel(BaseModel):
     nickname: str = Field(min_length=1, max_length=128)
     server_name: str | None = Field(default=None, max_length=128)
@@ -115,6 +121,7 @@ class UserProfileCardModel(BaseModel):
     joined_discord: datetime | None = None
     is_member: bool
     flagged_absent_at: datetime | None = None
+    birthday: UserBirthdayModel | None = None
     activity: UserActivitySummaryModel | None = None
     nickname_history: list[NicknameRecordModel]
     moderation_actions_count: int

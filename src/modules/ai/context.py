@@ -71,6 +71,7 @@ def public_member_profile(profile: dict[str, Any]) -> dict[str, Any]:
         "avatar_hash": profile.get("avatar_hash"),
         "joined_discord": profile.get("joined_discord"),
         "is_member": profile.get("is_member"),
+        "birthday": profile.get("birthday"),
         "activity": profile.get("activity"),
         "nickname_history": profile.get("nickname_history") or [],
         "moderation_actions_count": profile.get("moderation_actions_count", 0),
