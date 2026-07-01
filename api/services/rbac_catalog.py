@@ -45,6 +45,7 @@ PERMISSIONS: tuple[PermissionDefinition, ...] = (
     PermissionDefinition("moderation.actions.revert", "moderation", "Revert actions", "Revert moderation actions."),
     PermissionDefinition("moderation.cases.manage", "moderation", "Manage cases", "Create, update, close, and annotate moderation cases."),
     PermissionDefinition("moderation.rules.manage", "moderation", "Manage rules", "Create and update moderation rules."),
+    PermissionDefinition("moderation.rules.edit", "moderation", "Edit rules manually", "Manually edit, restore, and permanently delete moderation rules."),
     PermissionDefinition("moderation.monitoring.manage", "moderation", "Manage monitoring", "Manage monitored users and queue decisions."),
     PermissionDefinition("moderation.monitoring.rules.manage", "moderation", "Manage monitoring rules", "Manage monitoring rule configuration."),
     PermissionDefinition("birthdays.records.manage", "birthdays", "Manage birthday records", "Add and update member birthdays."),

@@ -34,6 +34,16 @@ from src.db.models import (
 )
 
 RULE_START_RE = re.compile(r"^\s*(?P<num>[1-9]\d?)(?P<marker>\s*[\W_]{0,4})\s*(?P<body>.+)$")
+CUSTOM_EMOJI_RE = re.compile(r"<a?:[^:>]+:\d+>")
+CUSTOM_EMOJI_RULE_START_RE = re.compile(
+    r"^\s*(?P<marker><a?:[^:>]*?(?P<num>[1-9]\d?|ten)[^:>]*?:\d+>)\s*(?P<body>.+)$",
+    re.IGNORECASE,
+)
+KEYCAP_RULE_START_RE = re.compile(r"^\s*(?P<marker>[1-9]\ufe0f?\u20e3|🔟)\s*(?P<body>.+)$")
+INLINE_RULE_BOUNDARY_RE = re.compile(
+    r"(?<!^)(?=\s*(?:\*\*)?\s*(?:[1-9]\d?\s*[\).:-]|[1-9]\ufe0f?\u20e3|🔟|<a?:[^:>]*?(?:[1-9]\d?|ten)[^:>]*?:\d+>))",
+    re.IGNORECASE,
+)
 RULE_USAGE_CACHE_TTL_SECONDS = 60
 _rule_usage_cache: dict[tuple[int, UUID], tuple[float, ModerationRuleUsageModel]] = {}
 
@@ -49,11 +59,38 @@ class ParsedRule:
 
 def _normalize_text(value: str) -> str:
     cleaned = value.replace("ᅠ", " ")
-    cleaned = re.sub(r"<:[^:>]+:\d+>", " ", cleaned)
     cleaned = re.sub(r"\*\*(.*?)\*\*", r"\1", cleaned)
     cleaned = re.sub(r"^\*+|\*+$", "", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned)
     return cleaned.strip()
+
+
+def _normalize_rule_boundaries(text: str) -> str:
+    emoji_tokens: list[str] = []
+
+    def store_emoji(match: re.Match[str]) -> str:
+        emoji_tokens.append(match.group(0))
+        return f"@@DISCORD_EMOJI_{len(emoji_tokens) - 1}@@"
+
+    protected = CUSTOM_EMOJI_RE.sub(store_emoji, text)
+    normalized = INLINE_RULE_BOUNDARY_RE.sub("\n", protected)
+    for index, emoji in enumerate(emoji_tokens):
+        normalized = normalized.replace(f"@@DISCORD_EMOJI_{index}@@", emoji)
+    return normalized
+
+
+def _keycap_code(marker: str) -> str | None:
+    normalized = marker.replace("\ufe0f", "")
+    if normalized == "🔟":
+        return "10"
+    if normalized.endswith("\u20e3") and normalized[0].isdigit():
+        return normalized[0]
+    return None
+
+
+def _custom_emoji_code(match: re.Match[str]) -> str:
+    raw = match.group("num").lower()
+    return "10" if raw == "ten" else raw
 
 
 def _extract_title(description: str) -> str:
@@ -67,7 +104,7 @@ def _extract_title(description: str) -> str:
 
 
 def parse_rules_from_text(text: str) -> list[ParsedRule]:
-    lines = [line.rstrip() for line in text.splitlines()]
+    lines = [line.rstrip() for line in _normalize_rule_boundaries(text).splitlines()]
     parsed: list[ParsedRule] = []
     current_marker: str | None = None
     current_code: str | None = None
@@ -93,6 +130,22 @@ def parse_rules_from_text(text: str) -> list[ParsedRule]:
         )
 
     for line in lines:
+        custom_emoji_match = CUSTOM_EMOJI_RULE_START_RE.match(line)
+        if custom_emoji_match:
+            flush_current()
+            current_marker = custom_emoji_match.group("marker")
+            current_code = _custom_emoji_code(custom_emoji_match)
+            current_lines = [custom_emoji_match.group("body").strip()]
+            continue
+
+        keycap_match = KEYCAP_RULE_START_RE.match(line)
+        if keycap_match:
+            flush_current()
+            current_marker = keycap_match.group("marker")
+            current_code = _keycap_code(current_marker)
+            current_lines = [keycap_match.group("body").strip()]
+            continue
+
         match = RULE_START_RE.match(line)
         if match:
             marker_suffix = (match.group("marker") or "").strip()
@@ -246,6 +299,53 @@ async def deactivate_rule(
     if not rule or rule.server_id != server_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Moderation rule not found")
     rule.is_active = False
+    rule.updated_at = naive_utcnow()
+    session.add(rule)
+    await session.flush()
+    await session.refresh(rule)
+    _invalidate_rule_usage_cache(server_id=server_id, rule_ids=[rule_id])
+    return rule
+
+
+async def activate_rule(
+    session: AsyncSession,
+    server_id: int,
+    rule_id: UUID,
+) -> ModerationRule:
+    rule = await session.get(ModerationRule, rule_id)
+    if not rule or rule.server_id != server_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Moderation rule not found")
+    rule.is_active = True
+    rule.updated_at = naive_utcnow()
+    session.add(rule)
+    await session.flush()
+    await session.refresh(rule)
+    _invalidate_rule_usage_cache(server_id=server_id, rule_ids=[rule_id])
+    return rule
+
+
+async def update_rule_manually(
+    session: AsyncSession,
+    server_id: int,
+    rule_id: UUID,
+    title: str,
+    description: str | None,
+    code: str | None,
+    sort_order: int,
+    is_active: bool | None,
+) -> ModerationRule:
+    rule = await session.get(ModerationRule, rule_id)
+    if not rule or rule.server_id != server_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Moderation rule not found")
+    rule.title = title
+    rule.description = description
+    rule.code = code
+    rule.sort_order = sort_order
+    if is_active is not None:
+        rule.is_active = is_active
+    rule.source_channel_id = None
+    rule.source_message_id = None
+    rule.source_marker = None
     rule.updated_at = naive_utcnow()
     session.add(rule)
     await session.flush()
@@ -474,6 +574,64 @@ async def import_rules_from_message(
         source_channel_id=channel_id,
         source_message_id=message_id,
     )
+
+
+async def sync_rules_from_source_message_edit(
+    session: AsyncSession,
+    server_id: int,
+    channel_id: int,
+    message_id: int,
+    content: str,
+) -> list[ModerationRule]:
+    existing = (
+        await session.exec(
+            select(ModerationRule).where(
+                ModerationRule.server_id == server_id,
+                ModerationRule.source_channel_id == channel_id,
+                ModerationRule.source_message_id == message_id,
+                ModerationRule.is_active == True,
+            )
+        )
+    ).all()
+    if not existing:
+        return []
+
+    parsed_rules = parse_rules_from_text(content)
+    if not parsed_rules:
+        return []
+
+    now = naive_utcnow()
+    first_sort_order = min(rule.sort_order for rule in existing)
+    created_by_user_id = existing[0].created_by_user_id
+    for rule in existing:
+        rule.is_active = False
+        rule.updated_at = now
+        session.add(rule)
+
+    created: list[ModerationRule] = []
+    for index, parsed in enumerate(parsed_rules):
+        rule = ModerationRule(
+            server_id=server_id,
+            code=parsed.code,
+            title=parsed.title,
+            description=parsed.description,
+            sort_order=first_sort_order + index,
+            source_channel_id=channel_id,
+            source_message_id=message_id,
+            source_marker=parsed.marker,
+            is_active=True,
+            created_by_user_id=created_by_user_id,
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(rule)
+        created.append(rule)
+
+    await session.flush()
+    for rule in created:
+        await session.refresh(rule)
+    _invalidate_rule_usage_cache(server_id=server_id)
+    return created
 
 
 def _get_cached_rule_usage(server_id: int, rule_id: UUID) -> ModerationRuleUsageModel | None:

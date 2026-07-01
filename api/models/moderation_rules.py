@@ -22,6 +22,22 @@ class ModerationRuleCreateModel(BaseModel):
         return cleaned or None
 
 
+class ModerationRuleUpdateModel(BaseModel):
+    code: str | None = Field(default=None, max_length=32)
+    title: str = Field(min_length=1, max_length=500)
+    description: str | None = Field(default=None, max_length=10000)
+    sort_order: int = Field(default=0, ge=0)
+    is_active: bool | None = None
+
+    @field_validator("code", "title", "description")
+    @classmethod
+    def normalize_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+
 class ModerationRuleReadModel(BaseModel):
     id: str
     server_id: str

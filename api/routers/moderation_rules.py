@@ -15,9 +15,11 @@ from api.models.moderation_rules import (
     ModerationRuleParseGuideModel,
     ModerationRuleParsePreviewModel,
     ModerationRuleReadModel,
+    ModerationRuleUpdateModel,
     ParsedModerationRuleModel,
 )
 from api.services.moderation_rules_service import (
+    activate_rule,
     create_manual_rule,
     delete_rule_permanently,
     deactivate_rule,
@@ -31,6 +33,7 @@ from api.services.moderation_rules_service import (
     parse_rules_from_text,
     to_parsed_rule_model,
     to_rule_read_model,
+    update_rule_manually,
 )
 from src.db.database import get_session
 
@@ -102,6 +105,27 @@ async def add_server_moderation_rule(
         created_by_user_id=created_by_user_id,
     )
     return to_rule_read_model(rule)
+
+
+@moderation_rules_router.patch("/{server_id}/{rule_id}", response_model=ModerationRuleReadModel)
+async def update_server_moderation_rule(
+    server_id: int,
+    rule_id: UUID,
+    body: ModerationRuleUpdateModel,
+    session: AsyncSession = Depends(get_session),
+    _: int = Depends(require_server_permission("moderation.rules.edit")),
+):
+    updated = await update_rule_manually(
+        session=session,
+        server_id=server_id,
+        rule_id=rule_id,
+        title=body.title,
+        description=body.description,
+        code=body.code,
+        sort_order=body.sort_order,
+        is_active=body.is_active,
+    )
+    return to_rule_read_model(updated)
 
 
 @moderation_rules_router.post("/{server_id}/parse", response_model=list[ParsedModerationRuleModel])
@@ -204,11 +228,22 @@ async def disable_server_moderation_rule(
     return to_rule_read_model(disabled)
 
 
+@moderation_rules_router.post("/{server_id}/{rule_id}/activate", response_model=ModerationRuleReadModel)
+async def activate_server_moderation_rule(
+    server_id: int,
+    rule_id: UUID,
+    session: AsyncSession = Depends(get_session),
+    _: int = Depends(require_server_permission("moderation.rules.edit")),
+):
+    activated = await activate_rule(session=session, server_id=server_id, rule_id=rule_id)
+    return to_rule_read_model(activated)
+
+
 @moderation_rules_router.delete("/{server_id}/{rule_id}/hard", status_code=status.HTTP_204_NO_CONTENT)
 async def hard_delete_server_moderation_rule(
     server_id: int,
     rule_id: UUID,
     session: AsyncSession = Depends(get_session),
-    _: int = Depends(require_server_permission("moderation.rules.manage")),
+    _: int = Depends(require_server_permission("moderation.rules.edit")),
 ):
     await delete_rule_permanently(session=session, server_id=server_id, rule_id=rule_id)

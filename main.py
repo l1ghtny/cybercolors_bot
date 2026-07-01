@@ -91,6 +91,7 @@ from src.modules.on_voice_state_processing.create_voice_channel import create_vo
 from src.modules.moderation.ban_worker import process_expired_bans
 from src.modules.moderation.mute_worker import process_expired_mutes
 from src.modules.moderation.newcomer_restrictions import handle_new_member_restriction
+from api.services.moderation_rules_service import sync_rules_from_source_message_edit
 from src.views.replies.delete_multiple_replies import DeleteReplyMultiple, DeleteReplyMultipleSelect
 from src.views.replies.delete_one_reply import DeleteOneReply
 from src.views.pagination.pagination import PaginationView
@@ -588,6 +589,31 @@ async def on_raw_bulk_message_delete(payload: discord.RawBulkMessageDeleteEvent)
     """Triggered when multiple messages are deleted in bulk."""
     async with AsyncSession(engine) as session:
         await handle_bulk_message_deletion(payload.message_ids, payload.guild_id, session)
+
+
+@client.event
+async def on_raw_message_edit(payload: discord.RawMessageUpdateEvent):
+    if payload.guild_id is None or payload.channel_id is None:
+        return
+    content = payload.data.get("content")
+    if not isinstance(content, str):
+        return
+    async with AsyncSession(engine) as session:
+        try:
+            updated = await sync_rules_from_source_message_edit(
+                session=session,
+                server_id=int(payload.guild_id),
+                channel_id=int(payload.channel_id),
+                message_id=int(payload.message_id),
+                content=content,
+            )
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            logger.exception("Failed to sync rules from edited message %s", payload.message_id)
+            return
+    if updated and hasattr(client, "load_current_server_rules"):
+        await client.load_current_server_rules()
 
 
 # BD MODULE with checking task
