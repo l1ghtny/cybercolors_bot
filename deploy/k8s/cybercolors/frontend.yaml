@@ -99,14 +99,7 @@ spec:
       maxSurge: 25%
       maxUnavailable: 0
       steps:
-        - setWeight: 0
-        - pause: {}
-        - setWeight: 5
-        - pause: {}
-        - setWeight: 20
-        - pause: {}
-        - setWeight: 50
-        - pause: {}
+        - setWeight: 100
       trafficRouting:
         nginx:
           stableIngress: cybercolors-frontend
