@@ -6,6 +6,7 @@ from discord import app_commands
 from fastapi import HTTPException
 from sqlmodel import select
 
+from api.models.moderation_actions import ModerationActionMessageCleanupCreate
 from api.services.moderation_actions_service import (
     _dashboard_action_url,
     create_action,
@@ -16,12 +17,15 @@ from src.db.database import get_async_session
 from src.db.models import ActionType, ModerationAction, ServerModerationSettings
 from src.modules.localization.service import get_server_locale, tr
 from src.modules.moderation.bot_services import (
+    action_message_cleanup_choices,
     build_moderator_action_receipt,
     case_choices,
     build_action_payload,
+    build_message_cleanup_request,
     fetch_active_rule_models,
     fetch_open_case_models,
     find_rule,
+    message_cleanup_receipt_lines,
     resolve_case_id_for_action,
     rule_choices,
     rule_label,
@@ -201,6 +205,7 @@ async def _create_member_action(
     commentary: str | None,
     case: str | None,
     expires_at: datetime | None = None,
+    message_cleanup: ModerationActionMessageCleanupCreate | None = None,
 ):
     locale = await get_server_locale(interaction.guild.id)
     try:
@@ -243,6 +248,7 @@ async def _create_member_action(
                 reason=None,
                 expires_at=expires_at,
                 case_id=case_id,
+                message_cleanup=message_cleanup,
             )
             created = await create_action(
                 session=session,
@@ -304,6 +310,12 @@ async def kick(
 @app_commands.choices(
     duration=action_duration_choices(include_permanent=True),
     duration_unit=duration_unit_choices(),
+    delete_messages=action_message_cleanup_choices(),
+)
+@app_commands.describe(
+    delete_messages="Delete recent logged messages by this user.",
+    delete_message_limit="Maximum messages to delete when delete_messages is set.",
+    delete_message_channel="Only delete messages from this channel.",
 )
 async def ban(
     interaction: discord.Interaction,
@@ -314,6 +326,9 @@ async def ban(
     duration_unit: app_commands.Choice[str] | None = None,
     commentary: str | None = None,
     case: str | None = None,
+    delete_messages: app_commands.Choice[int] | None = None,
+    delete_message_limit: app_commands.Range[int, 1, 100] | None = None,
+    delete_message_channel: discord.TextChannel | None = None,
 ):
     if interaction.guild is None:
         await interaction.response.send_message(tr(None, "common.server_only"), ephemeral=True)
@@ -338,6 +353,11 @@ async def ban(
     expires_at = None
     if duration_selection.minutes is not None:
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=duration_selection.minutes)
+    message_cleanup = build_message_cleanup_request(
+        delete_messages=delete_messages,
+        delete_message_limit=delete_message_limit,
+        delete_message_channel=delete_message_channel,
+    )
     result = await _create_member_action(
         interaction=interaction,
         user=user,
@@ -346,6 +366,7 @@ async def ban(
         commentary=commentary,
         case=case,
         expires_at=expires_at,
+        message_cleanup=message_cleanup,
     )
     if result is None:
         return
@@ -364,6 +385,11 @@ async def ban(
             public_message=success_message,
             action=created,
             rule=selected_rule_label,
+            extra_lines=message_cleanup_receipt_lines(
+                locale=locale,
+                cleanup=message_cleanup,
+                channel=delete_message_channel,
+            ),
         ),
         ephemeral=True,
         allowed_mentions=discord.AllowedMentions.none(),

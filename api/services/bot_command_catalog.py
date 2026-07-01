@@ -55,6 +55,33 @@ DURATION_CHOICES = [
     _choice("30 days", "30d"),
 ]
 DURATION_UNIT_CHOICES = [_choice("minutes"), _choice("hours"), _choice("days"), _choice("weeks"), _choice("months")]
+MESSAGE_CLEANUP_CHOICES = [
+    _choice("15 minutes", "15"),
+    _choice("1 hour", "60"),
+    _choice("6 hours", "360"),
+    _choice("24 hours", "1440"),
+    _choice("7 days", "10080"),
+]
+DELETE_MESSAGES_PARAM = _param(
+    "delete_messages",
+    "choice",
+    "Optional recent-message window to delete logged target-user messages while applying the action.",
+    required=False,
+    choices=MESSAGE_CLEANUP_CHOICES,
+)
+DELETE_MESSAGE_LIMIT_PARAM = _param(
+    "delete_message_limit",
+    "integer",
+    "Maximum messages to delete for delete_messages; defaults to 25 and is capped at 100.",
+    required=False,
+    default="25",
+)
+DELETE_MESSAGE_CHANNEL_PARAM = _param(
+    "delete_message_channel",
+    "text_channel",
+    "Optional channel scope for command-triggered message cleanup.",
+    required=False,
+)
 
 
 BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
@@ -66,20 +93,30 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         category="moderation-actions",
         summary="Warn a member, cite a server rule, and log the moderation action.",
         required_permissions=["moderate_members"],
-        parameters=[USER_PARAM, RULE_PARAM, COMMENTARY_PARAM, CASE_PARAM],
+        parameters=[
+            USER_PARAM,
+            RULE_PARAM,
+            COMMENTARY_PARAM,
+            CASE_PARAM,
+            DELETE_MESSAGES_PARAM,
+            DELETE_MESSAGE_LIMIT_PARAM,
+            DELETE_MESSAGE_CHANNEL_PARAM,
+        ],
         components=[
             _component("autocomplete", "rule", "Searches active server moderation rules."),
             _component("autocomplete", "case", "Suggests open cases for the selected target member."),
+            _component("choices", "delete_messages", "Optional recent-message cleanup windows from 15 minutes to 7 days."),
         ],
         workflow=[
             "Validates the command is run in a server.",
             "Loads active server rules and requires a valid selected rule.",
             "Validates the moderator can act on the target member.",
             "Creates or links a moderation case when requested, creates a warn action, and commits it.",
+            "When delete_messages is set, deletes recent logged messages from the target user and links them as deleted-message evidence.",
             "Posts a public action notice in the channel and an ephemeral moderator receipt.",
         ],
         notes=[
-            "The dashboard action form can also delete selected or recent target-user messages and link them to the action as deleted-message evidence.",
+            "Commands support recent target-user cleanup. The dashboard additionally supports selecting specific logged messages.",
         ],
     ),
     BotCommandDocModel(
@@ -98,21 +135,26 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
             _param("duration_unit", "choice", "Unit for duration_value. Defaults to minutes when duration_value is used.", required=False, choices=DURATION_UNIT_CHOICES),
             COMMENTARY_PARAM,
             CASE_PARAM,
+            DELETE_MESSAGES_PARAM,
+            DELETE_MESSAGE_LIMIT_PARAM,
+            DELETE_MESSAGE_CHANNEL_PARAM,
         ],
         components=[
             _component("choices", "duration", "Server default plus fixed presets from 10 minutes to 30 days."),
             _component("choices", "duration_unit", "Minutes, hours, days, weeks, or months."),
             _component("autocomplete", "rule", "Searches active server moderation rules."),
             _component("autocomplete", "case", "Suggests open cases for the selected target member."),
+            _component("choices", "delete_messages", "Optional recent-message cleanup windows from 15 minutes to 7 days."),
         ],
         workflow=[
             "Loads moderation settings and requires a configured mute role.",
             "Checks the mute role exists and is below the bot role.",
             "Resolves the duration from preset or custom fields within the server maximum.",
+            "When delete_messages is set, deletes recent logged messages from the target user and links them as deleted-message evidence.",
             "Logs the mute action, applies Discord effects, posts a public notice, and returns an ephemeral receipt.",
         ],
         notes=[
-            "The dashboard action form can also delete selected or recent target-user messages and link them to the action as deleted-message evidence.",
+            "Commands support recent target-user cleanup. The dashboard additionally supports selecting specific logged messages.",
         ],
     ),
     BotCommandDocModel(
@@ -166,20 +208,25 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
             _param("duration_unit", "choice", "Unit for duration_value. Defaults to minutes when duration_value is used.", required=False, choices=DURATION_UNIT_CHOICES),
             COMMENTARY_PARAM,
             CASE_PARAM,
+            DELETE_MESSAGES_PARAM,
+            DELETE_MESSAGE_LIMIT_PARAM,
+            DELETE_MESSAGE_CHANNEL_PARAM,
         ],
         components=[
             _component("choices", "duration", "Permanent plus fixed presets from 10 minutes to 30 days."),
             _component("autocomplete", "rule", "Searches active server moderation rules."),
             _component("autocomplete", "case", "Suggests open cases for the selected target member."),
+            _component("choices", "delete_messages", "Optional recent-message cleanup windows from 15 minutes to 7 days."),
         ],
         workflow=[
             "Resolves the ban duration; no duration means permanent.",
             "Validates target hierarchy and selected rule.",
+            "When delete_messages is set, deletes recent logged messages from the target user and links them as deleted-message evidence.",
             "Creates the moderation action with Discord ban effects enabled.",
             "Posts public notice and an ephemeral moderator receipt.",
         ],
         notes=[
-            "The dashboard action form can also delete selected or recent target-user messages and link them to the action as deleted-message evidence.",
+            "Commands support recent target-user cleanup. The dashboard additionally supports selecting specific logged messages.",
         ],
     ),
     BotCommandDocModel(

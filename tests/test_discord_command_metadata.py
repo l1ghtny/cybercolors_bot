@@ -204,6 +204,14 @@ def test_bot_command_catalog_exposes_moderation_command_details():
         "Revert",
     }
 
+    warn_command = get_bot_command("mod.warn")
+    assert warn_command is not None
+    assert {
+        "delete_messages",
+        "delete_message_limit",
+        "delete_message_channel",
+    }.issubset({parameter.name for parameter in warn_command.parameters})
+
 
 def test_bot_command_catalog_endpoint_returns_filterable_contract():
     client = TestClient(app)

@@ -5,7 +5,7 @@ import discord
 from discord import app_commands
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from api.models.moderation_actions import ModerationActionCreate
+from api.models.moderation_actions import ModerationActionCreate, ModerationActionMessageCleanupCreate
 from api.models.moderation_cases import ModerationCaseCreateModel, ModerationCaseSummaryModel
 from api.models.moderation_rules import ModerationRuleReadModel
 from api.services.moderation_actions_service import _dashboard_action_url, _dashboard_case_url, create_action
@@ -17,6 +17,86 @@ from src.modules.moderation.moderation_helpers import check_if_server_exists, ch
 
 
 CASE_NEW_VALUE = "__new_case__"
+MESSAGE_CLEANUP_PERIOD_LABELS = {
+    15: "15 minutes",
+    60: "1 hour",
+    360: "6 hours",
+    1440: "24 hours",
+    10080: "7 days",
+}
+
+
+def action_message_cleanup_choices() -> list[app_commands.Choice[int]]:
+    return [
+        app_commands.Choice(name=label, value=minutes)
+        for minutes, label in MESSAGE_CLEANUP_PERIOD_LABELS.items()
+    ]
+
+
+def build_message_cleanup_request(
+    *,
+    delete_messages: app_commands.Choice[int] | int | None,
+    delete_message_limit: int | None = None,
+    delete_message_channel: discord.abc.GuildChannel | None = None,
+) -> ModerationActionMessageCleanupCreate | None:
+    if delete_messages is None:
+        return None
+
+    period_minutes = (
+        delete_messages.value
+        if isinstance(delete_messages, app_commands.Choice)
+        else int(delete_messages)
+    )
+    channel_ids = [str(delete_message_channel.id)] if delete_message_channel is not None else []
+    return ModerationActionMessageCleanupCreate(
+        recent_period_minutes=period_minutes,
+        recent_limit=delete_message_limit or 25,
+        channel_ids=channel_ids,
+    )
+
+
+def message_cleanup_receipt_line(
+    *,
+    locale: str,
+    cleanup: ModerationActionMessageCleanupCreate | None,
+    channel: discord.abc.GuildChannel | None = None,
+) -> tuple[str, str] | None:
+    if cleanup is None or cleanup.recent_period_minutes is None:
+        return None
+
+    period = MESSAGE_CLEANUP_PERIOD_LABELS.get(
+        cleanup.recent_period_minutes,
+        f"{cleanup.recent_period_minutes} minutes",
+    )
+    channel_suffix = (
+        tr(
+            locale,
+            "action.message_cleanup_channel_suffix",
+            channel=channel.mention if hasattr(channel, "mention") else f"#{channel.name}",
+        )
+        if channel is not None
+        else ""
+    )
+    return (
+        tr(locale, "action.message_cleanup_label"),
+        tr(
+            locale,
+            "action.message_cleanup_value",
+            period=period,
+            limit=cleanup.recent_limit,
+            channel=channel_suffix,
+        ),
+    )
+
+
+def message_cleanup_receipt_lines(
+    *,
+    locale: str,
+    cleanup: ModerationActionMessageCleanupCreate | None,
+    channel: discord.abc.GuildChannel | None = None,
+) -> list[tuple[str, str]]:
+    line = message_cleanup_receipt_line(locale=locale, cleanup=cleanup, channel=channel)
+    return [line] if line is not None else []
 
 
 async def fetch_active_rule_models(session: AsyncSession, server_id: int) -> list[ModerationRuleReadModel]:
@@ -252,6 +332,7 @@ def build_action_payload(
     expires_at: datetime | None = None,
     case_id: UUID | None = None,
     rule_ids: list[str] | None = None,
+    message_cleanup: ModerationActionMessageCleanupCreate | None = None,
 ) -> ModerationActionCreate:
     parsed_rule_id = UUID(str(rule_id)) if rule_id else None
     return ModerationActionCreate(
@@ -269,6 +350,7 @@ def build_action_payload(
         target_user_server_nickname=user.nick,
         server_id=interaction.guild.id,
         server_name=interaction.guild.name,
+        message_cleanup=message_cleanup,
     )
 
 
@@ -284,6 +366,7 @@ async def create_bot_moderation_action(
     expires_at: datetime | None = None,
     case_id: UUID | None = None,
     rule_ids: list[str] | None = None,
+    message_cleanup: ModerationActionMessageCleanupCreate | None = None,
 ) -> ModerationAction:
     payload = build_action_payload(
         interaction=interaction,
@@ -295,6 +378,7 @@ async def create_bot_moderation_action(
         reason=reason,
         expires_at=expires_at,
         case_id=case_id,
+        message_cleanup=message_cleanup,
     )
     return await create_action(
         session=session,

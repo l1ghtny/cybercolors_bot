@@ -6,12 +6,15 @@ from src.db.models import ActionType
 from src.modules.localization.service import get_server_locale, tr
 from src.modules.moderation.public_notices import send_public_action_notice
 from src.modules.moderation.bot_services import (
+    action_message_cleanup_choices,
     build_moderator_action_receipt,
+    build_message_cleanup_request,
     case_choices,
     create_bot_moderation_action,
     fetch_active_rule_models,
     fetch_open_case_models,
     find_rule,
+    message_cleanup_receipt_lines,
     resolve_case_id_for_action,
     rule_choices,
     rule_label,
@@ -24,12 +27,21 @@ from src.modules.moderation.bot_rbac import ensure_bot_permission, has_bot_permi
     name="warn",
     description="Warns a user and logs the action.",
 )
+@app_commands.choices(delete_messages=action_message_cleanup_choices())
+@app_commands.describe(
+    delete_messages="Delete recent logged messages by this user.",
+    delete_message_limit="Maximum messages to delete when delete_messages is set.",
+    delete_message_channel="Only delete messages from this channel.",
+)
 async def warn(
     interaction: discord.Interaction,
     user: discord.Member,
     rule: str,
     commentary: str | None = None,
     case: str | None = None,
+    delete_messages: app_commands.Choice[int] | None = None,
+    delete_message_limit: app_commands.Range[int, 1, 100] | None = None,
+    delete_message_channel: discord.TextChannel | None = None,
 ):
     """Handles /warn: select a declared server rule, add optional commentary, and log action."""
     if interaction.guild is None:
@@ -61,6 +73,11 @@ async def warn(
 
     selected_rule_label = rule_label(selected_rule)
     commentary_text = commentary.strip() if commentary else None
+    message_cleanup = build_message_cleanup_request(
+        delete_messages=delete_messages,
+        delete_message_limit=delete_message_limit,
+        delete_message_channel=delete_message_channel,
+    )
     target_error = validate_target_for_moderation(interaction, user, locale)
     if target_error:
         await interaction.followup.send(target_error, ephemeral=True)
@@ -87,6 +104,7 @@ async def warn(
                 commentary=commentary_text,
                 reason=None,
                 case_id=case_id,
+                message_cleanup=message_cleanup,
             )
             await session.commit()
     except Exception as error:
@@ -110,6 +128,11 @@ async def warn(
             public_message=success_message,
             action=created_action,
             rule=selected_rule_label,
+            extra_lines=message_cleanup_receipt_lines(
+                locale=locale,
+                cleanup=message_cleanup,
+                channel=delete_message_channel,
+            ),
         ),
         ephemeral=True,
         allowed_mentions=discord.AllowedMentions.none(),
