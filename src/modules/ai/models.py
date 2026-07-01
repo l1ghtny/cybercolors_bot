@@ -123,6 +123,8 @@ class AIContext:
     user_id: int | None = None
     channel_id: int | None = None
     server_name: str | None = None
+    bot_persona: dict[str, Any] | None = None
+    server_profile: dict[str, Any] | None = None
     channel: dict[str, Any] | None = None
     active_rules: list[dict[str, Any]] = field(default_factory=list)
     member_profile: dict[str, Any] | None = None
@@ -133,6 +135,8 @@ class AIContext:
         return not any(
             (
                 self.server_name,
+                self.bot_persona,
+                self.server_profile,
                 self.channel,
                 self.active_rules,
                 self.member_profile,

@@ -3,7 +3,7 @@ import asyncio
 import os
 
 from src.db.database import get_async_session
-from src.modules.ai.knowledge import run_knowledge_index_job_once
+from src.modules.ai.knowledge import KnowledgeEmbedder, build_knowledge_embedder, run_knowledge_index_job_once
 
 
 def _env_int(name: str, default: int) -> int:
@@ -13,11 +13,11 @@ def _env_int(name: str, default: int) -> int:
     return int(raw_value)
 
 
-async def _run_batch(batch_size: int) -> int:
+async def _run_batch(batch_size: int, *, embedder: KnowledgeEmbedder) -> int:
     processed = 0
     async with get_async_session() as session:
         for _ in range(batch_size):
-            if not await run_knowledge_index_job_once(session):
+            if not await run_knowledge_index_job_once(session, embedder=embedder):
                 break
             processed += 1
         await session.commit()
@@ -25,11 +25,16 @@ async def _run_batch(batch_size: int) -> int:
 
 
 async def _run_worker(*, once: bool, poll_seconds: int, batch_size: int) -> None:
-    if not os.getenv("OPENAI_API_KEY"):
-        raise RuntimeError("OPENAI_API_KEY is required to embed AI knowledge chunks.")
+    embedder = build_knowledge_embedder()
+    print(
+        f"knowledge_embedding_provider={embedder.provider_name} "
+        f"knowledge_embedding_model={embedder.model} "
+        f"knowledge_embedding_dimensions={embedder.dimensions}",
+        flush=True,
+    )
 
     while True:
-        processed = await _run_batch(batch_size)
+        processed = await _run_batch(batch_size, embedder=embedder)
         print(f"processed={processed}", flush=True)
         if once:
             return

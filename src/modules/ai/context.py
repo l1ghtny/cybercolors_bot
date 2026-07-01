@@ -4,9 +4,11 @@ from typing import Any, Awaitable, Callable, Literal
 from fastapi import HTTPException
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from api.services.bot_command_catalog import list_bot_commands
 from api.services.discord_guilds import fetch_channel
 from api.services.moderation_rules_service import list_rules, to_rule_read_model
 from api.services.moderation_users_service import build_user_profile_card
+from src.db.models import Server, ServerAISettings
 from src.modules.ai.models import AIContext
 
 ChannelFetcher = Callable[[int, int], Awaitable[dict[str, Any] | None]]
@@ -98,6 +100,39 @@ async def get_active_rules_context(session: AsyncSession, server_id: int) -> lis
     return [_model_to_dict(to_rule_read_model(rule)) for rule in rules]
 
 
+def _command_catalog_context() -> list[dict[str, Any]]:
+    commands = []
+    for command in list_bot_commands(locale=None):
+        commands.append(
+            {
+                "name": command.qualified_name,
+                "summary": command.summary,
+                "category": command.category,
+                "discord_type": command.discord_type,
+            }
+        )
+    return commands
+
+
+async def get_server_answer_context(session: AsyncSession, server_id: int) -> dict[str, Any]:
+    server = await session.get(Server, server_id)
+    settings = await session.get(ServerAISettings, server_id)
+    server_name = server.server_name if server is not None else str(server_id)
+    return {
+        "server_name": server_name,
+        "server_profile": {
+            "name": server_name,
+            "configured_brief": settings.server_brief if settings is not None else None,
+        },
+        "bot_persona": {
+            "product_name": "CyberColors",
+            "role": "Discord server assistant and moderation helper",
+            "configured_persona": settings.answer_persona if settings is not None else None,
+            "available_commands": _command_catalog_context(),
+        },
+    }
+
+
 async def get_member_profile_context(
     session: AsyncSession,
     server_id: int,
@@ -161,6 +196,11 @@ async def build_ai_context(
     if session is None:
         return context
 
+    server_answer_context = await get_server_answer_context(session=session, server_id=server_id)
+    context.server_name = server_answer_context["server_name"]
+    context.server_profile = server_answer_context["server_profile"]
+    context.bot_persona = server_answer_context["bot_persona"]
+
     if include_rules:
         context.active_rules = await get_active_rules_context(session=session, server_id=server_id)
 
@@ -184,6 +224,8 @@ def context_to_prompt_block(context: AIContext) -> str:
         "user_id": str(context.user_id) if context.user_id is not None else None,
         "channel_id": str(context.channel_id) if context.channel_id is not None else None,
         "server_name": context.server_name,
+        "server_profile": context.server_profile,
+        "bot_persona": context.bot_persona,
         "channel": context.channel,
         "active_rules": context.active_rules,
         "member_profile": context.member_profile,

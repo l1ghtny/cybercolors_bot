@@ -48,6 +48,8 @@ class ServerAISettingsReadModel(BaseModel):
     moderation_kill_switch_enabled: bool
     moderation_daily_token_limit: int | None = Field(default=None, ge=1)
     moderation_provider_timeout_seconds: int = Field(default=20, ge=1, le=120)
+    answer_persona: str | None = Field(default=None, max_length=1200)
+    server_brief: str | None = Field(default=None, max_length=600)
     updated_at: datetime
     permissions: ServerAISettingsPermissionsModel = Field(default_factory=ServerAISettingsPermissionsModel)
 
@@ -67,6 +69,8 @@ class ServerAISettingsUpdateModel(BaseModel):
     moderation_kill_switch_enabled: bool | None = None
     moderation_daily_token_limit: int | None = Field(default=None, ge=1)
     moderation_provider_timeout_seconds: int | None = Field(default=None, ge=1, le=120)
+    answer_persona: str | None = Field(default=None, max_length=1200)
+    server_brief: str | None = Field(default=None, max_length=600)
 
     @field_validator("answer_allowed_channel_ids")
     @classmethod
@@ -82,6 +86,14 @@ class ServerAISettingsUpdateModel(BaseModel):
     @classmethod
     def validate_moderation_channel_ids(cls, value: list[str] | None) -> list[str] | None:
         return _normalize_discord_ids(value, "moderation_included_channel_ids")
+
+    @field_validator("answer_persona", "server_brief")
+    @classmethod
+    def normalize_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
 
     @model_validator(mode="after")
     def validate_selected_modes(self):

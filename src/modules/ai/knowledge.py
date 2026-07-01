@@ -2,6 +2,7 @@ import hashlib
 import math
 import os
 import re
+import asyncio
 from datetime import timedelta
 from typing import Any, Protocol
 from uuid import UUID
@@ -12,10 +13,45 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.db.models import AIKnowledgeChunk, AIKnowledgeIndexJob, AIKnowledgeSource, utcnow_utc_tz
+from src.modules.ai.knowledge_imports import (
+    KnowledgeImportError,
+    extract_text_from_file,
+    extract_text_from_youtube_url,
+)
 
-KNOWLEDGE_EMBEDDING_PROVIDER = "openai"
-KNOWLEDGE_EMBEDDING_MODEL = os.getenv("AI_KNOWLEDGE_EMBEDDING_MODEL") or "text-embedding-3-small"
-KNOWLEDGE_EMBEDDING_DIMENSIONS = 1536
+DEFAULT_KNOWLEDGE_EMBEDDING_PROVIDER = "local"
+DEFAULT_LOCAL_KNOWLEDGE_EMBEDDING_MODEL = "BAAI/bge-m3"
+DEFAULT_OPENAI_KNOWLEDGE_EMBEDDING_MODEL = "text-embedding-3-small"
+DEFAULT_KNOWLEDGE_EMBEDDING_DIMENSIONS = 1024
+
+
+def _env_int(name: str, default: int) -> int:
+    raw_value = os.getenv(name)
+    if raw_value is None or not raw_value.strip():
+        return default
+    return int(raw_value)
+
+
+KNOWLEDGE_EMBEDDING_PROVIDER = (
+    os.getenv("AI_KNOWLEDGE_EMBEDDING_PROVIDER") or DEFAULT_KNOWLEDGE_EMBEDDING_PROVIDER
+).strip().lower()
+KNOWLEDGE_EMBEDDING_DIMENSIONS = _env_int(
+    "AI_KNOWLEDGE_EMBEDDING_DIMENSIONS",
+    DEFAULT_KNOWLEDGE_EMBEDDING_DIMENSIONS,
+)
+KNOWLEDGE_LOCAL_EMBEDDING_MODEL = (
+    os.getenv("AI_KNOWLEDGE_LOCAL_EMBEDDING_MODEL") or DEFAULT_LOCAL_KNOWLEDGE_EMBEDDING_MODEL
+)
+KNOWLEDGE_OPENAI_EMBEDDING_MODEL = (
+    os.getenv("AI_KNOWLEDGE_OPENAI_EMBEDDING_MODEL")
+    or os.getenv("AI_KNOWLEDGE_EMBEDDING_MODEL")
+    or DEFAULT_OPENAI_KNOWLEDGE_EMBEDDING_MODEL
+)
+KNOWLEDGE_EMBEDDING_MODEL = (
+    KNOWLEDGE_OPENAI_EMBEDDING_MODEL
+    if KNOWLEDGE_EMBEDDING_PROVIDER == "openai"
+    else os.getenv("AI_KNOWLEDGE_EMBEDDING_MODEL") or KNOWLEDGE_LOCAL_EMBEDDING_MODEL
+)
 KNOWLEDGE_CHUNK_TARGET_TOKENS = 350
 KNOWLEDGE_CHUNK_MAX_TOKENS = 450
 KNOWLEDGE_CHUNK_OVERLAP_WORDS = 45
@@ -37,13 +73,13 @@ class KnowledgeEmbedder(Protocol):
 
 
 class OpenAIKnowledgeEmbedder:
-    provider_name = KNOWLEDGE_EMBEDDING_PROVIDER
+    provider_name = "openai"
 
     def __init__(
         self,
         *,
         client: AsyncOpenAI | None = None,
-        model: str = KNOWLEDGE_EMBEDDING_MODEL,
+        model: str = KNOWLEDGE_OPENAI_EMBEDDING_MODEL,
         dimensions: int = KNOWLEDGE_EMBEDDING_DIMENSIONS,
     ) -> None:
         self.client = client or AsyncOpenAI()
@@ -65,6 +101,57 @@ class OpenAIKnowledgeEmbedder:
                     f"Embedding dimension mismatch: expected {self.dimensions}, got {len(embedding)}"
                 )
         return embeddings
+
+
+class LocalSentenceTransformerEmbedder:
+    provider_name = "local"
+
+    def __init__(
+        self,
+        *,
+        model: str = KNOWLEDGE_LOCAL_EMBEDDING_MODEL,
+        dimensions: int = KNOWLEDGE_EMBEDDING_DIMENSIONS,
+    ) -> None:
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError as exc:
+            raise RuntimeError(
+                "sentence-transformers is required for local AI knowledge embeddings. "
+                "Install project requirements or set AI_KNOWLEDGE_EMBEDDING_PROVIDER=openai."
+            ) from exc
+
+        self.model = model
+        self.dimensions = dimensions
+        self._model = SentenceTransformer(model)
+
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        embeddings = await asyncio.to_thread(
+            self._model.encode,
+            texts,
+            normalize_embeddings=True,
+            convert_to_numpy=True,
+            show_progress_bar=False,
+        )
+        vectors = embeddings.tolist()
+        for vector in vectors:
+            if len(vector) != self.dimensions:
+                raise ValueError(
+                    f"Embedding dimension mismatch for {self.model}: expected {self.dimensions}, got {len(vector)}"
+                )
+        return [[float(item) for item in vector] for vector in vectors]
+
+
+def build_knowledge_embedder() -> KnowledgeEmbedder:
+    if KNOWLEDGE_EMBEDDING_PROVIDER == "openai":
+        return OpenAIKnowledgeEmbedder()
+    if KNOWLEDGE_EMBEDDING_PROVIDER == "local":
+        return LocalSentenceTransformerEmbedder()
+    raise ValueError(
+        "Unsupported AI knowledge embedding provider: "
+        f"{KNOWLEDGE_EMBEDDING_PROVIDER!r}. Expected 'local' or 'openai'."
+    )
 
 
 def vector_literal(values: list[float]) -> str:
@@ -251,14 +338,14 @@ async def claim_next_knowledge_index_job(
 
 
 async def process_knowledge_index_job(session: AsyncSession, job: AIKnowledgeIndexJob) -> None:
-    await process_knowledge_index_job_with_embedder(session, job, embedder=OpenAIKnowledgeEmbedder())
+    await process_knowledge_index_job_with_embedder(session, job, embedder=None)
 
 
 async def process_knowledge_index_job_with_embedder(
     session: AsyncSession,
     job: AIKnowledgeIndexJob,
     *,
-    embedder: KnowledgeEmbedder,
+    embedder: KnowledgeEmbedder | None,
 ) -> None:
     now = utcnow_utc_tz()
     if job.job_type not in {"index_source", "reindex_source"} or job.source_id is None:
@@ -274,7 +361,19 @@ async def process_knowledge_index_job_with_embedder(
     source.updated_at = now
     await session.flush()
 
-    chunks = build_knowledge_chunks(knowledge_source_index_text(source))
+    try:
+        index_text = await _prepare_source_index_text(source)
+    except KnowledgeImportError as exc:
+        source.status = "failed"
+        source.error_code = exc.code
+        source.error_message = str(exc)
+        source.indexed_at = None
+        source.updated_at = now
+        await _mark_job_failed(session, job, str(exc), retry=False)
+        await session.flush()
+        return
+
+    chunks = build_knowledge_chunks(index_text)
     if not chunks:
         source.status = "failed"
         source.error_code = "empty_source"
@@ -288,7 +387,8 @@ async def process_knowledge_index_job_with_embedder(
         await session.flush()
         return
 
-    embeddings = await embedder.embed_texts([chunk["chunk_text"] for chunk in chunks])
+    active_embedder = embedder or build_knowledge_embedder()
+    embeddings = await active_embedder.embed_texts([chunk["chunk_text"] for chunk in chunks])
     if len(embeddings) != len(chunks):
         raise ValueError(f"Embedding count mismatch: expected {len(chunks)}, got {len(embeddings)}")
 
@@ -303,8 +403,8 @@ async def process_knowledge_index_job_with_embedder(
                 text_hash=chunk["text_hash"],
                 token_count=chunk["token_count"],
                 embedding=embedding,
-                embedding_provider=embedder.provider_name,
-                embedding_model=embedder.model,
+                embedding_provider=active_embedder.provider_name,
+                embedding_model=active_embedder.model,
             )
         )
 
@@ -339,6 +439,44 @@ async def run_knowledge_index_job_once(
     return True
 
 
+async def _prepare_source_index_text(source: AIKnowledgeSource) -> str:
+    if source.source_type == "file":
+        if not source.storage_key:
+            raise KnowledgeImportError("file_not_uploaded", "No uploaded file is attached to this source.")
+        metadata = dict(source.metadata_json or {})
+        extracted_text, extraction_metadata = await asyncio.to_thread(
+            extract_text_from_file,
+            storage_key=source.storage_key,
+            mime_type=source.mime_type,
+            filename=metadata.get("original_filename") or source.title,
+        )
+        source.content_text = extracted_text
+        source.metadata_json = {
+            **metadata,
+            "import": {
+                **dict(metadata.get("import") or {}),
+                **extraction_metadata,
+            },
+        }
+    elif source.source_type == "youtube":
+        if not source.source_url:
+            raise KnowledgeImportError("youtube_url_missing", "No YouTube URL is attached to this source.")
+        metadata = dict(source.metadata_json or {})
+        extracted_text, extraction_metadata = await asyncio.to_thread(extract_text_from_youtube_url, source.source_url)
+        source.content_text = extracted_text
+        source.metadata_json = {
+            **metadata,
+            "import": {
+                **dict(metadata.get("import") or {}),
+                **extraction_metadata,
+            },
+        }
+        if not source.title and extraction_metadata.get("video_title"):
+            source.title = str(extraction_metadata["video_title"])[:255]
+
+    return knowledge_source_index_text(source)
+
+
 async def search_server_knowledge(
     session: AsyncSession,
     *,
@@ -353,7 +491,7 @@ async def search_server_knowledge(
         return []
 
     visibility_set = PUBLIC_ANSWER_VISIBILITIES if visibility == "public_answer" else {visibility}
-    active_embedder = embedder or OpenAIKnowledgeEmbedder()
+    active_embedder = embedder or build_knowledge_embedder()
     query_embedding = (await active_embedder.embed_texts([normalized_query]))[0]
     query_vector = vector_literal(query_embedding)
     bounded_limit = min(max(int(limit), 1), 20)
@@ -506,13 +644,19 @@ async def get_public_knowledge_for_subject_users(
     ]
 
 
-async def _mark_job_failed(session: AsyncSession, job: AIKnowledgeIndexJob, error_message: str) -> None:
+async def _mark_job_failed(
+    session: AsyncSession,
+    job: AIKnowledgeIndexJob,
+    error_message: str,
+    *,
+    retry: bool = True,
+) -> None:
     now = utcnow_utc_tz()
     job.attempt_count += 1
     job.error_message = error_message[:2000]
     job.locked_at = None
     job.updated_at = now
-    if job.attempt_count >= KNOWLEDGE_JOB_MAX_ATTEMPTS:
+    if not retry or job.attempt_count >= KNOWLEDGE_JOB_MAX_ATTEMPTS:
         job.status = "failed"
     else:
         job.status = "pending"

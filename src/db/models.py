@@ -312,6 +312,8 @@ class ServerAISettings(SQLModel, table=True):
     moderation_kill_switch_enabled: bool = Field(default=False, nullable=False)
     moderation_daily_token_limit: Optional[int] = Field(default=None, nullable=True)
     moderation_provider_timeout_seconds: int = Field(default=20, nullable=False)
+    answer_persona: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    server_brief: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     updated_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
 
     server: Server = Relationship(back_populates="ai_settings")
@@ -432,7 +434,7 @@ class AIKnowledgeChunk(SQLModel, table=True):
     chunk_text: str = Field(sa_column=Column(Text, nullable=False))
     text_hash: str = Field(sa_column=Column(String(length=64), nullable=False, index=True))
     token_count: int = Field(default=0, nullable=False)
-    embedding: Optional[list[float]] = Field(default=None, sa_column=Column(Vector(1536), nullable=True))
+    embedding: Optional[list[float]] = Field(default=None, sa_column=Column(Vector(1024), nullable=True))
     embedding_provider: Optional[str] = Field(default=None, sa_column=Column(String(length=50), nullable=True))
     embedding_model: Optional[str] = Field(default=None, sa_column=Column(String(length=120), nullable=True))
     created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)

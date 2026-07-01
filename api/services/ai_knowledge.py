@@ -18,6 +18,7 @@ from api.models.ai_knowledge import (
 )
 from src.db.models import AIKnowledgeChunk, AIKnowledgeIndexJob, AIKnowledgeSource, GlobalUser, Server, utcnow_utc_tz
 from src.modules.ai.knowledge import queue_knowledge_index_job, run_knowledge_index_job_once, search_server_knowledge
+from src.modules.ai.knowledge_imports import KnowledgeImportError, store_knowledge_upload
 
 
 async def _ensure_server(session: AsyncSession, server_id: int) -> None:
@@ -169,6 +170,77 @@ async def create_knowledge_source(
     await session.flush()
     await session.refresh(source)
     if body.queue_index:
+        await queue_knowledge_index_job(session, server_id=server_id, source_id=source.id)
+    return _source_to_model(source)
+
+
+async def create_file_knowledge_source(
+    session: AsyncSession,
+    *,
+    server_id: int,
+    created_by_user_id: int,
+    title: str,
+    payload: bytes,
+    filename: str,
+    content_type: str | None,
+    subject_type: str = "server",
+    subject_user_id: int | None = None,
+    visibility: str = "public_answer",
+    queue_index: bool = True,
+) -> AIKnowledgeSourceReadModel:
+    await _ensure_server(session, server_id)
+    await _ensure_global_user(session, created_by_user_id)
+    if subject_type == "server":
+        subject_user_id = None
+    elif subject_type == "admin":
+        if subject_user_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="subject_user_id is required when subject_type is admin",
+            )
+        await _ensure_global_user(session, subject_user_id)
+    else:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid subject_type")
+
+    if visibility not in {"public_answer", "admin_answer", "moderation"}:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid visibility")
+
+    now = utcnow_utc_tz()
+    source = AIKnowledgeSource(
+        server_id=server_id,
+        source_type="file",
+        subject_type=subject_type,
+        subject_user_id=subject_user_id,
+        status="queued" if queue_index else "draft",
+        visibility=visibility,
+        title=title.strip() or filename,
+        mime_type=content_type,
+        metadata_json={"original_filename": filename},
+        created_by_user_id=created_by_user_id,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(source)
+    await session.flush()
+
+    try:
+        upload = store_knowledge_upload(
+            server_id=server_id,
+            source_id=source.id,
+            filename=filename,
+            payload=payload,
+        )
+    except KnowledgeImportError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    source.storage_key = upload["storage_key"]
+    source.size_bytes = upload["size_bytes"]
+    source.sha256 = upload["sha256"]
+    source.updated_at = utcnow_utc_tz()
+    session.add(source)
+    await session.flush()
+    await session.refresh(source)
+    if queue_index:
         await queue_knowledge_index_job(session, server_id=server_id, source_id=source.id)
     return _source_to_model(source)
 

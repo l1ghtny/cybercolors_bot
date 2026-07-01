@@ -1,4 +1,6 @@
 import asyncio
+import shutil
+from pathlib import Path
 from uuid import UUID
 from uuid import uuid4
 
@@ -8,6 +10,7 @@ from sqlmodel import SQLModel, select
 from api.api_main import app
 from api.models.ai_knowledge import AIKnowledgeSourceCreateModel, AIKnowledgeSourceUpdateModel
 from api.services.ai_knowledge import (
+    create_file_knowledge_source,
     create_knowledge_source,
     delete_knowledge_source,
     get_knowledge_source,
@@ -19,11 +22,18 @@ from api.services.ai_knowledge import (
 from src.db.database import engine, get_async_session
 from src.db.models import AIKnowledgeChunk, AIKnowledgeSource, GlobalUser, Server
 from src.modules.ai.knowledge import (
+    KNOWLEDGE_EMBEDDING_DIMENSIONS,
     build_knowledge_chunks,
     knowledge_source_index_text,
     run_knowledge_index_job_once,
     search_server_knowledge,
     upsert_admin_text_source,
+)
+from src.modules.ai.knowledge_imports import (
+    KnowledgeImportError,
+    ModalTranscriptionProvider,
+    _extract_youtube_audio_and_transcribe,
+    _select_caption_files,
 )
 from src.modules.ai.tools import build_default_tool_registry
 from tests.db_helpers import ensure_pgvector_or_skip
@@ -32,7 +42,7 @@ from tests.db_helpers import ensure_pgvector_or_skip
 class FakeKnowledgeEmbedder:
     provider_name = "fake"
     model = "fake-embedding"
-    dimensions = 1536
+    dimensions = KNOWLEDGE_EMBEDDING_DIMENSIONS
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         embeddings = []
@@ -53,6 +63,12 @@ def _make_discord_id() -> int:
     return 9_000_000_000_000_000 + (uuid4().int % 100_000_000_000_000)
 
 
+def _make_test_temp_dir() -> Path:
+    temp_dir = Path("logs") / "test_ai_knowledge" / str(uuid4())
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    return temp_dir
+
+
 def _assert_route(path: str, method: str, expected_path: str):
     scope = {"type": "http", "method": method, "path": path}
     for route in app.routes:
@@ -66,6 +82,7 @@ def _assert_route(path: str, method: str, expected_path: str):
 def test_ai_knowledge_routes_are_registered():
     _assert_route("/servers/123/ai/knowledge", "GET", "/servers/{server_id}/ai/knowledge")
     _assert_route("/servers/123/ai/knowledge", "POST", "/servers/{server_id}/ai/knowledge")
+    _assert_route("/servers/123/ai/knowledge/file", "POST", "/servers/{server_id}/ai/knowledge/file")
     _assert_route("/servers/123/ai/knowledge/search", "POST", "/servers/{server_id}/ai/knowledge/search")
     _assert_route("/servers/123/ai/knowledge/jobs", "GET", "/servers/{server_id}/ai/knowledge/jobs")
     _assert_route(
@@ -148,7 +165,7 @@ async def _knowledge_index_scenario() -> None:
         assert job.status == "pending"
 
         embedder = FakeKnowledgeEmbedder()
-        processed = await run_knowledge_index_job_once(session, embedder=embedder)
+        processed = await run_knowledge_index_job_once(session, server_id=server_id, embedder=embedder)
         await session.refresh(source)
 
         chunks = (
@@ -268,3 +285,307 @@ async def _knowledge_api_service_scenario() -> None:
 
 def test_knowledge_api_service_crud_and_reindex_queue():
     asyncio.run(_knowledge_api_service_scenario())
+
+
+async def _knowledge_file_import_scenario() -> None:
+    await engine.dispose()
+    async with engine.begin() as conn:
+        await ensure_pgvector_or_skip(conn)
+        await conn.run_sync(SQLModel.metadata.create_all)
+
+    server_id = _make_discord_id()
+    actor_id = _make_discord_id()
+
+    async with get_async_session() as session:
+        source = await create_file_knowledge_source(
+            session=session,
+            server_id=server_id,
+            created_by_user_id=actor_id,
+            title="Uploaded staff guide",
+            payload=b"Mina leads the art team from an uploaded guide.",
+            filename="guide.txt",
+            content_type="text/plain",
+        )
+        assert source.source_type == "file"
+        assert source.status == "queued"
+        assert source.storage_key is not None
+        assert source.sha256 is not None
+
+        embedder = FakeKnowledgeEmbedder()
+        processed = await run_knowledge_index_job_once(session, server_id=server_id, embedder=embedder)
+        detail = await get_knowledge_source(session=session, server_id=server_id, source_id=UUID(source.id))
+
+        results = await search_server_knowledge(
+            session,
+            server_id=server_id,
+            query="Who leads art?",
+            limit=3,
+            embedder=embedder,
+        )
+
+    assert processed is True
+    assert detail.status == "ready"
+    assert "uploaded guide" in (detail.content_text or "")
+    assert detail.metadata_json["import"]["parser"] == "plain-text"
+    assert results[0]["source_type"] == "file"
+    assert "Mina leads the art team" in results[0]["text"]
+
+
+def test_knowledge_file_source_can_be_uploaded_processed_and_searched():
+    asyncio.run(_knowledge_file_import_scenario())
+
+
+async def _knowledge_youtube_import_scenario(monkeypatch) -> None:
+    await engine.dispose()
+    async with engine.begin() as conn:
+        await ensure_pgvector_or_skip(conn)
+        await conn.run_sync(SQLModel.metadata.create_all)
+
+    server_id = _make_discord_id()
+    actor_id = _make_discord_id()
+
+    def fake_extract_text_from_youtube_url(url: str):
+        assert url == "https://www.youtube.com/watch?v=test123"
+        return "Mina says movie night happens every Friday.", {
+            "provider": "test",
+            "video_id": "test123",
+            "video_title": "Server update",
+            "extracted_chars": 43,
+        }
+
+    monkeypatch.setattr(
+        "src.modules.ai.knowledge.extract_text_from_youtube_url",
+        fake_extract_text_from_youtube_url,
+    )
+
+    async with get_async_session() as session:
+        source = await create_knowledge_source(
+            session=session,
+            server_id=server_id,
+            created_by_user_id=actor_id,
+            body=AIKnowledgeSourceCreateModel(
+                source_type="youtube",
+                title="YouTube server update",
+                source_url="https://www.youtube.com/watch?v=test123",
+            ),
+        )
+
+        embedder = FakeKnowledgeEmbedder()
+        processed = await run_knowledge_index_job_once(session, server_id=server_id, embedder=embedder)
+        detail = await get_knowledge_source(session=session, server_id=server_id, source_id=UUID(source.id))
+
+        results = await search_server_knowledge(
+            session,
+            server_id=server_id,
+            query="When is movie night?",
+            limit=3,
+            embedder=embedder,
+        )
+
+    assert processed is True
+    assert detail.status == "ready"
+    assert "movie night" in (detail.content_text or "")
+    assert detail.metadata_json["import"]["provider"] == "test"
+    assert results[0]["source_type"] == "youtube"
+    assert "Friday" in results[0]["text"]
+
+
+def test_knowledge_youtube_source_extracts_captions_before_indexing(monkeypatch):
+    asyncio.run(_knowledge_youtube_import_scenario(monkeypatch))
+
+
+def test_youtube_caption_selection_prefers_configured_language_order():
+    temp_dir = _make_test_temp_dir()
+    try:
+        en = temp_dir / "video.en.vtt"
+        ru = temp_dir / "video.ru.vtt"
+        en.write_text("small", encoding="utf-8")
+        ru.write_text("larger russian caption", encoding="utf-8")
+
+        selected = _select_caption_files(temp_dir)
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+    assert selected[0].name == "video.en.vtt"
+
+
+def test_modal_transcription_provider_accepts_text_response():
+    temp_dir = _make_test_temp_dir()
+    audio_path = temp_dir / "audio.webm"
+    audio_path.write_bytes(b"fake-audio")
+
+    class FakeFunction:
+        def __init__(self):
+            self.timeout = None
+            self.calls = []
+
+        def with_options(self, *, timeout):
+            self.timeout = timeout
+            return self
+
+        def remote(self, **kwargs):
+            self.calls.append(kwargs)
+            return {
+                "text": "hello from modal",
+                "language": "en",
+                "model": "large-v3",
+                "segments": [{"start": 0, "end": 1, "text": "hello"}],
+            }
+
+    fake_function = FakeFunction()
+    try:
+        provider = ModalTranscriptionProvider(
+            app_name="cybercolors-youtube-transcription",
+            callable_type="class",
+            class_name="YouTubeWhisperTranscriber",
+            method_name="transcribe_audio",
+            timeout_seconds=123,
+            remote_handle=fake_function,
+        )
+        result = provider.transcribe(
+            audio_path=audio_path,
+            source_url="https://youtube.test/video",
+            source_metadata={"video_id": "abc"},
+        )
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+    assert result["text"] == "hello from modal"
+    assert result["language"] == "en"
+    assert result["model"] == "large-v3"
+    assert result["segments_count"] == 1
+    assert fake_function.timeout is None
+    assert fake_function.calls[0]["filename"] == "audio.webm"
+    assert fake_function.calls[0]["content_type"] == "audio/webm"
+    assert fake_function.calls[0]["audio_bytes"] == b"fake-audio"
+    assert fake_function.calls[0]["youtube_url"] == ""
+
+
+def test_modal_transcription_provider_applies_timeout_to_function_handles():
+    temp_dir = _make_test_temp_dir()
+    audio_path = temp_dir / "audio.webm"
+    audio_path.write_bytes(b"fake-audio")
+
+    class FakeFunction:
+        def __init__(self):
+            self.timeout = None
+
+        def with_options(self, *, timeout):
+            self.timeout = timeout
+            return self
+
+        def remote(self, **kwargs):
+            return {"text": "hello from modal"}
+
+    fake_function = FakeFunction()
+    try:
+        provider = ModalTranscriptionProvider(
+            app_name="cybercolors-youtube-transcription",
+            callable_type="function",
+            function_name="transcribe_audio",
+            timeout_seconds=123,
+            remote_handle=fake_function,
+        )
+        result = provider.transcribe(
+            audio_path=audio_path,
+            source_url="https://youtube.test/video",
+            source_metadata={"video_id": "abc"},
+        )
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+    assert result["text"] == "hello from modal"
+    assert fake_function.timeout == 123
+
+
+def test_modal_transcription_provider_requires_endpoint():
+    temp_dir = _make_test_temp_dir()
+    audio_path = temp_dir / "audio.webm"
+    audio_path.write_bytes(b"fake-audio")
+    provider = ModalTranscriptionProvider(app_name="")
+
+    try:
+        try:
+            provider.transcribe(audio_path=audio_path, source_url="https://youtube.test/video", source_metadata={})
+        except KnowledgeImportError as exc:
+            assert exc.code == "modal_transcription_not_configured"
+        else:
+            raise AssertionError("Expected KnowledgeImportError")
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_youtube_audio_fallback_uses_modal_provider(monkeypatch):
+    temp_dir = _make_test_temp_dir()
+
+    class FakeModalProvider:
+        def transcribe_youtube(self, *, youtube_url, source_url, source_metadata):
+            assert youtube_url == "https://youtube.test/video"
+            assert source_url == "https://youtube.test/video"
+            assert source_metadata["video_id"] == "abc"
+            return {
+                "text": "Mina talks about Friday movie nights.",
+                "language": "en",
+                "model": "whisper-large-v3",
+                "segments_count": 2,
+            }
+
+    monkeypatch.setattr("src.modules.ai.knowledge_imports.ModalTranscriptionProvider", FakeModalProvider)
+
+    try:
+        text, metadata = _extract_youtube_audio_and_transcribe(
+            url="https://youtube.test/video",
+            info={"id": "abc", "title": "Server update", "duration": 42, "webpage_url": "https://youtube.test/video"},
+            temp_dir=temp_dir,
+        )
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+    assert text == "Mina talks about Friday movie nights."
+    assert metadata["provider"] == "modal"
+    assert metadata["mode"] == "audio_transcription"
+    assert metadata["transcription_model"] == "whisper-large-v3"
+
+
+def test_youtube_audio_fallback_uploads_local_audio_when_modal_youtube_is_blocked(monkeypatch):
+    temp_dir = _make_test_temp_dir()
+    downloaded_audio = temp_dir / "audio.webm"
+    downloaded_audio.write_bytes(b"fake-youtube-audio")
+
+    class FakeModalProvider:
+        def transcribe_youtube(self, *, youtube_url, source_url, source_metadata):
+            raise KnowledgeImportError(
+                "modal_transcription_failed",
+                "ERROR: [youtube] abc: Sign in to confirm you're not a bot. Use --cookies for auth.",
+            )
+
+        def transcribe(self, *, audio_path, source_url, source_metadata):
+            assert audio_path == downloaded_audio
+            assert source_metadata["modal_youtube_error"]
+            return {
+                "text": "Mina talks about Friday movie nights.",
+                "language": "en",
+                "model": "whisper-large-v3",
+                "segments_count": 2,
+            }
+
+    def fake_download_youtube_audio(*, url, temp_dir):
+        assert url == "https://youtube.test/video"
+        return downloaded_audio
+
+    monkeypatch.setattr("src.modules.ai.knowledge_imports.ModalTranscriptionProvider", FakeModalProvider)
+    monkeypatch.setattr("src.modules.ai.knowledge_imports._download_youtube_audio", fake_download_youtube_audio)
+
+    try:
+        text, metadata = _extract_youtube_audio_and_transcribe(
+            url="https://youtube.test/video",
+            info={"id": "abc", "title": "Server update", "duration": 42, "webpage_url": "https://youtube.test/video"},
+            temp_dir=temp_dir,
+        )
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+    assert text == "Mina talks about Friday movie nights."
+    assert metadata["provider"] == "modal"
+    assert metadata["fallback_mode"] == "local_audio_upload"
+    assert metadata["transcription_model"] == "whisper-large-v3"

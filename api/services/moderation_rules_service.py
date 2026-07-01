@@ -1,5 +1,5 @@
 import re
-from dataclasses import dataclass
+import hashlib
 from datetime import datetime
 from time import monotonic
 from typing import Iterable
@@ -24,6 +24,9 @@ from api.models.moderation_rules import (
 )
 from api.services.discord_guilds import fetch_channel_message
 from api.services.moderation_core import build_actor, naive_utcnow
+from api.services.moderation_rule_llm_parser import parse_rules_from_text_with_llm
+from api.services.moderation_rule_sync_state import ModerationRuleSyncState, ModerationRuleSyncStatus
+from api.services.moderation_rules_service_types import ParsedRule
 from src.db.models import (
     ModerationAction,
     ModerationActionRuleCitation,
@@ -46,15 +49,6 @@ INLINE_RULE_BOUNDARY_RE = re.compile(
 )
 RULE_USAGE_CACHE_TTL_SECONDS = 60
 _rule_usage_cache: dict[tuple[int, UUID], tuple[float, ModerationRuleUsageModel]] = {}
-
-
-@dataclass
-class ParsedRule:
-    marker: str | None
-    code: str | None
-    title: str
-    description: str | None
-    sort_order: int
 
 
 def _normalize_text(value: str) -> str:
@@ -182,10 +176,75 @@ async def _get_or_create_server(session: AsyncSession, server_id: int) -> Server
     return server
 
 
+def _content_hash(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _segment_hash(rule: ParsedRule) -> str:
+    payload = {
+        "marker": rule.marker,
+        "code": rule.code,
+        "title": rule.title,
+        "description": rule.description,
+    }
+    return _content_hash(str(payload))
+
+
+async def _get_rule_sync_states(
+    session: AsyncSession,
+    rule_ids: Iterable[UUID],
+) -> dict[UUID, ModerationRuleSyncState]:
+    ids = list(rule_ids)
+    if not ids:
+        return {}
+    states = (
+        await session.exec(
+            select(ModerationRuleSyncState).where(ModerationRuleSyncState.rule_id.in_(ids))
+        )
+    ).all()
+    return {state.rule_id: state for state in states}
+
+
+async def _upsert_rule_sync_state(
+    session: AsyncSession,
+    rule_id: UUID,
+    *,
+    sync_status: ModerationRuleSyncStatus,
+    source_content_hash: str | None = None,
+    source_segment_hash: str | None = None,
+    sync_note: str | None = None,
+    now: datetime | None = None,
+) -> ModerationRuleSyncState:
+    timestamp = now or naive_utcnow()
+    state = await session.get(ModerationRuleSyncState, rule_id)
+    if state is None:
+        state = ModerationRuleSyncState(rule_id=rule_id, created_at=timestamp)
+    state.sync_status = sync_status.value
+    state.source_content_hash = source_content_hash
+    state.source_segment_hash = source_segment_hash
+    state.sync_note = sync_note
+    state.updated_at = timestamp
+    session.add(state)
+    return state
+
+
+async def get_rule_sync_states_for_rules(
+    session: AsyncSession,
+    rules: Iterable[ModerationRule],
+) -> dict[UUID, ModerationRuleSyncState]:
+    return await _get_rule_sync_states(session, [rule.id for rule in rules if rule.id is not None])
+
+
+async def parse_rules_for_import(text: str) -> list[ParsedRule]:
+    fallback_rules = parse_rules_from_text(text)
+    return await parse_rules_from_text_with_llm(text, fallback_rules=fallback_rules)
+
+
 def to_rule_read_model(
     rule: ModerationRule,
     usage_count: int | None = None,
     last_cited_at: datetime | None = None,
+    sync_state: ModerationRuleSyncState | None = None,
 ) -> ModerationRuleReadModel:
     return ModerationRuleReadModel(
         id=str(rule.id),
@@ -203,6 +262,8 @@ def to_rule_read_model(
         updated_at=rule.updated_at,
         usage_count=usage_count,
         last_cited_at=last_cited_at,
+        sync_status=sync_state.sync_status if sync_state is not None else None,
+        sync_note=sync_state.sync_note if sync_state is not None else None,
     )
 
 
@@ -286,6 +347,14 @@ async def create_manual_rule(
     session.add(rule)
     await session.flush()
     await session.refresh(rule)
+    if rule.id is not None:
+        await _upsert_rule_sync_state(
+            session,
+            rule.id,
+            sync_status=ModerationRuleSyncStatus.MANUAL,
+            sync_note="Created manually in the dashboard.",
+            now=now,
+        )
     _invalidate_rule_usage_cache(server_id=server_id)
     return rule
 
@@ -343,11 +412,17 @@ async def update_rule_manually(
     rule.sort_order = sort_order
     if is_active is not None:
         rule.is_active = is_active
-    rule.source_channel_id = None
-    rule.source_message_id = None
-    rule.source_marker = None
-    rule.updated_at = naive_utcnow()
+    now = naive_utcnow()
+    rule.updated_at = now
     session.add(rule)
+    if rule.id is not None:
+        await _upsert_rule_sync_state(
+            session,
+            rule.id,
+            sync_status=ModerationRuleSyncStatus.MANUAL,
+            sync_note="Edited manually in the dashboard; source-message sync will preserve this rule.",
+            now=now,
+        )
     await session.flush()
     await session.refresh(rule)
     _invalidate_rule_usage_cache(server_id=server_id, rule_ids=[rule_id])
@@ -364,6 +439,9 @@ async def delete_rule_permanently(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Moderation rule not found")
 
     deleted_at = naive_utcnow()
+    sync_state = await session.get(ModerationRuleSyncState, rule_id)
+    if sync_state is not None:
+        await session.delete(sync_state)
 
     action_citations = (
         await session.exec(
@@ -437,6 +515,7 @@ async def import_rules(
     replace_existing: bool,
     source_channel_id: int | None = None,
     source_message_id: int | None = None,
+    source_content: str | None = None,
 ) -> list[ModerationRule]:
     parsed_rules = list(parsed_rules)
     if not parsed_rules:
@@ -473,8 +552,19 @@ async def import_rules(
         created.append(rule)
 
     await session.flush()
-    for item in created:
+    content_hash = _content_hash(source_content or "\n".join((item.description or item.title) for item in parsed_rules))
+    for item, parsed in zip(created, parsed_rules, strict=False):
         await session.refresh(item)
+        if item.id is not None:
+            await _upsert_rule_sync_state(
+                session,
+                item.id,
+                sync_status=ModerationRuleSyncStatus.SYNCED if source_message_id is not None else ModerationRuleSyncStatus.MANUAL,
+                source_content_hash=content_hash if source_message_id is not None else None,
+                source_segment_hash=_segment_hash(parsed) if source_message_id is not None else None,
+                sync_note="Imported from Discord source message." if source_message_id is not None else "Imported manually from pasted text.",
+                now=now,
+            )
     _invalidate_rule_usage_cache(server_id=server_id)
     return created
 
@@ -492,7 +582,7 @@ async def import_rules_from_messages(
             detail="messages cannot be empty",
         )
 
-    parsed_chunks: list[tuple[ParsedRule, int, int]] = []
+    parsed_chunks: list[tuple[ParsedRule, int, int, str]] = []
     for ref in message_refs:
         channel_id = int(ref.channel_id)
         message_id = int(ref.message_id)
@@ -504,8 +594,10 @@ async def import_rules_from_messages(
                 detail=f"Message {message_id} does not belong to target server",
             )
 
-        for parsed in parse_rules_from_text(message.get("content", "")):
-            parsed_chunks.append((parsed, channel_id, message_id))
+        content = message.get("content", "")
+        content_hash = _content_hash(content)
+        for parsed in await parse_rules_for_import(content):
+            parsed_chunks.append((parsed, channel_id, message_id, content_hash))
 
     if not parsed_chunks:
         raise HTTPException(
@@ -522,7 +614,7 @@ async def import_rules_from_messages(
 
     now = naive_utcnow()
     created: list[ModerationRule] = []
-    for index, (parsed, channel_id, message_id) in enumerate(parsed_chunks, start=1):
+    for index, (parsed, channel_id, message_id, _) in enumerate(parsed_chunks, start=1):
         rule = ModerationRule(
             server_id=server_id,
             code=parsed.code,
@@ -541,8 +633,18 @@ async def import_rules_from_messages(
         created.append(rule)
 
     await session.flush()
-    for item in created:
+    for item, (parsed, _, _, content_hash) in zip(created, parsed_chunks, strict=False):
         await session.refresh(item)
+        if item.id is not None:
+            await _upsert_rule_sync_state(
+                session,
+                item.id,
+                sync_status=ModerationRuleSyncStatus.SYNCED,
+                source_content_hash=content_hash,
+                source_segment_hash=_segment_hash(parsed),
+                sync_note="Imported from Discord source message.",
+                now=now,
+            )
     _invalidate_rule_usage_cache(server_id=server_id)
     return created
 
@@ -564,7 +666,7 @@ async def import_rules_from_message(
                 detail="Provided message does not belong to target server",
             )
     content = message.get("content", "")
-    parsed_rules = parse_rules_from_text(content)
+    parsed_rules = await parse_rules_for_import(content)
     return await import_rules(
         session=session,
         server_id=server_id,
@@ -573,7 +675,41 @@ async def import_rules_from_message(
         replace_existing=replace_existing,
         source_channel_id=channel_id,
         source_message_id=message_id,
+        source_content=content,
     )
+
+
+def _normalized_match_key(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = _normalize_text(value).lower()
+    return normalized or None
+
+
+def _rule_match_keys_from_rule(rule: ModerationRule) -> list[str]:
+    keys: list[str] = []
+    for value in (rule.code, rule.source_marker, rule.title):
+        key = _normalized_match_key(value)
+        if key and key not in keys:
+            keys.append(key)
+    return keys
+
+
+def _rule_match_keys_from_parsed(parsed: ParsedRule) -> list[str]:
+    keys: list[str] = []
+    for value in (parsed.code, parsed.marker, parsed.title):
+        key = _normalized_match_key(value)
+        if key and key not in keys:
+            keys.append(key)
+    return keys
+
+
+def _index_existing_rules(existing: Iterable[ModerationRule]) -> dict[str, ModerationRule]:
+    index: dict[str, ModerationRule] = {}
+    for rule in existing:
+        for key in _rule_match_keys_from_rule(rule):
+            index.setdefault(key, rule)
+    return index
 
 
 async def sync_rules_from_source_message_edit(
@@ -596,20 +732,67 @@ async def sync_rules_from_source_message_edit(
     if not existing:
         return []
 
-    parsed_rules = parse_rules_from_text(content)
+    parsed_rules = await parse_rules_for_import(content)
     if not parsed_rules:
         return []
 
     now = naive_utcnow()
+    content_hash = _content_hash(content)
     first_sort_order = min(rule.sort_order for rule in existing)
     created_by_user_id = existing[0].created_by_user_id
-    for rule in existing:
-        rule.is_active = False
-        rule.updated_at = now
-        session.add(rule)
+    states = await _get_rule_sync_states(session, [rule.id for rule in existing if rule.id is not None])
+    existing_by_key = _index_existing_rules(existing)
+    matched_ids: set[UUID] = set()
+    changed: list[ModerationRule] = []
+    created_pairs: list[tuple[ModerationRule, ParsedRule]] = []
 
-    created: list[ModerationRule] = []
     for index, parsed in enumerate(parsed_rules):
+        matched = None
+        for key in _rule_match_keys_from_parsed(parsed):
+            candidate = existing_by_key.get(key)
+            if candidate is not None and candidate.id not in matched_ids:
+                matched = candidate
+                break
+
+        if matched is not None and matched.id is not None:
+            matched_ids.add(matched.id)
+            state = states.get(matched.id)
+            protected_statuses = {ModerationRuleSyncStatus.MANUAL.value, ModerationRuleSyncStatus.CONFLICT.value}
+            is_manual = state is not None and state.sync_status in protected_statuses
+            if is_manual:
+                matched.source_marker = matched.source_marker or parsed.marker
+                matched.updated_at = now
+                session.add(matched)
+                await _upsert_rule_sync_state(
+                    session,
+                    matched.id,
+                    sync_status=ModerationRuleSyncStatus.MANUAL,
+                    source_content_hash=content_hash,
+                    source_segment_hash=_segment_hash(parsed),
+                    sync_note="Discord source changed; manual dashboard edits were preserved.",
+                    now=now,
+                )
+            else:
+                matched.code = parsed.code
+                matched.title = parsed.title
+                matched.description = parsed.description
+                matched.sort_order = first_sort_order + index
+                matched.source_marker = parsed.marker
+                matched.is_active = True
+                matched.updated_at = now
+                session.add(matched)
+                await _upsert_rule_sync_state(
+                    session,
+                    matched.id,
+                    sync_status=ModerationRuleSyncStatus.SYNCED,
+                    source_content_hash=content_hash,
+                    source_segment_hash=_segment_hash(parsed),
+                    sync_note="Updated from edited Discord source message.",
+                    now=now,
+                )
+            changed.append(matched)
+            continue
+
         rule = ModerationRule(
             server_id=server_id,
             code=parsed.code,
@@ -625,13 +808,55 @@ async def sync_rules_from_source_message_edit(
             updated_at=now,
         )
         session.add(rule)
-        created.append(rule)
+        changed.append(rule)
+        created_pairs.append((rule, parsed))
 
     await session.flush()
-    for rule in created:
+    for rule, parsed in created_pairs:
+        if rule.id is not None:
+            await _upsert_rule_sync_state(
+                session,
+                rule.id,
+                sync_status=ModerationRuleSyncStatus.SYNCED,
+                source_content_hash=content_hash,
+                source_segment_hash=_segment_hash(parsed),
+                sync_note="Created from edited Discord source message.",
+                now=now,
+            )
+
+    for rule in existing:
+        if rule.id is None or rule.id in matched_ids:
+            continue
+        state = states.get(rule.id)
+        if state is not None and state.sync_status == ModerationRuleSyncStatus.MANUAL.value:
+            await _upsert_rule_sync_state(
+                session,
+                rule.id,
+                sync_status=ModerationRuleSyncStatus.CONFLICT,
+                source_content_hash=content_hash,
+                source_segment_hash=state.source_segment_hash,
+                sync_note="Discord source no longer contains a matching rule; manual rule kept active for review.",
+                now=now,
+            )
+            continue
+        rule.is_active = False
+        rule.updated_at = now
+        session.add(rule)
+        await _upsert_rule_sync_state(
+            session,
+            rule.id,
+            sync_status=ModerationRuleSyncStatus.SYNCED,
+            source_content_hash=content_hash,
+            source_segment_hash=state.source_segment_hash if state is not None else None,
+            sync_note="Deactivated because the rule was removed from the Discord source message.",
+            now=now,
+        )
+
+    await session.flush()
+    for rule in changed:
         await session.refresh(rule)
     _invalidate_rule_usage_cache(server_id=server_id)
-    return created
+    return changed
 
 
 def _get_cached_rule_usage(server_id: int, rule_id: UUID) -> ModerationRuleUsageModel | None:

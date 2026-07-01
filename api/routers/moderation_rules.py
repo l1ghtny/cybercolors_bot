@@ -26,11 +26,12 @@ from api.services.moderation_rules_service import (
     get_rule_usage,
     get_rule_usage_stats_for_server,
     get_rule_parse_guide,
+    get_rule_sync_states_for_rules,
     import_rules,
     import_rules_from_message,
     import_rules_from_messages,
     list_rules,
-    parse_rules_from_text,
+    parse_rules_for_import,
     to_parsed_rule_model,
     to_rule_read_model,
     update_rule_manually,
@@ -57,6 +58,7 @@ async def get_server_moderation_rules(
         include_inactive=include_inactive or include_deleted,
     )
     usage_map = await get_rule_usage_stats_for_server(session=session, server_id=server_id) if include_usage else {}
+    sync_states = await get_rule_sync_states_for_rules(session=session, rules=rules)
     payload: list[ModerationRuleReadModel] = []
     for item in rules:
         usage_count = None
@@ -68,6 +70,7 @@ async def get_server_moderation_rules(
                 item,
                 usage_count=usage_count,
                 last_cited_at=last_cited_at,
+                sync_state=sync_states.get(item.id),
             )
         )
     return payload
@@ -133,7 +136,7 @@ async def parse_server_moderation_rules(
     server_id: int,
     body: ModerationRuleParsePreviewModel,
 ):
-    parsed = parse_rules_from_text(body.text)
+    parsed = await parse_rules_for_import(body.text)
     return [to_parsed_rule_model(item) for item in parsed]
 
 
@@ -159,7 +162,7 @@ async def import_server_moderation_rules_from_text(
     _: int = Depends(require_server_permission("moderation.rules.manage")),
 ):
     created_by_user_id = resolve_actor_user_id(body.created_by_user_id, current_user_id)
-    parsed = parse_rules_from_text(body.text)
+    parsed = await parse_rules_for_import(body.text)
     imported = await import_rules(
         session=session,
         server_id=server_id,

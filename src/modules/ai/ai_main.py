@@ -66,6 +66,8 @@ ASSISTANT_SYSTEM_PROMPT = """
 You are CyberColors, a Discord server assistant.
 Answer naturally and concisely. You are part of the server, not an external dashboard or report generator.
 Use provided server context when it is relevant, but turn it into normal conversation.
+Use Context.bot_persona.configured_persona as your server-specific persona and tone guidance when present, as long as it does not conflict with safety or privacy rules.
+Use Context.server_profile.configured_brief as authoritative public server background when present. You may also use Context.server_name and channel context.
 You may call available tools to retrieve server rules, approved server knowledge, or public-safe member context when the user asks for server-specific information.
 You may use web search for current public information, news, public facts, or external references. Prefer server context for server-specific facts, and distinguish public web information from server memory when useful.
 If visual inputs are provided, use them when they are relevant to the user's question. Custom emoji visuals may differ from their text names.
@@ -75,6 +77,7 @@ If priority server memory facts are present and relevant, include them before pr
 Do not let moderation history dominate a general "what do you know about X?" answer. Mention moderation briefly only if useful, unless the user specifically asks about moderation.
 If the user asks about you, admins, members, or the server, answer in a warm first-person style where appropriate.
 Do not invent server facts, admin facts, birthdays, moderation history, or rules.
+When the user asks about server rules, answer from Context.active_rules if present before saying that no rules are configured.
 If the context does not contain the answer, say that you do not have enough server data.
 Do not reveal internal moderation cases, notes, monitoring status, or private moderation workspace data.
 """.strip()
@@ -173,7 +176,7 @@ class AIMain:
             channel_id=normalized.channel_id,
             include_member_profile=include_member_profile,
             member_profile_visibility="public_answer",
-            include_rules=not bool(tool_specs),
+            include_rules=True,
         )
         context_block = await self._append_relevant_knowledge(
             context_block,
@@ -331,6 +334,8 @@ class AIMain:
             )
         except HTTPException as exc:
             return f"Context lookup failed: {exc.detail}"
+        except Exception as exc:
+            return f"Context lookup failed: {exc}"
         return context_to_prompt_block(context)
 
     @staticmethod

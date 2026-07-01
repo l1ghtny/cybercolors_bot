@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.dependencies.server_access import require_server_dashboard_access
@@ -26,6 +26,7 @@ from api.models.ai_moderation import (
     AITweakSuggestionModel,
 )
 from api.services.ai_knowledge import (
+    create_file_knowledge_source,
     create_knowledge_source,
     delete_knowledge_source,
     get_knowledge_source,
@@ -202,6 +203,37 @@ async def create_ai_knowledge_source(
         server_id=server_id,
         body=body,
         created_by_user_id=current_user_id,
+    )
+
+
+@server_ai_router.post(
+    "/knowledge/file",
+    response_model=AIKnowledgeSourceReadModel,
+)
+async def upload_ai_knowledge_file(
+    server_id: int,
+    title: str = Form(..., min_length=1, max_length=255),
+    subject_type: str = Form(default="server"),
+    subject_user_id: int | None = Form(default=None),
+    visibility: str = Form(default="public_answer"),
+    queue_index: bool = Form(default=True),
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_session),
+    current_user_id: int = Depends(require_server_permission("ai.knowledge.manage")),
+):
+    payload = await file.read()
+    return await create_file_knowledge_source(
+        session=session,
+        server_id=server_id,
+        created_by_user_id=current_user_id,
+        title=title,
+        payload=payload,
+        filename=file.filename or "upload",
+        content_type=file.content_type,
+        subject_type=subject_type,
+        subject_user_id=subject_user_id,
+        visibility=visibility,
+        queue_index=queue_index,
     )
 
 

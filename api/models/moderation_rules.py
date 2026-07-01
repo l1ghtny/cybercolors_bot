@@ -54,6 +54,8 @@ class ModerationRuleReadModel(BaseModel):
     updated_at: datetime
     usage_count: int | None = None
     last_cited_at: datetime | None = None
+    sync_status: str | None = None
+    sync_note: str | None = None
 
 
 class ModerationRuleImportTextModel(BaseModel):
