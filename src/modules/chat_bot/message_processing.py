@@ -8,7 +8,7 @@ from src.modules.ai.discord_media import ai_images_from_discord_message
 from src.modules.localization.service import tr
 from src.misc_files.check_if_message_has_reply import check_replies
 
-REPLY_THREAD_LIMIT = 8
+REPLY_THREAD_LIMIT = 20
 
 
 async def decide_on_response(message, client, *, locale: str | None = None):
@@ -116,8 +116,16 @@ async def organise_messages(messages, client):
 
 
 def verify_user(messages, message, client):
-    messages_authors = [i["author"] for i in messages]
-    unique = set(messages_authors)
-    unique.discard(client.user.id)
-    unique.add(message.author.id)
-    return len(unique) == 1
+    bot_id = client.user.id
+    current_author_id = message.author.id
+    owners = {
+        i["author"]
+        for i in messages
+        if i["author"] != bot_id and _is_bot_request(i.get("content") or "", bot_id)
+    }
+    owners.add(current_author_id)
+    return len(owners) == 1
+
+
+def _is_bot_request(content: str, bot_id: int) -> bool:
+    return f"<@{bot_id}>" in content or f"<@!{bot_id}>" in content

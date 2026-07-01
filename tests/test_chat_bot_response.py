@@ -214,8 +214,64 @@ def test_decide_on_response_localizes_reply_thread_limit(monkeypatch):
         message_processing.decide_on_response(FakeMessage(), FakeClient(), locale="en")
     )
 
-    assert "up to 8 messages" in content
+    assert "up to 20 messages" in content
     assert tokens == 0
+
+
+def test_verify_user_allows_referenced_message_from_another_user():
+    import src.modules.chat_bot.message_processing as message_processing
+
+    class FakeClient:
+        user = type("BotUser", (), {"id": 999})()
+
+    assert message_processing.verify_user(
+        [{"author": 111, "content": "look at this image"}],
+        FakeMessage(),
+        FakeClient(),
+    )
+
+
+def test_verify_user_blocks_different_user_continuing_existing_bot_thread():
+    import src.modules.chat_bot.message_processing as message_processing
+
+    class FakeClient:
+        user = type("BotUser", (), {"id": 999})()
+
+    assert not message_processing.verify_user(
+        [
+            {"author": 999, "content": "previous answer"},
+            {"author": 111, "content": "<@999> previous question"},
+            {"author": 222, "content": "referenced context"},
+        ],
+        FakeMessage(),
+        FakeClient(),
+    )
+
+
+def test_decide_on_response_allows_other_user_reference(monkeypatch):
+    import src.modules.chat_bot.message_processing as message_processing
+
+    class FakeClient:
+        user = type("BotUser", (), {"id": 999})()
+
+    async def fake_count_replies(_message):
+        return 1, [{"author": 111, "content": "hello"}]
+
+    async def fake_create_response_to_dialog(messages, **_kwargs):
+        assert len(messages) == 2
+        assert [item["role"] for item in messages] == ["user", "user"]
+        return "answer", 12
+
+    monkeypatch.setattr(message_processing, "check_replies", lambda _message: True)
+    monkeypatch.setattr(message_processing, "count_replies", fake_count_replies)
+    monkeypatch.setattr(message_processing, "create_response_to_dialog", fake_create_response_to_dialog)
+
+    content, tokens = asyncio.run(
+        message_processing.decide_on_response(FakeMessage(), FakeClient(), locale="en")
+    )
+
+    assert content == "answer"
+    assert tokens == 12
 
 
 def test_decide_on_response_localizes_multi_user_reply_thread(monkeypatch):
@@ -225,7 +281,10 @@ def test_decide_on_response_localizes_multi_user_reply_thread(monkeypatch):
         user = type("BotUser", (), {"id": 999})()
 
     async def fake_count_replies(_message):
-        return 1, [{"author": 111, "content": "hello"}]
+        return 2, [
+            {"author": 999, "content": "previous answer"},
+            {"author": 111, "content": "<@999> previous question"},
+        ]
 
     monkeypatch.setattr(message_processing, "check_replies", lambda _message: True)
     monkeypatch.setattr(message_processing, "count_replies", fake_count_replies)
