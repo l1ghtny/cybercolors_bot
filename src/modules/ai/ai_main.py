@@ -187,6 +187,7 @@ class AIMain:
             enabled=enable_tools,
         )
         messages = list(normalized.conversation)
+        web_search_enabled = _assistant_web_search_enabled()
         messages.append(
             AIMessage(
                 role="user",
@@ -210,7 +211,7 @@ class AIMain:
             max_output_tokens=1200,
             metadata={"task": "assistant"},
             tools=tool_specs,
-            enable_web_search=_assistant_web_search_enabled(),
+            enable_web_search=web_search_enabled,
             max_tool_calls=2 if tool_specs else None,
         )
         response = await self.provider.complete(request)
@@ -240,7 +241,7 @@ class AIMain:
                 metadata={"task": "assistant", "tool_round": True},
                 tools=tool_specs,
                 tool_results=tool_results,
-                enable_web_search=_assistant_web_search_enabled(),
+                enable_web_search=web_search_enabled,
                 max_tool_calls=2 if tool_specs else None,
                 previous_response_id=response.id,
             )

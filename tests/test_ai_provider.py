@@ -1,7 +1,7 @@
 import asyncio
 from types import SimpleNamespace
 
-from src.modules.ai.models import AIImageInput, AIMessage, AIRequest
+from src.modules.ai.models import AIImageInput, AIMessage, AIRequest, AIToolSpec
 from src.modules.ai.providers import OpenAIProvider
 
 
@@ -78,6 +78,35 @@ def test_openai_provider_adds_web_search_tool_when_enabled():
 
     assert client.responses.kwargs is not None
     assert client.responses.kwargs["tools"] == [{"type": "web_search"}]
+    assert client.responses.kwargs["tool_choice"] == "auto"
+
+
+def test_openai_provider_keeps_web_search_as_auto_tool_option_with_functions():
+    client = FakeClient()
+    provider = OpenAIProvider(client=client)
+
+    asyncio.run(
+        provider.complete(
+            AIRequest(
+                task="assistant",
+                model="test-model",
+                system_prompt="Answer.",
+                messages=[AIMessage(role="user", content="What are the rules?")],
+                enable_web_search=True,
+                tools=[
+                    AIToolSpec(
+                        name="get_active_rules",
+                        description="Fetch active rules.",
+                        parameters={"type": "object", "properties": {}},
+                    )
+                ],
+            )
+        )
+    )
+
+    assert client.responses.kwargs is not None
+    assert client.responses.kwargs["tools"][0] == {"type": "web_search"}
+    assert client.responses.kwargs["tools"][1]["type"] == "function"
     assert client.responses.kwargs["tool_choice"] == "auto"
 
 

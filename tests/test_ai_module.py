@@ -379,7 +379,8 @@ def test_moderation_strictness_is_sent_to_prompt_and_metadata():
     assert provider.last_request.metadata["strictness"] == "high"
 
 
-def test_answer_runs_user_facing_tool_call_loop():
+def test_answer_runs_user_facing_tool_call_loop(monkeypatch):
+    monkeypatch.delenv("AI_REPLY_WEB_SEARCH_ENABLED", raising=False)
     async def rules_handler(*, session, server_id):
         assert session == "session"
         assert server_id == 123
@@ -434,6 +435,7 @@ def test_answer_runs_user_facing_tool_call_loop():
     assert provider.requests[0].enable_web_search is True
     assert provider.requests[0].max_tool_calls == 2
     assert provider.requests[1].previous_response_id == "resp-1"
+    assert provider.requests[1].enable_web_search is True
     assert provider.requests[1].tool_results[0].call_id == "call-1"
     assert provider.requests[1].tool_results[0].output == {
         "ok": True,
