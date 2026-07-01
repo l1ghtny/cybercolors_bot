@@ -2,14 +2,13 @@ import datetime
 import random
 import re
 
-import aiohttp
 import discord
+import pytz
 from sqlalchemy.orm import selectinload
 from sqlmodel import select
 
 from src.db.database import get_async_session
 from src.db.models import Birthday, Congratulation, GlobalUser, User, utcnow_utc_tz
-from src.misc_files import basevariables
 from src.modules.logs_setup import logger
 
 logger = logger.logging.getLogger("bot")
@@ -34,15 +33,6 @@ async def check_birthday_new(client: discord.Client):
     """
     Checks for user birthdays based on their timezone and sends a greeting.
     """
-    key = basevariables.t_key
-    timezones_response = await get_all_timezones(key)
-
-    if timezones_response.get("status") != "OK":
-        logger.error("TimezoneDB API returned a non-OK status.")
-        return
-
-    zones = timezones_response.get("zones", [])
-
     async with get_async_session() as session:
         statement = select(Birthday).options(
             selectinload(Birthday.global_user).selectinload(GlobalUser.memberships).selectinload(User.server)
@@ -68,21 +58,18 @@ async def check_birthday_new(client: discord.Client):
                     logger.info(f"User {membership.user_id} is no longer a member of guild {guild.name}")
                     continue
 
-                user_timestamp = await get_user_time(birthday.timezone, zones)
-                if user_timestamp is None:
+                user_current_time = get_user_current_time(birthday.timezone)
+                if user_current_time is None:
                     continue
 
-                user_current_time = datetime.datetime.fromtimestamp(user_timestamp, datetime.timezone.utc)
-                birthday_date = datetime.datetime(
-                    user_current_time.year, int(birthday.month), birthday.day, hour=0, minute=0
-                )
+                birthday_date = datetime.date(user_current_time.year, int(birthday.month), birthday.day)
 
                 logger.info(
-                    f"Checking {member.name}: Birthday is {birthday_date.date()}, user's current time is {user_current_time}"
+                    f"Checking {member.name}: Birthday is {birthday_date}, user's current time is {user_current_time}"
                 )
 
-                is_birthday_day = user_current_time.date() == birthday_date.date()
-                is_midnight_user_tz = user_current_time.hour == birthday_date.hour
+                is_birthday_day = user_current_time.date() == birthday_date
+                is_midnight_user_tz = user_current_time.hour == 0
                 role_not_assigned_yet = birthday.role_added_at is None
                 should_celebrate = is_birthday_day and (is_midnight_user_tz or role_not_assigned_yet)
 
@@ -123,20 +110,10 @@ async def check_birthday_new(client: discord.Client):
     logger.info("Finished birthday check.")
 
 
-async def get_all_timezones(key):
-    request_url = f"http://api.timezonedb.com/v2.1/list-time-zone?key={key}&format=json"
+def get_user_current_time(timezone_name: str) -> datetime.datetime | None:
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(request_url) as response:
-                response.raise_for_status()
-                return await response.json()
-    except aiohttp.ClientError as e:
-        logger.error(f"Error fetching timezones: {e}")
-        return {}
-
-
-async def get_user_time(timezone, zones):
-    for item in zones:
-        if item.get("zoneName") == timezone:
-            return item.get("timestamp")
-    return None
+        user_timezone = pytz.timezone(timezone_name)
+    except pytz.UnknownTimeZoneError:
+        logger.warning("Skipping birthday check with invalid timezone: %s", timezone_name)
+        return None
+    return datetime.datetime.now(tz=user_timezone)

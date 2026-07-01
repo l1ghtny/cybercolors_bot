@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+from pytz import UnknownTimeZoneError, timezone
 
 
 MAX_DAYS_BY_MONTH = {
@@ -30,7 +31,13 @@ class BirthdayWriteModel(BaseModel):
         if value is None:
             return None
         cleaned = value.strip()
-        return cleaned or None
+        if not cleaned:
+            return None
+        try:
+            timezone(cleaned)
+        except UnknownTimeZoneError as exc:
+            raise ValueError("Invalid timezone") from exc
+        return cleaned
 
     @model_validator(mode="after")
     def validate_day_for_month(self):

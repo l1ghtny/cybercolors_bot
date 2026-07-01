@@ -104,6 +104,22 @@ async def update_birthday_for_server_user(
     return to_birthday_read(member, global_user, birthday)
 
 
+@birthdays.delete("/{server_id}/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_birthday_for_server_user(
+    server_id: int,
+    user_id: int,
+    session: AsyncSession = Depends(get_session),
+    _: int = Depends(require_server_permission("birthdays.records.manage")),
+):
+    await get_member_or_404(server_id, user_id, session)
+
+    birthday = await session.get(Birthday, user_id)
+    if not birthday:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Birthday not found for this user")
+
+    await session.delete(birthday)
+
+
 @birthdays.get("/{server_id}/settings", response_model=BirthdaySettingsModel)
 async def get_birthday_settings(server_id: int, session: AsyncSession = Depends(get_session)):
     server = await session.get(Server, server_id)

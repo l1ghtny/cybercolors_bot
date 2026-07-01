@@ -112,6 +112,7 @@ def test_settings_write_routes_use_feature_permissions():
         ("POST", "/replies/{server_id}/duplicate-selected"): {"replies.manage"},
         ("POST", "/birthdays/{server_id}"): {"birthdays.records.manage"},
         ("PUT", "/birthdays/{server_id}/{user_id}"): {"birthdays.records.manage"},
+        ("DELETE", "/birthdays/{server_id}/{user_id}"): {"birthdays.records.manage"},
         ("PUT", "/birthdays/{server_id}/settings/channel"): {"birthdays.settings.edit"},
         ("PUT", "/birthdays/{server_id}/settings/role"): {"birthdays.settings.edit"},
         ("POST", "/birthdays/{server_id}/settings/messages"): {"birthdays.settings.edit"},
@@ -122,7 +123,7 @@ def test_settings_write_routes_use_feature_permissions():
         ("POST", "/moderation/rules/{server_id}/import-message"): {"moderation.rules.manage"},
         ("POST", "/moderation/rules/{server_id}/import-messages"): {"moderation.rules.manage"},
         ("DELETE", "/moderation/rules/{server_id}/{rule_id}"): {"moderation.rules.manage"},
-        ("DELETE", "/moderation/rules/{server_id}/{rule_id}/hard"): {"moderation.rules.manage"},
+        ("DELETE", "/moderation/rules/{server_id}/{rule_id}/hard"): {"moderation.rules.edit"},
     }
 
     for (method, path), permission_keys in expected.items():
