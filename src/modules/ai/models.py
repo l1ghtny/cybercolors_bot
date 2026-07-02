@@ -103,6 +103,11 @@ class MessageModerationInput:
     mentioned_users: list[dict[str, Any]] = field(default_factory=list)
     current_bot_mentioned: bool = False
     answer_flow_invocation: bool = False
+    reply_to_message_id: int | None = None
+    reply_to_author_user_id: int | None = None
+    reply_to_author_display_name: str | None = None
+    reply_to_author_is_bot: bool = False
+    reply_to_content: str | None = None
     images: list[AIImageInput] = field(default_factory=list)
 
 

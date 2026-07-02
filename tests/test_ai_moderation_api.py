@@ -2,15 +2,15 @@ import asyncio
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlmodel import SQLModel
+from sqlmodel import SQLModel, select
 from starlette.routing import Match
 
 from api.api_main import app
-from api.models.ai_moderation import AIDismissSuggestionModel
-from api.services.ai_moderation import dismiss_ai_suggestion, get_ai_suggestion_stream_state, list_ai_decisions, list_ai_suggestions
+from api.models.ai_moderation import AIApproveSuggestionModel, AIDismissSuggestionModel
+from api.services.ai_moderation import approve_ai_suggestion, dismiss_ai_suggestion, get_ai_suggestion_stream_state, list_ai_decisions, list_ai_suggestions
 from api.services.server_overview import build_server_overview
 from src.db.database import engine, get_async_session
-from src.db.models import AIModerationDecision, GlobalUser, Server, User
+from src.db.models import AIModerationDecision, GlobalUser, MonitoredUser, Server, User
 from tests.db_helpers import ensure_pgvector_or_skip
 
 
@@ -142,6 +142,55 @@ async def _ai_moderation_api_scenario() -> None:
         decisions = await list_ai_decisions(session=session, server_id=server_id, status_filter="all")
         assert decisions.unread_count == 0
         assert decisions.items[0].status == "dismissed"
+
+        watch_decision_id = uuid4()
+        session.add(
+            AIModerationDecision(
+                id=watch_decision_id,
+                server_id=server_id,
+                channel_id=channel_id,
+                message_id=_make_discord_id(),
+                author_user_id=target_id,
+                message_content="borderline pattern",
+                attachments_json=[],
+                provider="fake",
+                model="test-model",
+                strictness="standard",
+                flagged=True,
+                severity="low",
+                categories=["suspicious_behavior"],
+                reason="Monitor for repeat behavior",
+                suggested_action="watch",
+                rule_ids=[],
+                status="pending_review",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        await session.commit()
+
+        watched = await approve_ai_suggestion(
+            session=session,
+            server_id=server_id,
+            suggestion_id=watch_decision_id,
+            moderator_user_id=moderator_id,
+            body=AIApproveSuggestionModel(),
+        )
+        assert watched.action_id is None
+        assert watched.suggestion.status == "action_applied"
+        assert watched.suggestion.selected_action == "watch"
+        assert watched.suggestion.action_reason == "Monitor for repeat behavior"
+        monitored = (
+            await session.exec(
+                select(MonitoredUser).where(
+                    MonitoredUser.server_id == server_id,
+                    MonitoredUser.user_id == target_id,
+                )
+            )
+        ).first()
+        assert monitored is not None
+        assert monitored.source == "ai_moderation"
+        assert monitored.reason == "Monitor for repeat behavior"
 
     await engine.dispose()
 

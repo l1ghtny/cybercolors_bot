@@ -21,6 +21,7 @@ from api.models.ai_moderation import (
 )
 from api.models.moderation_actions import ModerationActionCreate
 from api.services.discord_guilds import create_channel_message, edit_channel_message
+from api.services.monitoring_service import upsert_monitored_user
 from api.services.moderation_actions_service import create_action
 from api.services.moderation_core import build_optional_actor, naive_utcnow, to_moderation_history
 from src.db.models import AIModerationDecision, ActionType, GlobalUser, Server, ServerModerationSettings, TempVoiceLog, User
@@ -313,7 +314,7 @@ def _action_type_or_422(action: str) -> ActionType:
     if action_type is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Suggested action is not directly actionable. Use tweak with warn, mute, kick, or ban.",
+            detail="Suggested action is not directly actionable. Use tweak with watch, warn, mute, kick, or ban.",
         )
     return action_type
 
@@ -478,6 +479,32 @@ async def _apply_decision_action(
     rule_ids: list[str] | None,
     duration_minutes: int | None,
 ) -> AIResolveSuggestionResponseModel:
+    if action == "watch":
+        _ensure_decision_reviewable(decision)
+        reason = reason or decision.reason or "AI moderation watch suggestion"
+        await upsert_monitored_user(
+            session=session,
+            server_id=decision.server_id,
+            user_id=decision.author_user_id,
+            reason=reason,
+            added_by_user_id=moderator_user_id,
+            source="ai_moderation",
+        )
+        decision.status = "action_applied"
+        decision.reviewed_by_user_id = moderator_user_id
+        decision.reviewed_at = naive_utcnow()
+        decision.updated_at = naive_utcnow()
+        decision.selected_action = "watch"
+        decision.action_reason = reason
+        decision.action_override = (decision.suggested_action or "none") != "watch"
+        session.add(decision)
+        await session.flush()
+        await _publish_ai_review_resolution(decision=decision, action_id=None)
+        return AIResolveSuggestionResponseModel(
+            suggestion=await to_ai_decision_model(session, decision),
+            action_id=None,
+        )
+
     action_type = _action_type_or_422(action)
     _ensure_decision_reviewable(decision)
     payload, _effective_duration = await _build_action_payload_for_decision(

@@ -16,7 +16,7 @@ AISuggestionStatusFilter = Literal[
     "no_action_needed",
     "all",
 ]
-AIActionType = Literal["warn", "mute", "kick", "ban"]
+AIActionType = Literal["watch", "warn", "mute", "kick", "ban"]
 
 
 class AIChannelRefModel(BaseModel):

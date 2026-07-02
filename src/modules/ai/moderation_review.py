@@ -11,6 +11,7 @@ from sqlmodel import select
 
 from api.models.moderation_cases import ModerationCaseCreateModel
 from api.services.ai_settings import can_invoke_answer_flow, get_or_create_server_ai_settings, should_moderate_message_channel
+from api.services.monitoring_service import upsert_monitored_user
 from api.services.moderation_cases_service import create_case
 from src.db.database import get_async_session
 from src.db.models import (
@@ -102,6 +103,53 @@ def _content_for_moderation(message: discord.Message, *, include_attachments: bo
         for item in _attachment_payload(message)
     ]
     return f"{content}\n\nAttachments:\n" + "\n".join(attachment_lines)
+
+
+async def _referenced_message_for_moderation(message: discord.Message):
+    reference = getattr(message, "reference", None)
+    if reference is None:
+        return None
+
+    resolved = getattr(reference, "resolved", None)
+    if resolved is not None and getattr(resolved, "id", None) is not None:
+        return resolved
+
+    message_id = getattr(reference, "message_id", None)
+    if message_id is None:
+        return None
+
+    channel = message.channel
+    channel_id = getattr(reference, "channel_id", None)
+    if channel_id is not None and getattr(channel, "id", None) != channel_id and message.guild is not None:
+        channel = message.guild.get_channel(channel_id) or channel
+        if getattr(channel, "id", None) != channel_id:
+            try:
+                channel = await message.guild.fetch_channel(channel_id)
+            except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+                return None
+
+    fetch_message = getattr(channel, "fetch_message", None)
+    if fetch_message is None:
+        return None
+    try:
+        fetched = await fetch_message(message_id)
+    except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+        return None
+    return fetched if fetched is not None and getattr(fetched, "id", None) is not None else None
+
+
+async def _reply_context_payload(message: discord.Message) -> dict[str, int | str | bool | None]:
+    referenced = await _referenced_message_for_moderation(message)
+    if referenced is None:
+        return {}
+    author = getattr(referenced, "author", None)
+    return {
+        "reply_to_message_id": getattr(referenced, "id", None),
+        "reply_to_author_user_id": getattr(author, "id", None),
+        "reply_to_author_display_name": getattr(author, "display_name", None) or getattr(author, "name", None),
+        "reply_to_author_is_bot": bool(getattr(author, "bot", False)),
+        "reply_to_content": _truncate(_content_for_moderation(referenced, include_attachments=True), 1500),
+    }
 
 
 def _mentioned_user_payload(message: discord.Message) -> list[dict]:
@@ -644,6 +692,7 @@ class AICaseSelect(discord.ui.Select):
 class AIActionSelect(discord.ui.Select):
     def __init__(self, *, decision_id: UUID, suggested_action: str | None = None):
         options = [
+            discord.SelectOption(label="Watch", value="watch", description="Add the user to the monitoring watchlist."),
             discord.SelectOption(label="Warn", value="warn", description="Record a warning and DM the user."),
             discord.SelectOption(label="Mute", value="mute", description="Apply the configured mute role."),
             discord.SelectOption(label="Kick", value="kick", description="Kick the user from the server."),
@@ -683,6 +732,15 @@ class AIActionSelect(discord.ui.Select):
                 return
             await _refresh_review_message_for_decision(interaction, updated_decision)
             await interaction.response.send_message("AI review dismissed with no action.", ephemeral=True)
+            return
+
+        if selected_action == "watch":
+            await interaction.response.send_modal(
+                AIWatchConfirmModal(
+                    decision_id=self.decision_id,
+                    default_reason=decision.reason,
+                )
+            )
             return
 
         action_type = ACTIONABLE_AI_ACTIONS.get(selected_action)
@@ -931,6 +989,93 @@ class AIActionRuleSelectionView(discord.ui.View):
         self.add_item(clear_search_button)
         self.add_item(clear_selection_button)
         self.add_item(AIActionRuleConfirmButton())
+
+
+class AIWatchConfirmModal(discord.ui.Modal):
+    def __init__(
+        self,
+        *,
+        decision_id: UUID,
+        default_reason: str | None,
+    ):
+        super().__init__(title="Confirm AI watch")
+        self.decision_id = decision_id
+        self.reason = discord.ui.TextInput(
+            label="Watch reason",
+            style=discord.TextStyle.paragraph,
+            default=_truncate(default_reason, 900),
+            max_length=1000,
+            required=True,
+        )
+        self.add_item(self.reason)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if interaction.guild is None:
+            await interaction.response.send_message("This can only be used in a server.", ephemeral=True)
+            return
+        if not await _moderator_allowed(interaction):
+            await interaction.response.send_message("You need moderation permissions to review AI decisions.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        preflight_decision = await _ensure_review_open(interaction, self.decision_id)
+        if preflight_decision is None:
+            return
+
+        reason = str(self.reason.value).strip()
+        if not reason:
+            await interaction.followup.send("A reason is required.", ephemeral=True)
+            return
+
+        resolved_decision = None
+        try:
+            async with get_async_session() as session:
+                decision = await session.get(AIModerationDecision, self.decision_id)
+                if decision is None or decision.server_id != interaction.guild.id:
+                    await interaction.followup.send("AI decision was not found.", ephemeral=True)
+                    return
+                if _is_review_terminal(decision):
+                    await _refresh_review_message_for_decision(interaction, decision)
+                    await interaction.followup.send("This AI review has already been resolved.", ephemeral=True)
+                    return
+
+                await check_if_server_exists(interaction.guild, session)
+                await check_if_user_exists(interaction.user, interaction.guild, session)
+                member = interaction.guild.get_member(decision.author_user_id)
+                if member is None:
+                    member = await interaction.guild.fetch_member(decision.author_user_id)
+                await check_if_user_exists(member, interaction.guild, session)
+
+                await upsert_monitored_user(
+                    session=session,
+                    server_id=interaction.guild.id,
+                    user_id=decision.author_user_id,
+                    reason=reason,
+                    added_by_user_id=interaction.user.id,
+                    source="ai_moderation",
+                )
+                decision.status = "action_applied"
+                decision.reviewed_by_user_id = interaction.user.id
+                decision.reviewed_at = _naive_utcnow()
+                decision.updated_at = _naive_utcnow()
+                decision.selected_action = "watch"
+                decision.action_reason = reason
+                decision.action_override = _is_action_override(decision, "watch")
+                session.add(decision)
+                await session.commit()
+                resolved_decision = decision
+        except (discord.Forbidden, discord.NotFound, discord.HTTPException) as error:
+            await interaction.followup.send(f"Could not add user to watchlist in Discord: {error}", ephemeral=True)
+            return
+        except Exception as error:
+            logger.exception("Failed to apply AI watch for decision %s", self.decision_id)
+            await interaction.followup.send(f"Could not add user to watchlist: {error}", ephemeral=True)
+            return
+
+        await _refresh_review_message_for_decision(interaction, resolved_decision)
+        await interaction.followup.send(
+            f"Added user to watchlist and linked it to AI decision `{str(self.decision_id)[:8]}`.",
+            ephemeral=True,
+        )
 
 
 class AIActionConfirmModal(discord.ui.Modal):
@@ -1297,6 +1442,7 @@ async def screen_message_with_ai(message: discord.Message) -> None:
                 include_attachments=settings.moderation_monitor_attachments,
                 include_custom_emojis=True,
             )
+            reply_context = await _reply_context_payload(message)
             try:
                 verdict = await asyncio.wait_for(
                     ai_main_class.check_message(
@@ -1313,6 +1459,7 @@ async def screen_message_with_ai(message: discord.Message) -> None:
                             mentioned_users=_mentioned_user_payload(message),
                             current_bot_mentioned=_current_bot_mentioned(message),
                             answer_flow_invocation=answer_flow_invocation,
+                            **reply_context,
                             images=images,
                         ),
                         session=session,

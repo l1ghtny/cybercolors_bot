@@ -152,6 +152,10 @@ def test_check_message_builds_moderation_request_and_parses_verdict():
                 ],
                 current_bot_mentioned=True,
                 answer_flow_invocation=True,
+                reply_to_message_id=202224,
+                reply_to_author_user_id=555,
+                reply_to_author_display_name="original poster",
+                reply_to_content="just quoting this phrase",
             ),
             include_member_profile=False,
         )
@@ -173,6 +177,10 @@ def test_check_message_builds_moderation_request_and_parses_verdict():
     assert '"server_locale": "ru"' in prompt
     assert '"current_bot_mentioned": true' in prompt
     assert '"answer_flow_invocation": true' in prompt
+    assert '"reply_to": {' in prompt
+    assert '"message_id": "202224"' in prompt
+    assert "Replied-to message context:" in prompt
+    assert "just quoting this phrase" in prompt
     assert '"name": "general"' in prompt
     assert '"topic": "Main chat"' in prompt
     assert "permission_overwrites" not in prompt

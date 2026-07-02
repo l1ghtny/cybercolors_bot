@@ -6,6 +6,7 @@ from src.modules.ai.models import MessageModerationInput
 from src.db.models import AIModerationDecision, ActionType, ServerAISettings
 from src.modules.ai.models import AIResponse, ModerationVerdict
 from src.modules.ai.moderation_review import (
+    AIActionSelect,
     AIActionRuleSelectionView,
     AIModerationReviewView,
     _bot_can_read_message_channel,
@@ -100,6 +101,14 @@ def test_ai_moderation_mod_log_preflight_checks_write_permissions():
 
     permissions.send_messages = True
     assert _bot_can_send_ai_mod_log(guild, channel) is True
+
+
+def test_ai_action_select_supports_watch_suggestion():
+    select = AIActionSelect(decision_id=uuid4(), suggested_action="watch")
+
+    values = [option.value for option in select.options]
+    assert values == ["watch", "warn", "mute", "kick", "ban", "none"]
+    assert any(option.value == "watch" and option.default for option in select.options)
 
 
 def test_create_ai_moderation_decision_maps_verdict_fields():
@@ -392,6 +401,14 @@ def test_screen_message_with_ai_moderates_allowed_answer_flow_invocation_with_co
     message.author.bot = False
     message.author.roles = []
     message.mentions = [bot_member]
+    message.reference = SimpleNamespace(
+        resolved=SimpleNamespace(
+            id=222,
+            content="The phrase being joked about",
+            attachments=[],
+            author=SimpleNamespace(id=333, display_name="original"),
+        )
+    )
 
     async def fake_get_settings(_session, server_id, server_name=None):
         return settings
@@ -410,6 +427,10 @@ def test_screen_message_with_ai_moderates_allowed_answer_flow_invocation_with_co
             assert message_input.current_bot_mentioned is True
             assert message_input.answer_flow_invocation is True
             assert message_input.bot_user_id == 999
+            assert message_input.reply_to_message_id == 222
+            assert message_input.reply_to_author_user_id == 333
+            assert message_input.reply_to_author_display_name == "original"
+            assert message_input.reply_to_content == "The phrase being joked about"
             return ModerationVerdict(
                 flagged=False,
                 severity="none",
