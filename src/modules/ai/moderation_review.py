@@ -540,11 +540,12 @@ def build_ai_review_resolution_embed(
     return embed
 
 
-def build_disabled_ai_review_view(decision: AIModerationDecision) -> discord.ui.View:
+def build_disabled_ai_review_view(decision: AIModerationDecision, *, locale: str | None = None) -> discord.ui.View:
     view = AIModerationReviewView(
         decision_id=decision.id,
         suggested_action=decision.suggested_action,
         include_case_select=True,
+        locale=locale,
     )
     for item in view.children:
         item.disabled = True
@@ -584,7 +585,7 @@ async def _edit_ai_review_message(
             rule_labels=rule_labels,
         )
     )
-    await target_message.edit(embeds=original_embeds, view=build_disabled_ai_review_view(decision))
+    await target_message.edit(embeds=original_embeds, view=build_disabled_ai_review_view(decision, locale=locale))
 
 
 def _is_review_terminal(decision: AIModerationDecision) -> bool:
@@ -667,7 +668,7 @@ async def _set_decision_status(
         return decision
 
 
-def _case_options(cases) -> list[discord.SelectOption]:
+def _case_options(cases, locale: str | None = None) -> list[discord.SelectOption]:
     options: list[discord.SelectOption] = []
     for item in cases[:25]:
         label = f"#{item.id[:8]} {item.title}"
@@ -681,20 +682,21 @@ def _case_options(cases) -> list[discord.SelectOption]:
             )
         )
     if not options:
-        options.append(discord.SelectOption(label="No open case loaded", value="__none__"))
+        options.append(discord.SelectOption(label=tr(locale, "ai_review.case_select_empty"), value="__none__"))
     return options
 
 
 class AICaseSelect(discord.ui.Select):
-    def __init__(self, *, decision_id: UUID, cases):
+    def __init__(self, *, decision_id: UUID, cases, locale: str | None = None):
         super().__init__(
             custom_id=_decision_component_id("case", decision_id),
-            placeholder="Attach this AI review to an open case",
+            placeholder=tr(locale, "ai_review.case_select_placeholder"),
             min_values=1,
             max_values=1,
-            options=_case_options(cases),
+            options=_case_options(cases, locale),
         )
         self.decision_id = decision_id
+        self.locale = locale
 
     async def callback(self, interaction: discord.Interaction):
         if not await _moderator_allowed(interaction):
@@ -704,7 +706,7 @@ class AICaseSelect(discord.ui.Select):
         if decision is None:
             return
         if self.values[0] == "__none__":
-            await interaction.response.send_message("No open case was available on this review message.", ephemeral=True)
+            await interaction.response.send_message(tr(self.locale, "ai_review.case_select_none_available"), ephemeral=True)
             return
         case_id = UUID(self.values[0])
         decision = await _set_decision_status(
@@ -720,26 +722,27 @@ class AICaseSelect(discord.ui.Select):
 
 
 class AIActionSelect(discord.ui.Select):
-    def __init__(self, *, decision_id: UUID, suggested_action: str | None = None):
+    def __init__(self, *, decision_id: UUID, suggested_action: str | None = None, locale: str | None = None):
         options = [
-            discord.SelectOption(label="Watch", value="watch", description="Add the user to the monitoring watchlist."),
-            discord.SelectOption(label="Warn", value="warn", description="Record a warning and DM the user."),
-            discord.SelectOption(label="Mute", value="mute", description="Apply the configured mute role."),
-            discord.SelectOption(label="Kick", value="kick", description="Kick the user from the server."),
-            discord.SelectOption(label="Ban", value="ban", description="Ban the user from the server."),
-            discord.SelectOption(label="No action", value="none", description="Dismiss this AI review without action."),
+            discord.SelectOption(label=tr(locale, "ai_review.action_watch"), value="watch", description=tr(locale, "ai_review.action_watch_description")),
+            discord.SelectOption(label=tr(locale, "ai_review.action_warn"), value="warn", description=tr(locale, "ai_review.action_warn_description")),
+            discord.SelectOption(label=tr(locale, "ai_review.action_mute"), value="mute", description=tr(locale, "ai_review.action_mute_description")),
+            discord.SelectOption(label=tr(locale, "ai_review.action_kick"), value="kick", description=tr(locale, "ai_review.action_kick_description")),
+            discord.SelectOption(label=tr(locale, "ai_review.action_ban"), value="ban", description=tr(locale, "ai_review.action_ban_description")),
+            discord.SelectOption(label=tr(locale, "ai_review.action_none"), value="none", description=tr(locale, "ai_review.action_none_description")),
         ]
         for option in options:
             if option.value == suggested_action:
                 option.default = True
         super().__init__(
             custom_id=_decision_component_id("action", decision_id),
-            placeholder="Choose moderator action",
+            placeholder=tr(locale, "ai_review.action_select_placeholder"),
             min_values=1,
             max_values=1,
             options=options,
         )
         self.decision_id = decision_id
+        self.locale = locale
 
     async def callback(self, interaction: discord.Interaction):
         if not await _moderator_allowed(interaction):
@@ -769,6 +772,7 @@ class AIActionSelect(discord.ui.Select):
                 AIWatchConfirmModal(
                     decision_id=self.decision_id,
                     default_reason=decision.reason,
+                    locale=self.locale,
                 )
             )
             return
@@ -791,17 +795,19 @@ class AIActionSelect(discord.ui.Select):
                     selected_rule_ids=[],
                     default_reason=decision.reason,
                     default_duration_minutes=default_duration,
+                    locale=self.locale,
                 )
             )
             return
 
         rule_view = AIActionRuleSelectionView(
-                decision_id=self.decision_id,
-                action_type=action_type,
-                rules=rules,
-                default_rule_ids=_ai_rule_defaults(decision, {str(rule.id) for rule in rules}),
-                default_reason=decision.reason,
-                default_duration_minutes=default_duration,
+            decision_id=self.decision_id,
+            action_type=action_type,
+            rules=rules,
+            default_rule_ids=_ai_rule_defaults(decision, {str(rule.id) for rule in rules}),
+            default_reason=decision.reason,
+            default_duration_minutes=default_duration,
+            locale=self.locale,
         )
         await interaction.response.send_message(
             rule_view.content(),
@@ -811,17 +817,17 @@ class AIActionSelect(discord.ui.Select):
 
 
 class AIRuleSelect(discord.ui.Select):
-    def __init__(self, *, rules, default_rule_ids: set[str]):
+    def __init__(self, *, rules, default_rule_ids: set[str], locale: str | None = None):
         if rules:
             options = _rule_select_options(rules, default_rule_ids)
             max_values = min(len(rules), AI_RULE_SELECTION_LIMIT)
             disabled = False
         else:
-            options = [discord.SelectOption(label="No matching rules", value="__none__")]
+            options = [discord.SelectOption(label=tr(locale, "ai_review.rule_select_empty"), value="__none__")]
             max_values = 1
             disabled = True
         super().__init__(
-            placeholder="Broken server rules",
+            placeholder=tr(locale, "ai_review.rule_select_placeholder"),
             min_values=0,
             max_values=max_values,
             options=options,
@@ -841,11 +847,11 @@ class AIRuleSelect(discord.ui.Select):
 
 class AIActionRuleSearchModal(discord.ui.Modal):
     def __init__(self, *, view: "AIActionRuleSelectionView"):
-        super().__init__(title="Search rules")
+        super().__init__(title=tr(view.locale, "ai_review.rule_search_title"))
         self.rule_view = view
         self.query = discord.ui.TextInput(
-            label="Search",
-            placeholder="Rule number, title, or keyword",
+            label=tr(view.locale, "ai_review.rule_search_label"),
+            placeholder=tr(view.locale, "ai_review.rule_search_placeholder"),
             default=view.search_query,
             max_length=100,
             required=False,
@@ -860,8 +866,8 @@ class AIActionRuleSearchModal(discord.ui.Modal):
 
 
 class AIActionRuleSearchButton(discord.ui.Button):
-    def __init__(self):
-        super().__init__(label="Search", style=discord.ButtonStyle.secondary, row=1)
+    def __init__(self, *, locale: str | None = None):
+        super().__init__(label=tr(locale, "ai_review.rule_search_button"), style=discord.ButtonStyle.secondary, row=1)
 
     async def callback(self, interaction: discord.Interaction):
         view = self.view
@@ -872,8 +878,8 @@ class AIActionRuleSearchButton(discord.ui.Button):
 
 
 class AIActionRulePageButton(discord.ui.Button):
-    def __init__(self, *, direction: int):
-        label = "Next" if direction > 0 else "Previous"
+    def __init__(self, *, direction: int, locale: str | None = None):
+        label = tr(locale, "ai_review.rule_next") if direction > 0 else tr(locale, "ai_review.rule_previous")
         super().__init__(label=label, style=discord.ButtonStyle.secondary, row=1)
         self.direction = direction
 
@@ -888,8 +894,8 @@ class AIActionRulePageButton(discord.ui.Button):
 
 
 class AIActionRuleClearSearchButton(discord.ui.Button):
-    def __init__(self):
-        super().__init__(label="Clear search", style=discord.ButtonStyle.secondary, row=1)
+    def __init__(self, *, locale: str | None = None):
+        super().__init__(label=tr(locale, "ai_review.rule_clear_search"), style=discord.ButtonStyle.secondary, row=1)
 
     async def callback(self, interaction: discord.Interaction):
         view = self.view
@@ -903,8 +909,8 @@ class AIActionRuleClearSearchButton(discord.ui.Button):
 
 
 class AIActionRuleClearSelectionButton(discord.ui.Button):
-    def __init__(self):
-        super().__init__(label="Clear rules", style=discord.ButtonStyle.danger, row=2)
+    def __init__(self, *, locale: str | None = None):
+        super().__init__(label=tr(locale, "ai_review.rule_clear_rules"), style=discord.ButtonStyle.danger, row=2)
 
     async def callback(self, interaction: discord.Interaction):
         view = self.view
@@ -917,8 +923,8 @@ class AIActionRuleClearSelectionButton(discord.ui.Button):
 
 
 class AIActionRuleConfirmButton(discord.ui.Button):
-    def __init__(self):
-        super().__init__(label="Continue", style=discord.ButtonStyle.primary, row=2)
+    def __init__(self, *, locale: str | None = None):
+        super().__init__(label=tr(locale, "ai_review.rule_continue"), style=discord.ButtonStyle.primary, row=2)
 
     async def callback(self, interaction: discord.Interaction):
         view = self.view
@@ -938,6 +944,7 @@ class AIActionRuleConfirmButton(discord.ui.Button):
                 selected_rule_ids=list(view.selected_rule_ids),
                 default_reason=view.default_reason,
                 default_duration_minutes=view.default_duration_minutes,
+                locale=view.locale,
             )
         )
 
@@ -952,9 +959,11 @@ class AIActionRuleSelectionView(discord.ui.View):
         default_rule_ids: set[str],
         default_reason: str | None,
         default_duration_minutes: int,
+        locale: str | None = None,
     ):
         super().__init__(timeout=300)
         self.decision_id = decision_id
+        self.locale = locale
         self.action_type = action_type
         self.rules = list(rules)
         self.default_reason = default_reason
@@ -962,7 +971,7 @@ class AIActionRuleSelectionView(discord.ui.View):
         self.search_query = ""
         self.page = 0
         self.selected_rule_ids = [str(rule.id) for rule in self.rules if str(rule.id) in default_rule_ids]
-        self.rule_select = AIRuleSelect(rules=[], default_rule_ids=set())
+        self.rule_select = AIRuleSelect(rules=[], default_rule_ids=set(), locale=self.locale)
         self.rebuild_items()
 
     @property
@@ -991,34 +1000,38 @@ class AIActionRuleSelectionView(discord.ui.View):
 
     def content(self) -> str:
         filtered_count = len(self.filtered_rules)
-        query_part = f" Search: `{self.search_query}`." if self.search_query else ""
-        return (
-            "Review the broken rules before applying this action."
-            f"{query_part} Showing page {self.page + 1}/{self.max_page + 1}, "
-            f"{filtered_count} matching rules, {len(self.selected_rule_ids)} selected."
+        query_part = tr(self.locale, "ai_review.rule_selection_search", query=self.search_query) if self.search_query else ""
+        return tr(
+            self.locale,
+            "ai_review.rule_selection_content",
+            query=query_part,
+            page=self.page + 1,
+            pages=self.max_page + 1,
+            count=filtered_count,
+            selected=len(self.selected_rule_ids),
         )
 
     def rebuild_items(self) -> None:
         self.page = max(0, min(self.page, self.max_page))
         self.clear_items()
         page_rules = self.page_rules()
-        self.rule_select = AIRuleSelect(rules=page_rules, default_rule_ids=self.selected_rule_id_set())
+        self.rule_select = AIRuleSelect(rules=page_rules, default_rule_ids=self.selected_rule_id_set(), locale=self.locale)
         self.add_item(self.rule_select)
-        search_button = AIActionRuleSearchButton()
-        prev_button = AIActionRulePageButton(direction=-1)
+        search_button = AIActionRuleSearchButton(locale=self.locale)
+        prev_button = AIActionRulePageButton(direction=-1, locale=self.locale)
         prev_button.disabled = self.page <= 0
-        next_button = AIActionRulePageButton(direction=1)
+        next_button = AIActionRulePageButton(direction=1, locale=self.locale)
         next_button.disabled = self.page >= self.max_page
-        clear_search_button = AIActionRuleClearSearchButton()
+        clear_search_button = AIActionRuleClearSearchButton(locale=self.locale)
         clear_search_button.disabled = not bool(self.search_query)
-        clear_selection_button = AIActionRuleClearSelectionButton()
+        clear_selection_button = AIActionRuleClearSelectionButton(locale=self.locale)
         clear_selection_button.disabled = not bool(self.selected_rule_ids)
         self.add_item(search_button)
         self.add_item(prev_button)
         self.add_item(next_button)
         self.add_item(clear_search_button)
         self.add_item(clear_selection_button)
-        self.add_item(AIActionRuleConfirmButton())
+        self.add_item(AIActionRuleConfirmButton(locale=self.locale))
 
 
 class AIWatchConfirmModal(discord.ui.Modal):
@@ -1027,11 +1040,13 @@ class AIWatchConfirmModal(discord.ui.Modal):
         *,
         decision_id: UUID,
         default_reason: str | None,
+        locale: str | None = None,
     ):
-        super().__init__(title="Confirm AI watch")
+        super().__init__(title=tr(locale, "ai_review.watch_modal_title"))
         self.decision_id = decision_id
+        self.locale = locale
         self.reason = discord.ui.TextInput(
-            label="Watch reason",
+            label=tr(locale, "ai_review.watch_reason_label"),
             style=discord.TextStyle.paragraph,
             default=_truncate(default_reason, 900),
             max_length=1000,
@@ -1117,13 +1132,15 @@ class AIActionConfirmModal(discord.ui.Modal):
         selected_rule_ids: list[str],
         default_reason: str | None,
         default_duration_minutes: int,
+        locale: str | None = None,
     ):
-        super().__init__(title=f"Confirm AI {action_type.value}")
+        super().__init__(title=tr(locale, "ai_review.action_modal_title", action=tr(locale, f"ai_review.action_{action_type.value}").lower()))
         self.decision_id = decision_id
+        self.locale = locale
         self.action_type = action_type
         self.selected_rule_ids = selected_rule_ids
         self.reason = discord.ui.TextInput(
-            label="Reason",
+            label=tr(locale, "ai_review.reason_label"),
             style=discord.TextStyle.paragraph,
             default=_truncate(default_reason, 900),
             max_length=1000,
@@ -1132,8 +1149,8 @@ class AIActionConfirmModal(discord.ui.Modal):
         self.add_item(self.reason)
         if action_type == ActionType.MUTE:
             self.duration_text = discord.ui.TextInput(
-                label="Duration",
-                placeholder="Examples: 30m, 2h, 3d, 1w",
+                label=tr(self.locale, "ai_review.duration_label"),
+                placeholder=tr(self.locale, "ai_review.duration_placeholder"),
                 default=f"{default_duration_minutes}m",
                 max_length=16,
                 required=True,
@@ -1242,9 +1259,9 @@ class AIActionConfirmModal(discord.ui.Modal):
 
 
 class AIDismissButton(discord.ui.Button):
-    def __init__(self, *, decision_id: UUID):
+    def __init__(self, *, decision_id: UUID, locale: str | None = None):
         super().__init__(
-            label="Dismiss",
+            label=tr(locale, "ai_review.dismiss_button"),
             style=discord.ButtonStyle.secondary,
             custom_id=_decision_component_id("dismiss", decision_id),
         )
@@ -1272,9 +1289,9 @@ class AIDismissButton(discord.ui.Button):
 
 
 class AICreateCaseButton(discord.ui.Button):
-    def __init__(self, *, decision_id: UUID):
+    def __init__(self, *, decision_id: UUID, locale: str | None = None):
         super().__init__(
-            label="Create case",
+            label=tr(locale, "ai_review.create_case_button"),
             style=discord.ButtonStyle.success,
             custom_id=_decision_component_id("create_case", decision_id),
         )
@@ -1340,16 +1357,18 @@ class AIModerationReviewView(discord.ui.View):
         open_cases=None,
         suggested_action: str | None = None,
         include_case_select: bool | None = None,
+        locale: str | None = None,
     ):
         super().__init__(timeout=None)
         cases = open_cases or []
         self.decision_id = decision_id
-        self.add_item(AIDismissButton(decision_id=decision_id))
-        self.add_item(AICreateCaseButton(decision_id=decision_id))
-        self.add_item(AIActionSelect(decision_id=decision_id, suggested_action=suggested_action))
+        self.locale = locale
+        self.add_item(AIDismissButton(decision_id=decision_id, locale=locale))
+        self.add_item(AICreateCaseButton(decision_id=decision_id, locale=locale))
+        self.add_item(AIActionSelect(decision_id=decision_id, suggested_action=suggested_action, locale=locale))
         should_include_case_select = bool(cases) if include_case_select is None else include_case_select
         if should_include_case_select:
-            self.add_item(AICaseSelect(decision_id=decision_id, cases=cases))
+            self.add_item(AICaseSelect(decision_id=decision_id, cases=cases, locale=locale))
 
 
 async def send_ai_moderation_review(
@@ -1395,6 +1414,7 @@ async def send_ai_moderation_review(
                 decision_id=decision.id,
                 open_cases=open_cases,
                 suggested_action=decision.suggested_action,
+                locale=locale,
             ),
             allowed_mentions=discord.AllowedMentions.none(),
         )
@@ -1423,6 +1443,14 @@ async def register_ai_moderation_review_views(client: discord.Client, *, limit: 
                 .limit(limit)
             )
         ).all()
+        locales = (
+            await session.exec(
+                select(ServerLocalizationSettings).where(
+                    ServerLocalizationSettings.server_id.in_({decision.server_id for decision in decisions})
+                )
+            )
+        ).all() if decisions else []
+        locale_by_server = {settings.server_id: normalize_locale_code(settings.locale_code) for settings in locales}
 
     for decision in decisions:
         client.add_view(
@@ -1430,6 +1458,7 @@ async def register_ai_moderation_review_views(client: discord.Client, *, limit: 
                 decision_id=decision.id,
                 suggested_action=decision.suggested_action,
                 include_case_select=True,
+                locale=locale_by_server.get(decision.server_id),
             )
         )
         registered += 1

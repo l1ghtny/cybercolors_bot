@@ -111,6 +111,38 @@ def test_ai_action_select_supports_watch_suggestion():
     assert any(option.value == "watch" and option.default for option in select.options)
 
 
+def test_ai_review_view_uses_russian_component_labels():
+    view = AIModerationReviewView(decision_id=uuid4(), suggested_action="warn", locale="ru")
+
+    button_labels = [item.label for item in view.children if hasattr(item, "label")]
+    assert "\u041e\u0442\u043a\u043b\u043e\u043d\u0438\u0442\u044c" in button_labels
+    assert "\u0421\u043e\u0437\u0434\u0430\u0442\u044c \u043a\u0435\u0439\u0441" in button_labels
+
+    action_select = next(item for item in view.children if isinstance(item, AIActionSelect))
+    assert action_select.placeholder == "\u0412\u044b\u0431\u0435\u0440\u0438\u0442\u0435 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u0435 \u043c\u043e\u0434\u0435\u0440\u0430\u0442\u043e\u0440\u0430"
+    warn_option = next(option for option in action_select.options if option.value == "warn")
+    assert warn_option.label == "\u041f\u0440\u0435\u0434\u0443\u043f\u0440\u0435\u0436\u0434\u0435\u043d\u0438\u0435"
+    assert warn_option.default is True
+
+
+def test_ai_rule_selection_view_uses_russian_component_labels():
+    view = AIActionRuleSelectionView(
+        decision_id=uuid4(),
+        action_type=ActionType.WARN,
+        rules=[_rule_model(str(uuid4()), "1", "Spam")],
+        default_rule_ids=set(),
+        default_reason="reason",
+        default_duration_minutes=60,
+        locale="ru",
+    )
+
+    assert view.rule_select.placeholder == "\u041d\u0430\u0440\u0443\u0448\u0435\u043d\u043d\u044b\u0435 \u043f\u0440\u0430\u0432\u0438\u043b\u0430 \u0441\u0435\u0440\u0432\u0435\u0440\u0430"
+    labels = [item.label for item in view.children if hasattr(item, "label")]
+    assert "\u041f\u043e\u0438\u0441\u043a" in labels
+    assert "\u0414\u0430\u043b\u0435\u0435" in labels
+    assert "\u041f\u0440\u043e\u0434\u043e\u043b\u0436\u0438\u0442\u044c" in labels
+    assert view.content().startswith("\u041f\u0440\u043e\u0432\u0435\u0440\u044c\u0442\u0435 \u043d\u0430\u0440\u0443\u0448\u0435\u043d\u043d\u044b\u0435 \u043f\u0440\u0430\u0432\u0438\u043b\u0430")
+
 def test_create_ai_moderation_decision_maps_verdict_fields():
     session = FakeSession()
     verdict = ModerationVerdict(
