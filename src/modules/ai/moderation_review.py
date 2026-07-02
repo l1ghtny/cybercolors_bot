@@ -62,6 +62,33 @@ def _truncate(value: str | None, limit: int) -> str:
     return f"{value[: limit - 3]}..."
 
 
+def _ai_review_color(severity: str | None) -> discord.Color:
+    if severity == "high":
+        return discord.Color.red()
+    if severity == "medium":
+        return discord.Color.orange()
+    if severity == "low":
+        return discord.Color.gold()
+    return discord.Color.greyple()
+
+
+def _ai_review_title(severity: str | None) -> str:
+    if severity == "high":
+        return "High-priority AI moderation review"
+    if severity == "medium":
+        return "AI moderation review needed"
+    if severity == "low":
+        return "Low-priority AI moderation review"
+    return "AI moderation note"
+
+
+def _quote_preview(value: str | None, limit: int = 900) -> str:
+    preview = _truncate(value, limit).strip()
+    if not preview:
+        return ""
+    return "> " + preview.replace("\n", "\n> ")
+
+
 def _decision_component_id(action: str, decision_id: UUID) -> str:
     return f"{AI_MOD_COMPONENT_PREFIX}:{action}:{decision_id}"
 
@@ -439,21 +466,24 @@ def build_ai_moderation_embed(
     *,
     rule_labels: list[str] | None = None,
 ) -> discord.Embed:
-    color = discord.Color.orange()
-    if decision.severity == "high":
-        color = discord.Color.red()
-    elif decision.severity == "low":
-        color = discord.Color.gold()
-
     jump_url = getattr(message, "jump_url", None)
+    reason = _truncate(decision.reason, 420) or "The AI flagged this message for moderator review."
     embed = discord.Embed(
-        title="AI moderation review",
-        description=_truncate(decision.reason, 350) or "The AI flagged this message for moderator review.",
-        color=color,
+        title=_ai_review_title(decision.severity),
+        description=reason,
+        color=_ai_review_color(decision.severity),
         url=jump_url,
+        timestamp=decision.created_at,
     )
-    embed.add_field(name="Author", value=f"<@{decision.author_user_id}> (`{decision.author_user_id}`)", inline=True)
-    embed.add_field(name="Channel", value=f"<#{decision.channel_id}> (`{decision.channel_id}`)", inline=True)
+    embed.add_field(
+        name="Context",
+        value=(
+            f"Author: <@{decision.author_user_id}> (`{decision.author_user_id}`)\n"
+            f"Channel: <#{decision.channel_id}> (`{decision.channel_id}`)"
+            + (f"\nSource: [Open in Discord]({jump_url})" if jump_url else "")
+        ),
+        inline=False,
+    )
     if decision.archive_channel_id and decision.archive_message_id:
         archive_url = f"https://discord.com/channels/{decision.server_id}/{decision.archive_channel_id}/{decision.archive_message_id}"
         embed.add_field(
@@ -473,7 +503,7 @@ def build_ai_moderation_embed(
     if display_rules:
         embed.add_field(name="Possible rules", value=", ".join(f"`{item}`" for item in display_rules), inline=False)
     if decision.message_content:
-        embed.add_field(name="Message", value=_truncate(decision.message_content, 900), inline=False)
+        embed.add_field(name="Message", value=_quote_preview(decision.message_content, 900), inline=False)
     if decision.attachments_json:
         attachment_names = [item.get("filename") or item.get("url") or "attachment" for item in decision.attachments_json[:5]]
         embed.add_field(name="Attachments", value="\n".join(_truncate(item, 120) for item in attachment_names), inline=False)
@@ -490,7 +520,7 @@ def build_ai_review_resolution_embed(
     color = discord.Color.green() if decision.status == "action_applied" else discord.Color.greyple()
     embed = discord.Embed(
         title="AI moderation review resolved",
-        description=f"Decision `{decision.id}` has been resolved. Review controls are disabled.",
+        description="Review controls are disabled.",
         color=color,
         timestamp=decision.reviewed_at,
     )

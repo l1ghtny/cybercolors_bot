@@ -196,8 +196,9 @@ def test_ai_moderation_embed_contains_review_summary():
 
     embed = build_ai_moderation_embed(decision, _fake_message())
 
-    assert embed.title == "AI moderation review"
+    assert embed.title == "AI moderation review needed"
     assert "Likely insult" in embed.description
+    assert any(field.name == "Context" and "Open in Discord" in field.value for field in embed.fields)
     assert any(field.name == "Suggested action" and "manual_review" in field.value for field in embed.fields)
     assert any(field.name == "Possible rules" and "rule-1" in field.value for field in embed.fields)
 
@@ -304,6 +305,7 @@ def test_ai_moderation_embed_surfaces_moderator_override():
 
     embed = build_ai_moderation_embed(decision, _fake_message())
 
+    assert embed.title == "AI moderation review needed"
     assert any(field.name == "Moderator action" and "mute" in field.value and "override: yes" in field.value for field in embed.fields)
 
 

@@ -422,6 +422,10 @@ def _truncate(value: str | None, limit: int = 1000) -> str:
     return f"{value[: limit - 3]}..."
 
 
+def _resolution_color(status_value: str | None) -> int:
+    return 0x57F287 if status_value == "action_applied" else 0x747F8D
+
+
 def _ai_review_resolution_embed_payload(decision: AIModerationDecision, *, action_id: str | None = None) -> dict:
     fields = [
         {"name": "Status", "value": f"`{decision.status}`", "inline": True},
@@ -436,9 +440,10 @@ def _ai_review_resolution_embed_payload(decision: AIModerationDecision, *, actio
         fields.append({"name": "Reason", "value": _truncate(decision.action_reason), "inline": False})
     embed = {
         "title": "AI moderation review resolved",
-        "description": f"Decision `{decision.id}` has been resolved. Review controls were disabled.",
-        "color": 0x57F287 if decision.status == "action_applied" else 0x747F8D,
+        "description": "Review controls were disabled.",
+        "color": _resolution_color(decision.status),
         "fields": fields,
+        "footer": {"text": f"AI decision ID: {decision.id}"},
     }
     if decision.reviewed_at:
         embed["timestamp"] = decision.reviewed_at.isoformat()
