@@ -1,10 +1,11 @@
 import discord
 
+from api.services.moderation_actions_service import _dashboard_action_url
 from src.db.database import get_async_session
-from src.db.models import ServerModerationSettings
+from src.db.models import GlobalUser, ServerModerationSettings
 from src.modules.logs_setup import logger
 from src.modules.localization.service import get_server_locale, tr
-from src.modules.moderation.mod_log import build_action_revert_log_message, send_mod_log_message
+from src.modules.moderation.mod_log import build_action_revert_log_embed, send_mod_log_message
 from src.modules.moderation.mute_management import get_expired_active_bans
 
 logger = logger.logging.getLogger("bot")
@@ -52,11 +53,16 @@ async def process_expired_bans(client: discord.Client) -> tuple[int, int]:
                 if locale is None:
                     locale = await get_server_locale(action.server_id)
                     locale_cache[action.server_id] = locale
-                content = build_action_revert_log_message(
+                target = await session.get(GlobalUser, action.target_user_id)
+                embed = build_action_revert_log_embed(
+                    server_id=action.server_id,
                     action_type="ban",
                     action_id=str(action.id),
+                    action_url=_dashboard_action_url(action.server_id, action.id),
                     target_user_id=action.target_user_id,
+                    target_display=target.username if target else None,
                     moderator_user_id=None,
+                    moderator_display=None,
                     reason=tr(locale, "modlog.reason_ban_expired"),
                     reverted=reverted,
                     locale=locale,
@@ -65,7 +71,7 @@ async def process_expired_bans(client: discord.Client) -> tuple[int, int]:
                 await send_mod_log_message(
                     guild=guild,
                     mod_log_channel_id=settings.mod_log_channel_id,
-                    content=content,
+                    embed=embed,
                 )
 
         await session.commit()

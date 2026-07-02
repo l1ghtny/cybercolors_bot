@@ -66,7 +66,6 @@ from src.db.models import (
     ServerModerationSettings,
 )
 from src.modules.localization.service import normalize_locale_code, tr
-from src.modules.moderation.mod_log import build_action_revert_log_message
 from src.modules.moderation.moderation_helpers import check_if_server_exists, check_if_user_exists
 from src.modules.moderation.mute_management import deactivate_user_mutes
 
@@ -302,6 +301,47 @@ def _build_action_log_embed(
     if created_at is not None and import_metadata["source_created_at_known"]:
         embed["timestamp"] = _format_dt(created_at)
     return embed
+
+
+def _build_action_revert_log_embed(
+    *,
+    action: ModerationAction,
+    moderator_user_id: int,
+    moderator_username: str | None,
+    target_username: str | None,
+    reason: str,
+    discord_changed: bool,
+    locale: str | None = None,
+) -> dict:
+    action_url = _dashboard_action_url(action.server_id, action.id)
+    action_type = action.action_type.value if hasattr(action.action_type, "value") else str(action.action_type)
+    fields = [
+        _embed_field(
+            tr(locale, "modlog.target_label"),
+            _format_user_for_log(action.target_user_id, target_username, locale),
+            inline=True,
+        ),
+        _embed_field(
+            tr(locale, "modlog.moderator_label"),
+            _format_user_for_log(moderator_user_id, moderator_username, locale),
+            inline=True,
+        ),
+        _embed_field(
+            tr(locale, "modlog.original_action_label"),
+            _markdown_link(f"{action_type} #{str(action.id)[:8]}", action_url),
+            inline=False,
+        ),
+        _embed_field(tr(locale, "modlog.reason_label"), reason, inline=False),
+        _embed_field(tr(locale, "modlog.reverted_label"), f"`{discord_changed}`", inline=True),
+    ]
+    return {
+        "title": f"{tr(locale, 'modlog.title')}: {tr(locale, 'modlog.action_revert')}",
+        "url": action_url,
+        "color": 0x5865F2,
+        "fields": fields,
+        "footer": {"text": f"{tr(locale, 'modlog.action_id_label')}: {action.id}"},
+        "timestamp": _format_dt(naive_utcnow()),
+    }
 
 
 async def _resolve_username(session: AsyncSession, user_id: int) -> str | None:
@@ -939,17 +979,19 @@ async def _send_action_revert_to_mod_log(
         return
 
     locale = await _get_server_locale(session=session, server_id=action.server_id)
-    content = build_action_revert_log_message(
-        action_type=action.action_type.value if hasattr(action.action_type, "value") else str(action.action_type),
-        action_id=str(action.id),
-        target_user_id=action.target_user_id,
+    moderator_username = await _resolve_username(session, moderator_user_id)
+    target_username = await _resolve_username(session, action.target_user_id)
+    embed = _build_action_revert_log_embed(
+        action=action,
         moderator_user_id=moderator_user_id,
+        moderator_username=moderator_username,
+        target_username=target_username,
         reason=reason,
-        reverted=discord_changed,
+        discord_changed=discord_changed,
         locale=locale,
     )
     try:
-        await create_channel_message(channel_id=settings.mod_log_channel_id, content=content)
+        await create_channel_message(channel_id=settings.mod_log_channel_id, embeds=[embed])
     except Exception as error:
         logger.warning(
             "Failed to send moderation action revert log to channel %s for server %s: %s",
@@ -973,7 +1015,13 @@ async def revert_action(
     if not action.is_active:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This action is already inactive")
 
-    resolved_reason = (reason or "").strip() or f"Reverted from dashboard by {moderator_user_id}"
+    locale = await _get_server_locale(session=session, server_id=action.server_id)
+    moderator_username = await _resolve_username(session, moderator_user_id)
+    resolved_reason = (reason or "").strip() or tr(
+        locale,
+        "modlog.reason_reverted_by_dashboard",
+        moderator=_format_user_for_log(moderator_user_id, moderator_username, locale),
+    )
     discord_changed = await _apply_discord_revert_for_action(session=session, action=action)
 
     action.is_active = False

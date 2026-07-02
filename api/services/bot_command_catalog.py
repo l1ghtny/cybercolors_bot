@@ -713,10 +713,10 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         qualified_name="mod actions revert",
         invoke="/mod actions revert",
         category="moderation-actions",
-        summary="Revert an active mute or ban action.",
+        summary="Revert an active warn, mute, or ban action.",
         required_permissions=["moderate_members"],
         parameters=[ACTION_ID_PARAM, _param("reason", "string", "Optional revert reason.", required=False)],
-        workflow=["Fetches the action, only permits active mutes and bans, applies the Discord reversal, deactivates the action, logs it, and confirms."],
+        workflow=["Fetches the action, permits active warns, mutes, and bans, applies the Discord reversal where possible, deactivates the action, logs it, and confirms."],
     ),
     BotCommandDocModel(
         id="add_my_birthday",

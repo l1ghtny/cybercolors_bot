@@ -23,9 +23,13 @@ def _format_dt(value: datetime | None) -> str:
 async def send_mod_log_message(
     guild: discord.Guild,
     mod_log_channel_id: int | None,
-    content: str,
+    content: str | None = None,
+    *,
+    embed: discord.Embed | None = None,
 ) -> bool:
     if not mod_log_channel_id:
+        return False
+    if content is None and embed is None:
         return False
 
     channel = guild.get_channel(mod_log_channel_id)
@@ -51,7 +55,7 @@ async def send_mod_log_message(
         return False
 
     try:
-        await send_method(content, allowed_mentions=discord.AllowedMentions.none())
+        await send_method(content, embed=embed, allowed_mentions=discord.AllowedMentions.none())
         return True
     except (discord.Forbidden, discord.HTTPException) as error:
         logger.warning(
@@ -97,30 +101,45 @@ def build_unmute_log_message(
     return _truncate(message, 1900)
 
 
-def build_action_revert_log_message(
+def build_action_revert_log_embed(
     *,
+    server_id: int,
     action_type: str,
     action_id: str,
+    action_url: str,
     target_user_id: int,
+    target_display: str | None,
     moderator_user_id: int | None,
+    moderator_display: str | None,
     reason: str,
     reverted: bool,
     locale: str | None = None,
     is_auto: bool = False,
-) -> str:
+) -> discord.Embed:
     action_name = tr(locale, "modlog.action_auto_revert") if is_auto else tr(locale, "modlog.action_revert")
-    lines = [
-        f"**{tr(locale, 'modlog.action_label')}:** `{action_name}`",
-        f"**{tr(locale, 'modlog.target_label')}:** <@{target_user_id}> (`{target_user_id}`)",
-        f"**{tr(locale, 'modlog.original_action_label')}:** `{action_type} {action_id}`",
-    ]
-    if moderator_user_id is not None:
-        lines.append(f"**{tr(locale, 'modlog.moderator_label')}:** <@{moderator_user_id}> (`{moderator_user_id}`)")
-    lines.extend(
-        [
-            f"**{tr(locale, 'modlog.reason_label')}:** {_truncate(reason, 1000)}",
-            f"**{tr(locale, 'modlog.reverted_label')}:** `{reverted}`",
-            f"**{tr(locale, 'modlog.logged_at_label')}:** `{_format_dt(datetime.now(timezone.utc).replace(tzinfo=None))}`",
-        ]
+    embed = discord.Embed(
+        title=f"{tr(locale, 'modlog.title')}: {action_name}",
+        url=action_url,
+        color=discord.Color.blurple(),
+        timestamp=datetime.now(timezone.utc),
     )
-    return _truncate(tr(locale, "modlog.header") + "\n" + "\n".join(lines), 1900)
+    embed.add_field(
+        name=tr(locale, "modlog.target_label"),
+        value=f"<@{target_user_id}> (`{_truncate(target_display or tr(locale, 'modlog.unknown'), 120)}`, `{target_user_id}`)",
+        inline=True,
+    )
+    if moderator_user_id is not None:
+        embed.add_field(
+            name=tr(locale, "modlog.moderator_label"),
+            value=f"<@{moderator_user_id}> (`{_truncate(moderator_display or tr(locale, 'modlog.unknown'), 120)}`, `{moderator_user_id}`)",
+            inline=True,
+        )
+    embed.add_field(
+        name=tr(locale, "modlog.original_action_label"),
+        value=f"[{action_type} #{action_id[:8]}]({action_url})",
+        inline=False,
+    )
+    embed.add_field(name=tr(locale, "modlog.reason_label"), value=_truncate(reason, 1024), inline=False)
+    embed.add_field(name=tr(locale, "modlog.reverted_label"), value=f"`{reverted}`", inline=True)
+    embed.set_footer(text=f"{tr(locale, 'modlog.action_id_label')}: {action_id} | Server ID: {server_id}")
+    return embed

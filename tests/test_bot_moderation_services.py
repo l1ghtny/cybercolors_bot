@@ -10,6 +10,7 @@ from api.models.moderation_rules import ModerationRuleReadModel
 from api.services.moderation_actions_service import (
     _build_action_log_embed,
     _build_action_log_message,
+    _build_action_revert_log_embed,
     create_action,
     revert_action,
 )
@@ -236,6 +237,36 @@ def test_build_action_log_message_links_dashboard_and_uses_rule_label(monkeypatc
         target_username="target",
     )
     assert [field["name"] for field in duplicate_embed["fields"]] == ["Target", "Moderator", "Rule", "Commentary", "Case"]
+
+
+def test_build_action_revert_log_embed_links_dashboard_and_uses_display_names(monkeypatch):
+    monkeypatch.setenv("DASHBOARD_BASE_URL", "https://dash.example/")
+    action_id = uuid4()
+    action = SimpleNamespace(
+        id=action_id,
+        action_type=ActionType.WARN,
+        server_id=123,
+        target_user_id=456,
+    )
+
+    embed = _build_action_revert_log_embed(
+        action=action,
+        moderator_user_id=789,
+        moderator_username="moderator",
+        target_username="target",
+        reason="mistaken action",
+        discord_changed=False,
+    )
+
+    assert embed["title"] == "Moderation log: revert"
+    assert embed["url"] == f"https://dash.example/dashboard/123/moderation/actions/{action_id}"
+    assert embed["color"] == 0x5865F2
+    assert embed["fields"][0]["value"] == "<@456> (`target`, `456`)"
+    assert embed["fields"][1]["value"] == "<@789> (`moderator`, `789`)"
+    assert embed["fields"][2]["value"] == f"[warn #{str(action_id)[:8]}](https://dash.example/dashboard/123/moderation/actions/{action_id})"
+    assert embed["fields"][3]["value"] == "mistaken action"
+    assert embed["fields"][4]["value"] == "`False`"
+    assert embed["footer"]["text"] == f"Action ID: {action_id}"
 
 
 async def _create_bot_action_scenario(sent_messages: list[dict]) -> None:

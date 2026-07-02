@@ -14,7 +14,7 @@ from api.services.moderation_actions_service import (
     list_action_summaries,
 )
 from src.db.database import get_async_session
-from src.db.models import ActionType, ModerationAction, ServerModerationSettings
+from src.db.models import ActionType, GlobalUser, ModerationAction, ServerModerationSettings
 from src.modules.localization.service import get_server_locale, tr
 from src.modules.moderation.bot_services import (
     action_message_cleanup_choices,
@@ -37,7 +37,7 @@ from src.modules.moderation.durations import (
     duration_unit_choices,
     resolve_duration_selection,
 )
-from src.modules.moderation.mod_log import build_action_revert_log_message, send_mod_log_message
+from src.modules.moderation.mod_log import build_action_revert_log_embed, send_mod_log_message
 from src.modules.moderation.public_notices import send_public_action_notice
 from src.modules.moderation.mute_management import deactivate_user_bans
 
@@ -51,6 +51,12 @@ async def _fetch_action_for_server(session, server_id: int, action_id: str) -> M
     if action is None or action.server_id != server_id:
         return None
     return action
+
+
+async def _resolve_global_username(user_id: int) -> str | None:
+    async with get_async_session() as session:
+        user = await session.get(GlobalUser, user_id)
+    return user.username if user else None
 
 
 async def _revert_action(
@@ -83,6 +89,8 @@ async def _revert_action(
             reverted = True
         except discord.NotFound:
             reverted = False
+    elif action.action_type == ActionType.WARN:
+        reverted = False
     else:
         return False, tr(locale, "action.revert_unavailable")
 
@@ -97,18 +105,85 @@ async def _revert_action(
     async with get_async_session() as session:
         settings = await session.get(ServerModerationSettings, action.server_id)
     if settings and settings.mod_log_channel_id:
-        content = build_action_revert_log_message(
+        embed = build_action_revert_log_embed(
+            server_id=action.server_id,
             action_type=action.action_type.value,
             action_id=str(action.id),
+            action_url=_dashboard_action_url(action.server_id, action.id),
             target_user_id=action.target_user_id,
+            target_display=await _resolve_global_username(action.target_user_id),
             moderator_user_id=interaction.user.id,
+            moderator_display=getattr(interaction.user, "display_name", None) or str(interaction.user),
             reason=reason,
             reverted=reverted,
             locale=locale,
         )
-        await send_mod_log_message(interaction.guild, settings.mod_log_channel_id, content)
+        await send_mod_log_message(interaction.guild, settings.mod_log_channel_id, embed=embed)
 
     return reverted, None
+
+
+class ActionRevertReasonModal(discord.ui.Modal):
+    def __init__(self, *, action_id: str, locale: str):
+        super().__init__(title=tr(locale, "action.revert_modal_title"))
+        self.action_id = action_id
+        self.locale = locale
+        self.reason = discord.ui.TextInput(
+            label=tr(locale, "action.revert_reason_label"),
+            style=discord.TextStyle.paragraph,
+            required=False,
+            max_length=800,
+            placeholder=tr(locale, "action.revert_reason_placeholder"),
+        )
+        self.add_item(self.reason)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message(tr(None, "common.server_only"), ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        locale = await get_server_locale(interaction.guild.id)
+        if not await ensure_bot_permission(interaction, "moderation.actions.revert", locale=locale):
+            return
+        async with get_async_session() as session:
+            action = await _fetch_action_for_server(session, interaction.guild.id, self.action_id)
+        if action is None:
+            await interaction.followup.send(tr(locale, "action.not_found"), ephemeral=True)
+            return
+        reason = str(self.reason.value or "").strip() or tr(
+            locale,
+            "modlog.reason_reverted_by_discord",
+            moderator=f"<@{interaction.user.id}>",
+        )
+        try:
+            reverted, error = await _revert_action(
+                interaction=interaction,
+                action=action,
+                locale=locale,
+                reason=reason,
+            )
+        except (discord.Forbidden, discord.HTTPException) as error:
+            await interaction.followup.send(str(error), ephemeral=True)
+            return
+        if error:
+            await interaction.followup.send(error, ephemeral=True)
+            return
+        success_message = tr(locale, "action.revert_success", action_type=action.action_type.value, action_id=str(action.id)[:8], reverted=reverted)
+        await send_public_action_notice(interaction, success_message)
+        await interaction.followup.send(
+            build_moderator_action_receipt(
+                locale=locale,
+                server_id=interaction.guild.id,
+                public_message=success_message,
+                action=action,
+                extra_lines=[
+                    (tr(locale, "action.reason_label"), reason),
+                    (tr(locale, "modlog.reverted_label"), reverted),
+                ],
+            ),
+            ephemeral=True,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
 
 
 class ActionManageView(discord.ui.View):
@@ -136,43 +211,12 @@ class ActionManageView(discord.ui.View):
         if interaction.guild is None:
             await interaction.response.send_message(tr(None, "common.server_only"), ephemeral=True)
             return
-        await interaction.response.defer(ephemeral=True)
         locale = await get_server_locale(interaction.guild.id)
         if not await ensure_bot_permission(interaction, "moderation.actions.revert", locale=locale):
             return
         custom_id = interaction.message.embeds[0].footer.text if interaction.message and interaction.message.embeds else ""
         action_id = custom_id.replace("Action ID: ", "").strip()
-        async with get_async_session() as session:
-            action = await _fetch_action_for_server(session, interaction.guild.id, action_id)
-        if action is None:
-            await interaction.followup.send(tr(locale, "action.not_found"), ephemeral=True)
-            return
-        try:
-            reverted, error = await _revert_action(
-                interaction=interaction,
-                action=action,
-                locale=locale,
-                reason=f"Reverted by {interaction.user} ({interaction.user.id})",
-            )
-        except (discord.Forbidden, discord.HTTPException) as error:
-            await interaction.followup.send(str(error), ephemeral=True)
-            return
-        if error:
-            await interaction.followup.send(error, ephemeral=True)
-            return
-        success_message = tr(locale, "action.revert_success", action_type=action.action_type.value, action_id=str(action.id)[:8], reverted=reverted)
-        await send_public_action_notice(interaction, success_message)
-        await interaction.followup.send(
-            build_moderator_action_receipt(
-                locale=locale,
-                server_id=interaction.guild.id,
-                public_message=success_message,
-                action=action,
-                extra_lines=[(tr(locale, "modlog.reverted_label"), reverted)],
-            ),
-            ephemeral=True,
-            allowed_mentions=discord.AllowedMentions.none(),
-        )
+        await interaction.response.send_modal(ActionRevertReasonModal(action_id=action_id, locale=locale))
 
 
 def _action_embed(action, locale: str, server_id: int) -> discord.Embed:
@@ -546,7 +590,7 @@ async def action_manage(interaction: discord.Interaction, action_id: str):
         await interaction.followup.send(tr(locale, "action.not_found"), ephemeral=True)
         return
     embed = _action_embed(action, locale, interaction.guild.id)
-    can_revert = action.action_type in {ActionType.MUTE, ActionType.BAN} and action.is_active
+    can_revert = action.action_type in {ActionType.WARN, ActionType.MUTE, ActionType.BAN} and action.is_active
     await interaction.followup.send(
         embed=embed,
         view=ActionManageView(server_id=interaction.guild.id, action_id=action.id, can_revert=can_revert, locale=locale),
@@ -555,7 +599,7 @@ async def action_manage(interaction: discord.Interaction, action_id: str):
 
 
 @app_commands.checks.has_permissions(moderate_members=True)
-@app_commands.command(name="revert", description="Revert an active mute or ban action.")
+@app_commands.command(name="revert", description="Revert an active warn, mute, or ban action.")
 async def action_revert(interaction: discord.Interaction, action_id: str, reason: str | None = None):
     if interaction.guild is None:
         await interaction.response.send_message(tr(None, "common.server_only"), ephemeral=True)
@@ -569,12 +613,17 @@ async def action_revert(interaction: discord.Interaction, action_id: str, reason
     if action is None:
         await interaction.followup.send(tr(locale, "action.not_found"), ephemeral=True)
         return
+    resolved_reason = reason.strip() if reason else tr(
+        locale,
+        "modlog.reason_reverted_by_discord",
+        moderator=f"<@{interaction.user.id}>",
+    )
     try:
         reverted, error = await _revert_action(
             interaction=interaction,
             action=action,
             locale=locale,
-            reason=reason.strip() if reason else f"Reverted by {interaction.user} ({interaction.user.id})",
+            reason=resolved_reason,
         )
     except (discord.Forbidden, discord.HTTPException) as error:
         await interaction.followup.send(str(error), ephemeral=True)
@@ -591,7 +640,7 @@ async def action_revert(interaction: discord.Interaction, action_id: str, reason
             public_message=success_message,
             action=action,
             extra_lines=[
-                (tr(locale, "action.reason_label"), reason.strip() if reason else None),
+                (tr(locale, "action.reason_label"), resolved_reason),
                 (tr(locale, "modlog.reverted_label"), reverted),
             ],
         ),
