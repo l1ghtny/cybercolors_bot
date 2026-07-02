@@ -4,7 +4,7 @@ from typing import Any, Literal
 
 AITask = Literal["moderation", "assistant"]
 AIMessageRole = Literal["system", "user", "assistant", "tool"]
-AIImageSource = Literal["attachment", "custom_emoji"]
+AIImageSource = Literal["attachment", "custom_emoji", "image_url"]
 ModerationSeverity = Literal["none", "low", "medium", "high"]
 ModerationAction = Literal["none", "watch", "warn", "mute", "kick", "ban", "manual_review"]
 

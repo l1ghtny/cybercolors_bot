@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from src.modules.ai.discord_media import ai_images_from_discord_message, custom_emoji_images_from_text
+from src.modules.ai.discord_media import ai_images_from_discord_message, custom_emoji_images_from_text, image_urls_from_text
 
 
 def test_custom_emoji_images_from_text_builds_discord_cdn_urls():
@@ -74,3 +74,36 @@ def test_ai_images_from_discord_message_infers_image_type_from_filename():
     assert len(images) == 1
     assert images[0].label == "photo.jpg"
     assert images[0].content_type == "image/jpeg"
+
+
+def test_image_urls_from_text_extracts_direct_discord_gif_links():
+    images = image_urls_from_text(
+        "https://cdn.discordapp.com/attachments/479003269780340736/1517111288927621251/doc_2026-05-10_08-40.gif"
+    )
+
+    assert len(images) == 1
+    assert images[0].source == "image_url"
+    assert images[0].content_type == "image/gif"
+    assert images[0].label == "doc_2026-05-10_08-40.gif"
+
+
+def test_ai_images_from_discord_message_includes_direct_image_links_and_dedupes():
+    url = "https://media.discordapp.net/attachments/1/photo.webp?ex=abc"
+    message = SimpleNamespace(
+        content=f"look {url} {url}",
+        attachments=[
+            SimpleNamespace(
+                id=1,
+                filename="photo.webp",
+                content_type="image/webp",
+                size=1024,
+                url=url,
+            )
+        ],
+    )
+
+    images = ai_images_from_discord_message(message)
+
+    assert len(images) == 1
+    assert images[0].source == "attachment"
+    assert images[0].url == url

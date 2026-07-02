@@ -6,6 +6,7 @@ from src.modules.ai.models import AIImageInput
 
 
 CUSTOM_EMOJI_PATTERN = re.compile(r"<(?P<animated>a?):(?P<name>[A-Za-z0-9_]{1,64}):(?P<id>\d{15,25})>")
+IMAGE_URL_PATTERN = re.compile(r"https?://[^\s<>()\"']+", re.IGNORECASE)
 MAX_AI_IMAGE_BYTES = 8 * 1024 * 1024
 MAX_AI_IMAGES_PER_MESSAGE = 6
 SUPPORTED_IMAGE_TYPES = {
@@ -35,7 +36,8 @@ def ai_images_from_discord_message(
         images.extend(_attachment_images(getattr(message, "attachments", []) or []))
     if include_custom_emojis:
         images.extend(custom_emoji_images_from_text(getattr(message, "content", "") or ""))
-    return images[: max(int(limit), 0)]
+    images.extend(image_urls_from_text(getattr(message, "content", "") or ""))
+    return _dedupe_images(images)[: max(int(limit), 0)]
 
 
 def custom_emoji_images_from_text(content: str) -> list[AIImageInput]:
@@ -55,6 +57,29 @@ def custom_emoji_images_from_text(content: str) -> list[AIImageInput]:
                 source="custom_emoji",
                 label=f":{name}:",
                 content_type="image/gif" if animated else "image/png",
+                detail="low",
+            )
+        )
+    return images
+
+
+def image_urls_from_text(content: str) -> list[AIImageInput]:
+    images: list[AIImageInput] = []
+    seen_urls: set[str] = set()
+    for match in IMAGE_URL_PATTERN.finditer(content or ""):
+        url = _clean_url(match.group(0))
+        if url in seen_urls:
+            continue
+        content_type = _image_content_type_from_url(url)
+        if content_type is None:
+            continue
+        seen_urls.add(url)
+        images.append(
+            AIImageInput(
+                url=url,
+                source="image_url",
+                label=_image_label_from_url(url),
+                content_type=content_type,
                 detail="low",
             )
         )
@@ -108,6 +133,17 @@ def _attachment_images(attachments) -> list[AIImageInput]:
     return images
 
 
+def _dedupe_images(images: list[AIImageInput]) -> list[AIImageInput]:
+    deduped: list[AIImageInput] = []
+    seen_urls: set[str] = set()
+    for image in images:
+        if image.url in seen_urls:
+            continue
+        seen_urls.add(image.url)
+        deduped.append(image)
+    return deduped
+
+
 def _attachment_content_type(attachment, url: str) -> str | None:
     raw_content_type = getattr(attachment, "content_type", None)
     if raw_content_type:
@@ -122,3 +158,21 @@ def _attachment_content_type(attachment, url: str) -> str | None:
             if lowered.endswith(extension):
                 return content_type
     return None
+
+
+def _clean_url(url: str) -> str:
+    return url.rstrip(".,;:!?)]}")
+
+
+def _image_content_type_from_url(url: str) -> str | None:
+    path = urlparse(url).path.lower()
+    for extension, content_type in IMAGE_TYPES_BY_EXTENSION.items():
+        if path.endswith(extension):
+            return content_type
+    return None
+
+
+def _image_label_from_url(url: str) -> str | None:
+    path = urlparse(url).path
+    name = path.rsplit("/", 1)[-1]
+    return name or None
