@@ -1329,8 +1329,12 @@ async def send_ai_moderation_review(
     decision: AIModerationDecision,
 ) -> bool:
     async with get_async_session() as session:
+        ai_settings = await get_or_create_server_ai_settings(session, guild.id, server_name=guild.name)
         mod_settings = await session.get(ServerModerationSettings, guild.id)
-        if not mod_settings or not mod_settings.mod_log_channel_id:
+        review_channel_id = ai_settings.moderation_review_channel_id or (
+            mod_settings.mod_log_channel_id if mod_settings else None
+        )
+        if not review_channel_id:
             return False
         locale = await _server_locale(session, guild.id)
         rule_labels = await _rule_labels_for_decision(session, decision, locale)
@@ -1341,12 +1345,12 @@ async def send_ai_moderation_review(
             limit=25,
         )
 
-    channel = guild.get_channel(mod_settings.mod_log_channel_id)
+    channel = guild.get_channel(review_channel_id)
     if channel is None:
         try:
-            channel = await guild.fetch_channel(mod_settings.mod_log_channel_id)
+            channel = await guild.fetch_channel(review_channel_id)
         except (discord.Forbidden, discord.NotFound, discord.HTTPException) as error:
-            logger.warning("Cannot resolve AI moderation log channel %s in guild %s: %s", mod_settings.mod_log_channel_id, guild.id, error)
+            logger.warning("Cannot resolve AI moderation review channel %s in guild %s: %s", review_channel_id, guild.id, error)
             return False
     send_method = getattr(channel, "send", None)
     if send_method is None:

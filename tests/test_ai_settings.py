@@ -6,7 +6,7 @@ from api.api_main import app
 from api.models.ai_settings import ServerAISettingsUpdateModel
 from api.services.ai_settings_health import EMBED_LINKS, READ_MESSAGE_HISTORY, SEND_MESSAGES, VIEW_CHANNEL, build_ai_settings_health
 from api.services.ai_settings import can_invoke_answer_flow, should_moderate_message_channel
-from api.services.ai_settings import to_server_ai_settings_read_model
+from api.services.ai_settings import to_server_ai_settings_read_model, update_server_ai_settings
 from src.db.models import ServerAISettings, ServerModerationSettings
 
 
@@ -59,9 +59,18 @@ def test_ai_settings_read_model_defaults_to_read_only_permission():
     payload = to_server_ai_settings_read_model(settings)
 
     assert payload.permissions.can_edit is False
+    assert payload.moderation_review_channel_id is None
     assert payload.moderation_kill_switch_enabled is False
     assert payload.moderation_daily_token_limit is None
     assert payload.moderation_provider_timeout_seconds == 20
+
+
+def test_ai_settings_read_model_includes_review_channel():
+    settings = ServerAISettings(server_id=123, moderation_review_channel_id=987)
+
+    payload = to_server_ai_settings_read_model(settings)
+
+    assert payload.moderation_review_channel_id == "987"
 
 
 def test_ai_settings_update_accepts_runtime_limits():
@@ -74,6 +83,65 @@ def test_ai_settings_update_accepts_runtime_limits():
     assert body.moderation_kill_switch_enabled is True
     assert body.moderation_daily_token_limit == 5000
     assert body.moderation_provider_timeout_seconds == 12
+
+
+def test_ai_settings_update_accepts_blank_review_channel_as_clear():
+    body = ServerAISettingsUpdateModel(moderation_review_channel_id="  ")
+
+    assert body.moderation_review_channel_id == ""
+
+
+def test_update_ai_settings_validates_and_stores_review_channel(monkeypatch):
+    import asyncio
+
+    settings = ServerAISettings(server_id=123)
+
+    class FakeSession:
+        async def get(self, model, key):
+            return None
+
+        def add(self, item):
+            return None
+
+        async def flush(self):
+            return None
+
+        async def refresh(self, item):
+            return None
+
+    async def fake_get_or_create(_session, server_id, server_name=None):
+        assert server_id == 123
+        return settings
+
+    async def fake_fetch_channel(server_id, channel_id):
+        assert server_id == 123
+        assert channel_id == 456
+        return {"id": "456", "type": 0, "name": "ai-review"}
+
+    import api.services.ai_settings as ai_settings_service
+
+    monkeypatch.setattr(ai_settings_service, "get_or_create_server_ai_settings", fake_get_or_create)
+    monkeypatch.setattr(ai_settings_service, "fetch_channel", fake_fetch_channel)
+
+    asyncio.run(
+        update_server_ai_settings(
+            FakeSession(),
+            123,
+            ServerAISettingsUpdateModel(moderation_review_channel_id="456"),
+        )
+    )
+
+    assert settings.moderation_review_channel_id == 456
+
+    asyncio.run(
+        update_server_ai_settings(
+            FakeSession(),
+            123,
+            ServerAISettingsUpdateModel(moderation_review_channel_id=""),
+        )
+    )
+
+    assert settings.moderation_review_channel_id is None
 
 
 def test_can_invoke_answer_flow_checks_channel_and_roles():
@@ -183,6 +251,7 @@ def test_ai_settings_health_reports_channel_and_mod_log_permissions(monkeypatch)
         moderation_enabled=True,
         moderation_channel_mode="selected",
         moderation_included_channel_ids=[str(readable_channel_id), str(blocked_channel_id)],
+        moderation_review_channel_id=mod_log_channel_id,
     )
 
     class FakeSession:
@@ -240,6 +309,9 @@ def test_ai_settings_health_reports_channel_and_mod_log_permissions(monkeypatch)
     assert payload.mod_log_channel.ok is False
     assert payload.mod_log_channel.can_send_messages is False
     assert payload.mod_log_channel.can_embed_links is False
+    assert payload.ai_review_channel.channel_id == str(mod_log_channel_id)
+    assert payload.ai_review_channel.ok is False
+    assert payload.ai_review_channel.purpose == "ai_review"
     assert payload.warnings
 
 
@@ -283,4 +355,5 @@ def test_ai_settings_health_reports_writable_mod_log(monkeypatch):
     payload = asyncio.run(build_ai_settings_health(FakeSession(), server_id))
 
     assert payload.mod_log_channel.ok is True
+    assert payload.ai_review_channel.ok is True
     assert payload.warnings == []

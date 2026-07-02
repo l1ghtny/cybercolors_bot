@@ -2,6 +2,7 @@ from fastapi import HTTPException, status
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.models.ai_settings import ServerAISettingsReadModel, ServerAISettingsUpdateModel
+from api.services.discord_guilds import TEXT_CHANNEL_TYPES, fetch_channel
 from api.services.moderation_core import naive_utcnow
 from src.db.models import Server, ServerAISettings
 
@@ -11,6 +12,20 @@ def _validate_selected_mode(mode: str, ids: list[str], field_name: str) -> None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"{field_name} cannot be empty when mode is selected",
+        )
+
+
+async def _validate_text_channel(server_id: int, channel_id: int, field_name: str) -> None:
+    channel = await fetch_channel(server_id=server_id, channel_id=channel_id)
+    if not channel:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"{field_name} is not a channel in this server",
+        )
+    if channel.get("type") not in TEXT_CHANNEL_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"{field_name} must be a text or announcement channel",
         )
 
 
@@ -48,6 +63,11 @@ def to_server_ai_settings_read_model(settings: ServerAISettings) -> ServerAISett
         moderation_monitor_bots=settings.moderation_monitor_bots,
         moderation_strictness=settings.moderation_strictness,
         moderation_action_mode=settings.moderation_action_mode,
+        moderation_review_channel_id=(
+            str(settings.moderation_review_channel_id)
+            if settings.moderation_review_channel_id is not None
+            else None
+        ),
         log_ai_decisions=settings.log_ai_decisions,
         moderation_kill_switch_enabled=settings.moderation_kill_switch_enabled,
         moderation_daily_token_limit=settings.moderation_daily_token_limit,
@@ -86,6 +106,13 @@ async def update_server_ai_settings(
         settings.moderation_strictness = body.moderation_strictness
     if body.moderation_action_mode is not None:
         settings.moderation_action_mode = body.moderation_action_mode
+    if "moderation_review_channel_id" in body.model_fields_set:
+        if body.moderation_review_channel_id:
+            review_channel_id = int(body.moderation_review_channel_id)
+            await _validate_text_channel(server_id, review_channel_id, "moderation_review_channel_id")
+            settings.moderation_review_channel_id = review_channel_id
+        else:
+            settings.moderation_review_channel_id = None
     if body.log_ai_decisions is not None:
         settings.log_ai_decisions = body.log_ai_decisions
     if body.moderation_kill_switch_enabled is not None:

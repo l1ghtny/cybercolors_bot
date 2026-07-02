@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from typing import Literal
 
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -161,34 +162,37 @@ def _write_health(
     bot_user_id: int | None,
     bot_role_ids: set[int],
     role_permissions: dict[int, int],
+    purpose: Literal["mod_log", "ai_review"] = "mod_log",
+    missing_reason: str = "Moderation log channel is not configured.",
+    not_found_reason: str = "Moderation log channel was not found in this server.",
 ) -> AIChannelPermissionHealthModel:
     if channel_id is None:
         return AIChannelPermissionHealthModel(
             channel_id=None,
-            purpose="mod_log",
+            purpose=purpose,
             configured=False,
             exists=False,
             ok=False,
             can_send_messages=False,
             can_embed_links=False,
-            reason="Moderation log channel is not configured.",
+            reason=missing_reason,
         )
     if channel is None:
         return AIChannelPermissionHealthModel(
             channel_id=str(channel_id),
-            purpose="mod_log",
+            purpose=purpose,
             configured=True,
             exists=False,
             ok=False,
             can_send_messages=False,
             can_embed_links=False,
-            reason="Moderation log channel was not found in this server.",
+            reason=not_found_reason,
         )
     if bot_user_id is None:
         return AIChannelPermissionHealthModel(
             channel_id=str(channel_id),
             channel_name=channel.get("name"),
-            purpose="mod_log",
+            purpose=purpose,
             configured=True,
             exists=True,
             ok=False,
@@ -213,7 +217,7 @@ def _write_health(
     return AIChannelPermissionHealthModel(
         channel_id=str(channel_id),
         channel_name=channel.get("name"),
-        purpose="mod_log",
+        purpose=purpose,
         configured=True,
         exists=True,
         ok=ok,
@@ -288,12 +292,24 @@ async def build_ai_settings_health(session: AsyncSession, server_id: int) -> Ser
         bot_role_ids=bot_role_ids,
         role_permissions=role_permissions,
     )
+    ai_review_channel_id = settings.moderation_review_channel_id or mod_log_channel_id
+    ai_review_health = _write_health(
+        server_id=server_id,
+        channel_id=ai_review_channel_id,
+        channel=channels_by_id.get(ai_review_channel_id) if ai_review_channel_id is not None else None,
+        bot_user_id=bot_user_id,
+        bot_role_ids=bot_role_ids,
+        role_permissions=role_permissions,
+        purpose="ai_review",
+        missing_reason="AI moderation suggestions channel is not configured.",
+        not_found_reason="AI moderation suggestions channel was not found in this server.",
+    )
 
     warnings: list[str] = []
     if any(not item.ok for item in moderation_health):
         warnings.append("One or more AI moderation channels are not readable by the bot.")
-    if not mod_log_health.ok:
-        warnings.append("AI moderation review messages may not be sent because the mod-log channel is not writable.")
+    if not ai_review_health.ok:
+        warnings.append("AI moderation review messages may not be sent because the suggestions channel is not writable.")
 
     return ServerAISettingsHealthModel(
         server_id=str(server_id),
@@ -303,5 +319,6 @@ async def build_ai_settings_health(session: AsyncSession, server_id: int) -> Ser
         moderation_channel_mode=settings.moderation_channel_mode,
         moderation_channels=moderation_health,
         mod_log_channel=mod_log_health,
+        ai_review_channel=ai_review_health,
         warnings=warnings,
     )

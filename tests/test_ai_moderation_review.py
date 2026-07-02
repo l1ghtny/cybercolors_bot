@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 from src.modules.ai.models import MessageModerationInput
-from src.db.models import AIModerationDecision, ActionType, ServerAISettings
+from src.db.models import AIModerationDecision, ActionType, ServerAISettings, ServerModerationSettings
 from src.modules.ai.models import AIResponse, ModerationVerdict
 from src.modules.ai.moderation_review import (
     AIActionSelect,
@@ -200,6 +200,92 @@ def test_ai_moderation_embed_contains_review_summary():
     assert "Likely insult" in embed.description
     assert any(field.name == "Suggested action" and "manual_review" in field.value for field in embed.fields)
     assert any(field.name == "Possible rules" and "rule-1" in field.value for field in embed.fields)
+
+
+def test_send_ai_moderation_review_uses_configured_review_channel(monkeypatch):
+    import src.modules.ai.moderation_review as moderation_review
+
+    review_channel_id = 777
+    mod_log_channel_id = 888
+    sent_payloads = []
+    decision = AIModerationDecision(
+        server_id=123,
+        channel_id=456,
+        message_id=789,
+        author_user_id=101,
+        flagged=True,
+        severity="medium",
+        suggested_action="watch",
+        reason="Needs review",
+    )
+
+    class FakeSentMessage:
+        id = 999
+        channel = SimpleNamespace(id=review_channel_id)
+
+    class FakeChannel:
+        id = review_channel_id
+
+        async def send(self, **kwargs):
+            sent_payloads.append(kwargs)
+            return FakeSentMessage()
+
+    class FakeGuild:
+        id = 123
+        name = "Guild"
+        me = object()
+
+        def __init__(self):
+            self.requested_channel_ids = []
+            self.review_channel = FakeChannel()
+
+        def get_channel(self, channel_id):
+            self.requested_channel_ids.append(channel_id)
+            if channel_id == review_channel_id:
+                return self.review_channel
+            return None
+
+    class ReviewSession(FakeSession):
+        async def get(self, model, key):
+            if model is ServerModerationSettings:
+                return ServerModerationSettings(server_id=123, mod_log_channel_id=mod_log_channel_id)
+            if model is AIModerationDecision:
+                return decision
+            return None
+
+    settings = ServerAISettings(server_id=123, moderation_review_channel_id=review_channel_id)
+    session = ReviewSession()
+    guild = FakeGuild()
+    message = _fake_message()
+    message.guild = guild
+
+    async def fake_get_settings(_session, server_id, server_name=None):
+        assert server_id == 123
+        return settings
+
+    async def fake_server_locale(*_args, **_kwargs):
+        return "en"
+
+    async def fake_rule_labels(*_args, **_kwargs):
+        return []
+
+    async def fake_open_cases(*_args, **_kwargs):
+        return []
+
+    monkeypatch.setattr(moderation_review, "get_async_session", lambda: FakeSessionContext(session))
+    monkeypatch.setattr(moderation_review, "get_or_create_server_ai_settings", fake_get_settings)
+    monkeypatch.setattr(moderation_review, "_server_locale", fake_server_locale)
+    monkeypatch.setattr(moderation_review, "_rule_labels_for_decision", fake_rule_labels)
+    monkeypatch.setattr(moderation_review, "fetch_open_case_models", fake_open_cases)
+    monkeypatch.setattr(moderation_review, "_bot_can_send_ai_mod_log", lambda *_args, **_kwargs: True)
+
+    sent = asyncio.run(moderation_review.send_ai_moderation_review(guild=guild, message=message, decision=decision))
+
+    assert sent is True
+    assert guild.requested_channel_ids == [review_channel_id]
+    assert sent_payloads
+    assert decision.review_channel_id == review_channel_id
+    assert decision.review_message_id == 999
 
 
 def test_ai_moderation_embed_surfaces_moderator_override():

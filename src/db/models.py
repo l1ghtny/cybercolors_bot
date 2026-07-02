@@ -308,6 +308,7 @@ class ServerAISettings(SQLModel, table=True):
     moderation_monitor_bots: bool = Field(default=False, nullable=False)
     moderation_strictness: str = Field(default="standard", nullable=False, max_length=20)
     moderation_action_mode: str = Field(default="review_only", nullable=False, max_length=30)
+    moderation_review_channel_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
     log_ai_decisions: bool = Field(default=True, nullable=False)
     moderation_kill_switch_enabled: bool = Field(default=False, nullable=False)
     moderation_daily_token_limit: Optional[int] = Field(default=None, nullable=True)

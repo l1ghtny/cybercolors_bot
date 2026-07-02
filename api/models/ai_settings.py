@@ -44,6 +44,7 @@ class ServerAISettingsReadModel(BaseModel):
     moderation_monitor_bots: bool
     moderation_strictness: AIModerationStrictness
     moderation_action_mode: AIModerationActionMode
+    moderation_review_channel_id: str | None = Field(default=None, pattern=r"^\d*$")
     log_ai_decisions: bool
     moderation_kill_switch_enabled: bool
     moderation_daily_token_limit: int | None = Field(default=None, ge=1)
@@ -65,6 +66,7 @@ class ServerAISettingsUpdateModel(BaseModel):
     moderation_monitor_bots: bool | None = None
     moderation_strictness: AIModerationStrictness | None = None
     moderation_action_mode: AIModerationActionMode | None = None
+    moderation_review_channel_id: str | None = Field(default=None, pattern=r"^\d*$")
     log_ai_decisions: bool | None = None
     moderation_kill_switch_enabled: bool | None = None
     moderation_daily_token_limit: int | None = Field(default=None, ge=1)
@@ -87,6 +89,14 @@ class ServerAISettingsUpdateModel(BaseModel):
     def validate_moderation_channel_ids(cls, value: list[str] | None) -> list[str] | None:
         return _normalize_discord_ids(value, "moderation_included_channel_ids")
 
+    @field_validator("moderation_review_channel_id", mode="before")
+    @classmethod
+    def normalize_review_channel_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = str(value).strip()
+        return cleaned or ""
+
     @field_validator("answer_persona", "server_brief")
     @classmethod
     def normalize_optional_text(cls, value: str | None) -> str | None:
@@ -107,7 +117,7 @@ class ServerAISettingsUpdateModel(BaseModel):
 class AIChannelPermissionHealthModel(BaseModel):
     channel_id: str | None = None
     channel_name: str | None = None
-    purpose: Literal["moderation", "mod_log"]
+    purpose: Literal["moderation", "mod_log", "ai_review"]
     configured: bool = True
     exists: bool = False
     ok: bool = False
@@ -126,4 +136,5 @@ class ServerAISettingsHealthModel(BaseModel):
     moderation_channel_mode: AIChannelMode
     moderation_channels: list[AIChannelPermissionHealthModel] = Field(default_factory=list)
     mod_log_channel: AIChannelPermissionHealthModel
+    ai_review_channel: AIChannelPermissionHealthModel
     warnings: list[str] = Field(default_factory=list)
