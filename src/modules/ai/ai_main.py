@@ -44,6 +44,9 @@ If Message metadata.current_bot_mentioned is true, the user is speaking to this 
 Use replied-to message context to disambiguate sarcasm, callbacks, quotes, and playful riffs on another message. Do not classify phrasing copied from or jokingly mirroring the replied-to message as a threat or harassment unless the new message adds a credible targeted attack.
 Treat meta-discussion about moderation, AI moderation, or moderator workflow in moderator/admin contexts as ordinary operational discussion unless it directly attacks someone, leaks private data, bypasses moderation, or violates a rule on its own.
 Suggest watch only for a concrete ongoing concern such as repeated borderline behavior, evasion, spam/abuse patterns, or concerning member context. Do not suggest watch for a single low-severity joke, laugh, or ambiguous meta message.
+Do not flag ordinary casual profanity, obscene idioms, laughter, all-caps excitement, roleplay banter, or vague rude commentary when it is not clearly targeted at a person or protected group.
+Do not flag "toxic tone" by itself. Flag harassment only when there is a clear target and the message is a direct insult, demeaning attack, threat, sustained pile-on, or explicit encouragement of self-harm.
+For visual links and GIFs, judge sexual/18+ content from the actual visual input or clearly explicit surrounding text. Do not infer an 18+ violation from a filename, URL slug, or domain alone.
 Do not take action. Only decide whether a human moderator should review it.
 When rules are relevant, cite the exact rule ids from active_rules. Do not return rule numbers, titles, or invented ids in rule_ids.
 If context is missing, say so in the reason and stay conservative.
@@ -51,7 +54,11 @@ If context is missing, say so in the reason and stay conservative.
 
 
 MODERATION_STRICTNESS_GUIDANCE = {
-    "low": "Only flag clear violations, obvious spam, explicit harassment, or direct rule breaks. Do not flag borderline messages.",
+    "low": (
+        "Only flag unambiguous violations: credible threats, targeted harassment, hate/slurs, scams/malware, "
+        "obvious spam, or clearly explicit sexual/18+ visual/text content. Return flagged=false for casual profanity, "
+        "non-targeted swearing, jokes, laughter, caps, sarcasm, and borderline rudeness. Do not suggest watch at low strictness."
+    ),
     "standard": "Flag likely violations and suspicious patterns. Avoid punishing ambiguous messages, but send plausible issues to human review.",
     "high": "Flag borderline cases for human review when the message plausibly violates rules or the member context makes it suspicious.",
 }
@@ -156,7 +163,7 @@ class AIMain:
             metadata={"task": "moderation", "strictness": moderation_strictness},
         )
         response = await self.provider.complete(request)
-        return self._parse_moderation_verdict(response)
+        return self._parse_moderation_verdict(response, moderation_strictness=moderation_strictness)
 
     async def answer(
         self,
@@ -525,7 +532,7 @@ class AIMain:
         }
 
     @staticmethod
-    def _parse_moderation_verdict(response: AIResponse) -> ModerationVerdict:
+    def _parse_moderation_verdict(response: AIResponse, *, moderation_strictness: str = "standard") -> ModerationVerdict:
         content = response.content or "{}"
         cleaned = content.strip()
         if cleaned.startswith("```"):
@@ -551,7 +558,7 @@ class AIMain:
             if payload.get("suggested_action") in {"none", "watch", "warn", "mute", "kick", "ban", "manual_review"}
             else "none"
         )
-        return ModerationVerdict(
+        verdict = ModerationVerdict(
             flagged=bool(payload.get("flagged", False)),
             severity=severity,
             categories=[str(item) for item in payload.get("categories", []) if item],
@@ -559,6 +566,26 @@ class AIMain:
             suggested_action=suggested_action,
             rule_ids=[str(item) for item in payload.get("rule_ids", []) if item],
             raw_response=response,
+        )
+        return AIMain._apply_strictness_floor(verdict, moderation_strictness)
+
+    @staticmethod
+    def _apply_strictness_floor(verdict: ModerationVerdict, moderation_strictness: str) -> ModerationVerdict:
+        if moderation_strictness != "low" or not verdict.flagged:
+            return verdict
+        if verdict.suggested_action != "watch":
+            return verdict
+        return ModerationVerdict(
+            flagged=False,
+            severity="none",
+            categories=verdict.categories,
+            reason=(
+                "Low strictness suppresses watch-only borderline signals. "
+                f"Original AI reason: {verdict.reason}"
+            ),
+            suggested_action="none",
+            rule_ids=verdict.rule_ids,
+            raw_response=verdict.raw_response,
         )
 
 

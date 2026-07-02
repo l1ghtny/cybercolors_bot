@@ -186,6 +186,30 @@ def test_check_message_builds_moderation_request_and_parses_verdict():
     assert "permission_overwrites" not in prompt
 
 
+def test_check_message_low_strictness_suppresses_watch_only_verdict():
+    provider = FakeProvider(
+        '{"flagged": true, "severity": "low", "categories": ["rude"], '
+        '"reason": "Maybe watch for tone.", "suggested_action": "watch", "rule_ids": []}'
+    )
+    ai = AIMain(provider=provider, model="test-model")
+
+    verdict = asyncio.run(
+        ai.check_message(
+            MessageModerationInput(content="АХАХАХАХ"),
+            include_member_profile=False,
+            moderation_strictness="low",
+        )
+    )
+
+    assert verdict.flagged is False
+    assert verdict.severity == "none"
+    assert verdict.suggested_action == "none"
+    assert "Low strictness suppresses watch-only" in verdict.reason
+    assert provider.last_request is not None
+    assert "Do not suggest watch at low strictness" in provider.last_request.system_prompt
+    assert "Do not flag ordinary casual profanity" in provider.last_request.system_prompt
+
+
 def test_check_message_invalid_json_falls_back_to_manual_review():
     provider = FakeProvider("not json")
     ai = AIMain(provider=provider, model="test-model")
