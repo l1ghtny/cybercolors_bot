@@ -59,8 +59,18 @@ MODERATION_STRICTNESS_GUIDANCE = {
         "obvious spam, or clearly explicit sexual/18+ visual/text content. Return flagged=false for casual profanity, "
         "non-targeted swearing, jokes, laughter, caps, sarcasm, and borderline rudeness. Do not suggest watch at low strictness."
     ),
-    "standard": "Flag likely violations and suspicious patterns. Avoid punishing ambiguous messages, but send plausible issues to human review.",
-    "high": "Flag borderline cases for human review when the message plausibly violates rules or the member context makes it suspicious.",
+    "standard": (
+        "Flag likely violations when there is a clear target, clear prohibited content, or a concrete spam/abuse pattern. "
+        "Return flagged=false for ordinary chat noise: casual profanity, jokes, laughter, caps, sarcasm, vague insults without a target, "
+        "and friendly/roleplay banter. Suggest watch only when the reason is grounded in repeated behavior, member context, evasion, "
+        "or a concrete ongoing risk, not a single odd or rude message."
+    ),
+    "high": (
+        "Flag borderline cases for human review only when they are plausibly tied to a rule: targeted harassment, escalating conflict, "
+        "credible threat language, explicit sexual/18+ content, spam/scam behavior, evasion, or concerning member context. "
+        "Even at high strictness, return flagged=false for normal server chatter, standalone profanity, laughter, caps, memes, "
+        "sarcastic callbacks, or non-targeted rude phrasing."
+    ),
 }
 
 

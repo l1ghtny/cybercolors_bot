@@ -1,7 +1,7 @@
 import asyncio
 
 import src.modules.ai.ai_main as ai_main_module
-from src.modules.ai.ai_main import AIMain
+from src.modules.ai.ai_main import AIMain, moderation_system_prompt
 from src.modules.ai.context import moderation_member_profile, public_member_profile
 from src.modules.ai.models import AIImageInput, AIRequest, AIResponse, AIToolCall, AssistantInput, MessageModerationInput
 from src.modules.ai.tools import AITool, AIToolRegistry, build_default_tool_registry
@@ -208,6 +208,17 @@ def test_check_message_low_strictness_suppresses_watch_only_verdict():
     assert provider.last_request is not None
     assert "Do not suggest watch at low strictness" in provider.last_request.system_prompt
     assert "Do not flag ordinary casual profanity" in provider.last_request.system_prompt
+
+
+def test_moderation_prompt_keeps_standard_and_high_usable_for_normal_chat():
+    standard_prompt = moderation_system_prompt("standard")
+    high_prompt = moderation_system_prompt("high")
+
+    assert "Return flagged=false for ordinary chat noise" in standard_prompt
+    assert "vague insults without a target" in standard_prompt
+    assert "not a single odd or rude message" in standard_prompt
+    assert "Even at high strictness, return flagged=false for normal server chatter" in high_prompt
+    assert "standalone profanity, laughter, caps, memes" in high_prompt
 
 
 def test_check_message_invalid_json_falls_back_to_manual_review():
