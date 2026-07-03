@@ -42,6 +42,7 @@ credible_threat: boolean or null, whether threat wording is concrete and credibl
 link_content_inspected: boolean or null, true only when linked or attached visual/web content was actually inspected
 is_banter_or_hyperbole: boolean or null, whether the message looks like casual banter, slang, roleplay, sarcasm, laughter, or exaggeration
 requires_context: boolean or null, whether more conversational context is needed before deciding it is actionable
+explicit_visual_sexual_content: boolean or null, true only when attached/linked visual input unmistakably shows exposed genitals, explicit nudity, or a sex act; false for ambiguous body-part-like shapes, clothed bodies, cropped memes, or suggestive jokes without explicit visual content
 
 Use Message metadata.server_locale for the reason language. Keep enum values such as severity, categories, suggested_action, and rule_ids in the required machine-readable formats. Set the structured boolean fields even when flagged is false; use null only when the field cannot be inferred.
 If Message metadata.answer_flow_invocation is true, treat the message as an intended user request to CyberColors itself. Do not flag ordinary questions to the bot about the author, the bot, server facts, public profile data, or approved public knowledge unless the text independently violates a rule.
@@ -52,7 +53,7 @@ Treat meta-discussion about moderation, AI moderation, or moderator workflow in 
 Suggest watch only for a concrete ongoing concern such as repeated borderline behavior, evasion, spam/abuse patterns, or concerning member context. Do not suggest watch for a single low-severity joke, laugh, or ambiguous meta message.
 Do not flag ordinary casual profanity, obscene idioms, laughter, all-caps excitement, roleplay banter, or vague rude commentary when it is not clearly targeted at a person or protected group.
 Do not flag "toxic tone" by itself. Flag harassment only when there is a clear target and the message is a direct insult, demeaning attack, threat, sustained pile-on, or explicit encouragement of self-harm.
-For visual links and GIFs, judge sexual/18+ content from the actual visual input or clearly explicit surrounding text. Do not infer an 18+ violation from a filename, URL slug, or domain alone. If the message is only an external link and the linked content was not inspected, stay conservative and return flagged=false unless the URL text itself is clearly malicious. Treat casual Russian idioms equivalent to "I am dying", "I will not survive", or rough profanity as slang/hyperbole unless they include credible intent, a concrete plan, targeted self-harm encouragement, or a direct threat.
+For visual links and GIFs, judge sexual/18+ content from the actual visual input or clearly explicit surrounding text. Do not flag ambiguous objects that only resemble body parts, clenched fists, cropped meme frames, or non-explicit suggestive jokes as 18+/NSFW. Only set explicit_visual_sexual_content=true for unmistakable exposed genitals, explicit nudity, or sex acts. Do not infer an 18+ violation from a filename, URL slug, or domain alone. If the message is only an external link and the linked content was not inspected, stay conservative and return flagged=false unless the URL text itself is clearly malicious. Treat casual Russian idioms equivalent to "I am dying", "I will not survive", or rough profanity as slang/hyperbole unless they include credible intent, a concrete plan, targeted self-harm encouragement, or a direct threat.
 Do not take action. Only decide whether a human moderator should review it.
 When rules are relevant, cite the exact rule ids from active_rules. Do not return rule numbers, titles, or invented ids in rule_ids.
 If context is missing, say so in the reason and stay conservative.
@@ -125,6 +126,11 @@ CREDIBLE_THREAT_PATTERN = re.compile(
 CREDIBLE_SELF_HARM_PATTERN = re.compile(
     r"suicide|kill myself|self[- ]?harm|"
     r"\u043f\u043e\u043a\u043e\u043d\u0447\u0443|\u0441\u0430\u043c\u043e\u0443\u0431|\u0441\u0443\u0438\u0446\u0438\u0434|\u0443\u0431\u044c\u044e \u0441\u0435\u0431\u044f|\u0432\u0441\u043a\u0440\u043e\u044e\u0441\u044c|\u043f\u043e\u0440\u0435\u0436\u0443 \u0441\u0435\u0431\u044f",
+    re.IGNORECASE,
+)
+EXPLICIT_SEXUAL_TEXT_PATTERN = re.compile(
+    r"\b(porn|porno|nude|nudity|genitals?|sex act|intercourse|explicit sex|onlyfans)\b|"
+    r"\u043f\u043e\u0440\u043d|\u043d\u0430\u0433\u043e\u0442|\u0433\u0435\u043d\u0438\u0442\u0430\u043b|\u044d\u0440\u043e\u0442\u0438\u043a|\u0441\u0435\u043a\u0441\u0443\u0430\u043b",
     re.IGNORECASE,
 )
 
@@ -612,6 +618,7 @@ class AIMain:
             link_content_inspected=AIMain._optional_bool(payload.get("link_content_inspected")),
             is_banter_or_hyperbole=AIMain._optional_bool(payload.get("is_banter_or_hyperbole")),
             requires_context=AIMain._optional_bool(payload.get("requires_context")),
+            explicit_visual_sexual_content=AIMain._optional_bool(payload.get("explicit_visual_sexual_content")),
             raw_response=response,
         )
         return AIMain._post_process_moderation_verdict(
@@ -751,6 +758,12 @@ class AIMain:
         if ("sexual" in signal or "18" in signal or "nsfw" in signal) and (
             verdict.link_content_inspected is True or bool(moderation_input.images)
         ):
+            if (
+                moderation_input.images
+                and verdict.explicit_visual_sexual_content is not True
+                and not EXPLICIT_SEXUAL_TEXT_PATTERN.search(content)
+            ):
+                return False
             return True
         return False
 

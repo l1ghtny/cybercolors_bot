@@ -393,6 +393,67 @@ def test_check_message_includes_visual_inputs_and_metadata_count():
     assert '"visual_input_count": 1' in prompt_message.content
 
 
+def test_check_message_low_strictness_suppresses_ambiguous_visual_nsfw():
+    provider = FakeProvider(
+        '{"flagged": true, "severity": "medium", "categories": ["nsfw"], '
+        '"reason": "The image may resemble explicit content, but it is ambiguous.", '
+        '"suggested_action": "manual_review", "rule_ids": ["rule-18"], '
+        '"link_content_inspected": true, "explicit_visual_sexual_content": false}'
+    )
+    ai = AIMain(provider=provider, model="test-model")
+    image = AIImageInput(
+        url="https://cdn.discordapp.com/attachments/1/2/meme.png",
+        source="attachment",
+        label="meme.png",
+        content_type="image/png",
+        size=1024,
+    )
+
+    verdict = asyncio.run(
+        ai.check_message(
+            MessageModerationInput(content="sonic meme", images=[image]),
+            include_member_profile=False,
+            moderation_strictness="low",
+        )
+    )
+
+    assert verdict.flagged is False
+    assert verdict.severity == "none"
+    assert verdict.suggested_action == "none"
+    assert "Low strictness suppresses" in verdict.reason
+    assert "explicit_visual_sexual_content" in provider.last_request.system_prompt
+
+
+def test_check_message_low_strictness_keeps_explicit_visual_nsfw():
+    provider = FakeProvider(
+        '{"flagged": true, "severity": "high", "categories": ["nsfw"], '
+        '"reason": "The image unmistakably contains explicit nudity.", '
+        '"suggested_action": "manual_review", "rule_ids": ["rule-18"], '
+        '"link_content_inspected": true, "explicit_visual_sexual_content": true}'
+    )
+    ai = AIMain(provider=provider, model="test-model")
+    image = AIImageInput(
+        url="https://cdn.discordapp.com/attachments/1/2/nsfw.png",
+        source="attachment",
+        label="nsfw.png",
+        content_type="image/png",
+        size=1024,
+    )
+
+    verdict = asyncio.run(
+        ai.check_message(
+            MessageModerationInput(content="", images=[image]),
+            include_member_profile=False,
+            moderation_strictness="low",
+        )
+    )
+
+    assert verdict.flagged is True
+    assert verdict.severity == "high"
+    assert verdict.suggested_action == "manual_review"
+    assert verdict.explicit_visual_sexual_content is True
+
+
 def test_answer_preloads_relevant_indexed_knowledge(monkeypatch):
     async def fake_search_server_knowledge(*, session, server_id, query, visibility, limit):
         assert session == "session"

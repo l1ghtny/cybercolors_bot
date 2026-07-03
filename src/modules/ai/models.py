@@ -91,6 +91,7 @@ class ModerationVerdict:
     link_content_inspected: bool | None = None
     is_banter_or_hyperbole: bool | None = None
     requires_context: bool | None = None
+    explicit_visual_sexual_content: bool | None = None
     raw_response: AIResponse | None = None
 
 
