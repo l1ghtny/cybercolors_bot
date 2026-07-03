@@ -163,6 +163,8 @@ def can_invoke_answer_flow(
 def should_moderate_message_channel(settings: ServerAISettings, *, channel_id: int) -> bool:
     if not settings.moderation_enabled:
         return False
+    if settings.moderation_review_channel_id == channel_id:
+        return False
     if settings.moderation_channel_mode == "none":
         return False
     if settings.moderation_channel_mode == "selected":

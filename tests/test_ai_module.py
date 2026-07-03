@@ -204,11 +204,99 @@ def test_check_message_low_strictness_suppresses_watch_only_verdict():
     assert verdict.flagged is False
     assert verdict.severity == "none"
     assert verdict.suggested_action == "none"
-    assert "Low strictness suppresses watch-only" in verdict.reason
+    assert "Watch suggestions require" in verdict.reason
     assert provider.last_request is not None
     assert "Do not suggest watch at low strictness" in provider.last_request.system_prompt
     assert "Do not flag ordinary casual profanity" in provider.last_request.system_prompt
 
+
+
+def test_check_message_normalizes_unflagged_action_leak():
+    provider = FakeProvider(
+        '{"flagged": false, "severity": "none", "categories": [], '
+        '"reason": "Looks fine but maybe watch.", "suggested_action": "watch", "rule_ids": []}'
+    )
+    ai = AIMain(provider=provider, model="test-model")
+
+    verdict = asyncio.run(ai.check_message("https://x.com/i/status/123", include_member_profile=False))
+
+    assert verdict.flagged is False
+    assert verdict.severity == "none"
+    assert verdict.categories == []
+    assert verdict.suggested_action == "none"
+    assert verdict.rule_ids == []
+
+
+def test_check_message_suppresses_uninspected_link_only_guess():
+    provider = FakeProvider(
+        '{"flagged": true, "severity": "medium", "categories": ["external_link", "nsfw_risk"], '
+        '"reason": "The link might be unsafe but content was not inspected.", '
+        '"suggested_action": "manual_review", "rule_ids": ["rule-1"], '
+        '"link_content_inspected": false}'
+    )
+    ai = AIMain(provider=provider, model="test-model")
+
+    verdict = asyncio.run(
+        ai.check_message(
+            MessageModerationInput(content="||https://fxtwitter.com/i/status/123||"),
+            include_member_profile=False,
+            moderation_strictness="standard",
+        )
+    )
+
+    assert verdict.flagged is False
+    assert verdict.severity == "none"
+    assert verdict.suggested_action == "none"
+    assert "Uninspected link-only" in verdict.reason
+
+
+def test_check_message_low_strictness_suppresses_noncredible_profanity():
+    provider = FakeProvider(
+        '{"flagged": true, "severity": "medium", "categories": ["profanity", "harassment"], '
+        '"reason": "Profanity could be rude.", "suggested_action": "warn", "rule_ids": ["rule-2"], '
+        '"targeted": false, "is_banter_or_hyperbole": true}'
+    )
+    ai = AIMain(provider=provider, model="test-model")
+
+    verdict = asyncio.run(
+        ai.check_message(
+            MessageModerationInput(content="fuck this"),
+            include_member_profile=False,
+            moderation_strictness="low",
+        )
+    )
+
+    assert verdict.flagged is False
+    assert verdict.severity == "none"
+    assert verdict.suggested_action == "none"
+    assert "Low strictness suppresses" in verdict.reason
+
+
+def test_check_message_keeps_credible_low_strictness_threat_and_structured_fields():
+    provider = FakeProvider(
+        '{"flagged": true, "severity": "high", "categories": ["threats"], '
+        '"reason": "Concrete threat.", "suggested_action": "manual_review", "rule_ids": ["rule-2"], '
+        '"targeted": true, "credible_threat": true, "link_content_inspected": null, '
+        '"is_banter_or_hyperbole": false, "requires_context": false}'
+    )
+    ai = AIMain(provider=provider, model="test-model")
+
+    verdict = asyncio.run(
+        ai.check_message(
+            MessageModerationInput(content="I will kill you", mentioned_users=[{"user_id": "123"}]),
+            include_member_profile=False,
+            moderation_strictness="low",
+        )
+    )
+
+    assert verdict.flagged is True
+    assert verdict.severity == "high"
+    assert verdict.suggested_action == "manual_review"
+    assert verdict.targeted is True
+    assert verdict.credible_threat is True
+    assert verdict.link_content_inspected is None
+    assert verdict.is_banter_or_hyperbole is False
+    assert verdict.requires_context is False
 
 def test_moderation_prompt_keeps_standard_and_high_usable_for_normal_chat():
     standard_prompt = moderation_system_prompt("standard")

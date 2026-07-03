@@ -86,6 +86,11 @@ class ModerationVerdict:
     reason: str = ""
     suggested_action: ModerationAction = "none"
     rule_ids: list[str] = field(default_factory=list)
+    targeted: bool | None = None
+    credible_threat: bool | None = None
+    link_content_inspected: bool | None = None
+    is_banter_or_hyperbole: bool | None = None
+    requires_context: bool | None = None
     raw_response: AIResponse | None = None
 
 

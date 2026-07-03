@@ -231,6 +231,14 @@ def test_should_moderate_message_channel_checks_enabled_and_channel_mode():
     settings.moderation_channel_mode = "all"
     assert should_moderate_message_channel(settings, channel_id=11) is True
 
+    settings.moderation_review_channel_id = 11
+    assert should_moderate_message_channel(settings, channel_id=11) is False
+
+    settings.moderation_channel_mode = "selected"
+    settings.moderation_included_channel_ids = ["11"]
+    assert should_moderate_message_channel(settings, channel_id=11) is False
+
+    settings.moderation_review_channel_id = None
     settings.moderation_channel_mode = "none"
     assert should_moderate_message_channel(settings, channel_id=10) is False
 
