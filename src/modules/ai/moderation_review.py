@@ -82,14 +82,31 @@ def _ai_review_color(severity: str | None) -> discord.Color:
     return discord.Color.greyple()
 
 
-def _ai_review_title(severity: str | None) -> str:
+def _ai_review_title(severity: str | None, locale: str | None = None) -> str:
     if severity == "high":
-        return "High-priority AI moderation review"
+        return tr(locale, "ai_review.title_high")
     if severity == "medium":
-        return "AI moderation review needed"
+        return tr(locale, "ai_review.title_medium")
     if severity == "low":
-        return "Low-priority AI moderation review"
-    return "AI moderation note"
+        return tr(locale, "ai_review.title_low")
+    return tr(locale, "ai_review.title_note")
+
+
+def _ai_review_display(locale: str | None, kind: str, value: str | None) -> str:
+    normalized = (value or "none").strip() or "none"
+    return tr(locale, f"ai_review.{kind}_{normalized}")
+
+
+def _ai_review_reason(locale: str | None, reason: str | None) -> str:
+    fallback = tr(locale, "ai_review.reason_fallback")
+    cleaned = _truncate(reason, 420).strip()
+    if not cleaned:
+        return fallback
+    locale_code = normalize_locale_code(locale)
+    prefix = f"{locale_code}:"
+    if cleaned.lower().startswith(prefix):
+        cleaned = cleaned[len(prefix):].strip()
+    return cleaned or fallback
 
 
 def _quote_preview(value: str | None, limit: int = 900) -> str:
@@ -573,49 +590,50 @@ def build_ai_moderation_embed(
     message: discord.Message | None = None,
     *,
     rule_labels: list[str] | None = None,
+    locale: str | None = None,
 ) -> discord.Embed:
     jump_url = getattr(message, "jump_url", None)
-    reason = _truncate(decision.reason, 420) or "The AI flagged this message for moderator review."
+    reason = _ai_review_reason(locale, decision.reason)
     embed = discord.Embed(
-        title=_ai_review_title(decision.severity),
+        title=_ai_review_title(decision.severity, locale),
         description=reason,
         color=_ai_review_color(decision.severity),
         url=jump_url,
         timestamp=decision.created_at,
     )
     embed.add_field(
-        name="Context",
+        name=tr(locale, "ai_review.field_context"),
         value=(
-            f"Author: <@{decision.author_user_id}> (`{decision.author_user_id}`)\n"
-            f"Channel: <#{decision.channel_id}> (`{decision.channel_id}`)"
-            + (f"\nSource: [Open in Discord]({jump_url})" if jump_url else "")
+            f"{tr(locale, 'ai_review.label_author')}: <@{decision.author_user_id}> (`{decision.author_user_id}`)\n"
+            f"{tr(locale, 'ai_review.label_channel')}: <#{decision.channel_id}> (`{decision.channel_id}`)"
+            + (f"\n{tr(locale, 'ai_review.label_source')}: [{tr(locale, 'ai_review.open_in_discord')}]({jump_url})" if jump_url else "")
         ),
         inline=False,
     )
     if decision.archive_channel_id and decision.archive_message_id:
         archive_url = f"https://discord.com/channels/{decision.server_id}/{decision.archive_channel_id}/{decision.archive_message_id}"
         embed.add_field(
-            name="Original channel deleted",
-            value=f"The source channel was deleted. [Open transcript archive]({archive_url}).",
+            name=tr(locale, "ai_review.field_original_channel_deleted"),
+            value=tr(locale, "ai_review.original_channel_deleted", url=archive_url),
             inline=False,
         )
-    embed.add_field(name="Severity", value=f"`{decision.severity}`", inline=True)
-    embed.add_field(name="Suggested action", value=f"`{decision.suggested_action}`", inline=True)
-    embed.add_field(name="Strictness", value=f"`{decision.strictness}`", inline=True)
+    embed.add_field(name=tr(locale, "ai_review.field_severity"), value=f"`{_ai_review_display(locale, 'severity', decision.severity)}`", inline=True)
+    embed.add_field(name=tr(locale, "ai_review.field_suggested_action"), value=f"`{_ai_review_display(locale, 'action', decision.suggested_action)}`", inline=True)
+    embed.add_field(name=tr(locale, "ai_review.field_strictness"), value=f"`{_ai_review_display(locale, 'strictness', decision.strictness)}`", inline=True)
     if decision.selected_action:
-        override = " yes" if decision.action_override else " no"
-        embed.add_field(name="Moderator action", value=f"`{decision.selected_action}` (override:{override})", inline=True)
+        override = tr(locale, "common.bool_true") if decision.action_override else tr(locale, "common.bool_false")
+        embed.add_field(name=tr(locale, "ai_review.field_moderator_action"), value=f"`{_ai_review_display(locale, 'action', decision.selected_action)}` ({tr(locale, 'ai_review.override_label')}: `{override}`)", inline=True)
     if decision.categories:
-        embed.add_field(name="Categories", value=", ".join(f"`{item}`" for item in decision.categories[:8]), inline=False)
+        embed.add_field(name=tr(locale, "ai_review.field_categories"), value=", ".join(f"`{item}`" for item in decision.categories[:8]), inline=False)
     display_rules = rule_labels if rule_labels is not None else list(decision.rule_ids or [])[:8]
     if display_rules:
-        embed.add_field(name="Possible rules", value=", ".join(f"`{item}`" for item in display_rules), inline=False)
+        embed.add_field(name=tr(locale, "ai_review.field_possible_rules"), value=", ".join(f"`{item}`" for item in display_rules), inline=False)
     if decision.message_content:
-        embed.add_field(name="Message", value=_quote_preview(decision.message_content, 900), inline=False)
+        embed.add_field(name=tr(locale, "ai_review.field_message"), value=_quote_preview(decision.message_content, 900), inline=False)
     if decision.attachments_json:
-        attachment_names = [item.get("filename") or item.get("url") or "attachment" for item in decision.attachments_json[:5]]
-        embed.add_field(name="Attachments", value="\n".join(_truncate(item, 120) for item in attachment_names), inline=False)
-    embed.set_footer(text=f"AI decision ID: {decision.id}")
+        attachment_names = [item.get("filename") or item.get("url") or tr(locale, "ai_review.attachment_fallback") for item in decision.attachments_json[:5]]
+        embed.add_field(name=tr(locale, "ai_review.field_attachments"), value="\n".join(_truncate(item, 120) for item in attachment_names), inline=False)
+    embed.set_footer(text=tr(locale, "ai_review.footer_decision_id", decision_id=decision.id))
     return embed
 
 
@@ -627,24 +645,24 @@ def build_ai_review_resolution_embed(
 ) -> discord.Embed:
     color = discord.Color.green() if decision.status == "action_applied" else discord.Color.greyple()
     embed = discord.Embed(
-        title="AI moderation review resolved",
-        description="Review controls are disabled.",
+        title=tr(locale, "ai_review.resolved_title"),
+        description=tr(locale, "ai_review.resolved_description"),
         color=color,
         timestamp=decision.reviewed_at,
     )
-    embed.add_field(name="Status", value=f"`{decision.status}`", inline=True)
-    embed.add_field(name="Selected action", value=f"`{decision.selected_action or 'none'}`", inline=True)
+    embed.add_field(name=tr(locale, "ai_review.field_status"), value=f"`{_ai_review_display(locale, 'status', decision.status)}`", inline=True)
+    embed.add_field(name=tr(locale, "ai_review.field_selected_action"), value=f"`{_ai_review_display(locale, 'action', decision.selected_action)}`", inline=True)
     if decision.reviewed_by_user_id:
-        embed.add_field(name="Reviewer", value=f"<@{decision.reviewed_by_user_id}> (`{decision.reviewed_by_user_id}`)", inline=True)
+        embed.add_field(name=tr(locale, "ai_review.field_reviewer"), value=f"<@{decision.reviewed_by_user_id}> (`{decision.reviewed_by_user_id}`)", inline=True)
     if rule_labels:
         label_key = "modlog.rule_label" if len(rule_labels) == 1 else "modlog.rules_label"
         embed.add_field(name=tr(locale, label_key), value="\n".join(f"`{item}`" for item in rule_labels), inline=False)
     if decision.linked_action_id:
-        embed.add_field(name="Action ID", value=f"`{decision.linked_action_id}`", inline=False)
+        embed.add_field(name=tr(locale, "modlog.action_id_label"), value=f"`{decision.linked_action_id}`", inline=False)
     if decision.linked_case_id:
-        embed.add_field(name="Case ID", value=f"`{decision.linked_case_id}`", inline=False)
+        embed.add_field(name=tr(locale, "ai_review.field_case_id"), value=f"`{decision.linked_case_id}`", inline=False)
     if decision.action_reason:
-        embed.add_field(name="Reason", value=_truncate(decision.action_reason, 900), inline=False)
+        embed.add_field(name=tr(locale, "modlog.reason_label"), value=_truncate(decision.action_reason, 900), inline=False)
     return embed
 
 
@@ -1517,7 +1535,7 @@ async def send_ai_moderation_review(
         return False
     try:
         sent_message = await send_method(
-            embed=build_ai_moderation_embed(decision, message, rule_labels=rule_labels),
+            embed=build_ai_moderation_embed(decision, message, rule_labels=rule_labels, locale=locale),
             view=AIModerationReviewView(
                 decision_id=decision.id,
                 open_cases=open_cases,

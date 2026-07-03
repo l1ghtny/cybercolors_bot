@@ -24,7 +24,8 @@ from api.services.discord_guilds import edit_channel_message, fetch_channel_mess
 from api.services.monitoring_service import upsert_monitored_user
 from api.services.moderation_actions_service import create_action
 from api.services.moderation_core import build_optional_actor, naive_utcnow, to_moderation_history
-from src.db.models import AIModerationDecision, ActionType, GlobalUser, Server, ServerModerationSettings, TempVoiceLog, User
+from src.modules.localization.service import normalize_locale_code, tr
+from src.db.models import AIModerationDecision, ActionType, GlobalUser, Server, ServerLocalizationSettings, ServerModerationSettings, TempVoiceLog, User
 
 PENDING_SUGGESTION_STATUSES = {"pending_review", "action_requested", "case_created", "case_linked"}
 ACTIONABLE_SUGGESTIONS = {
@@ -426,24 +427,36 @@ def _resolution_color(status_value: str | None) -> int:
     return 0x57F287 if status_value == "action_applied" else 0x747F8D
 
 
-def _ai_review_resolution_embed_payload(decision: AIModerationDecision, *, action_id: str | None = None) -> dict:
+def _ai_review_display(locale: str | None, kind: str, value: str | None) -> str:
+    normalized = (value or "none").strip() or "none"
+    return tr(locale, f"ai_review.{kind}_{normalized}")
+
+
+async def _decision_locale(session: AsyncSession | None, server_id: int) -> str:
+    if session is None:
+        return normalize_locale_code(None)
+    settings = await session.get(ServerLocalizationSettings, server_id)
+    return normalize_locale_code(settings.locale_code if settings else None)
+
+
+def _ai_review_resolution_embed_payload(decision: AIModerationDecision, *, action_id: str | None = None, locale: str | None = None) -> dict:
     fields = [
-        {"name": "Status", "value": f"`{decision.status}`", "inline": True},
-        {"name": "Selected action", "value": f"`{decision.selected_action or 'none'}`", "inline": True},
-        {"name": "Reviewer", "value": f"<@{decision.reviewed_by_user_id}> (`{decision.reviewed_by_user_id}`)" if decision.reviewed_by_user_id else "`unknown`", "inline": True},
+        {"name": tr(locale, "ai_review.field_status"), "value": f"`{_ai_review_display(locale, 'status', decision.status)}`", "inline": True},
+        {"name": tr(locale, "ai_review.field_selected_action"), "value": f"`{_ai_review_display(locale, 'action', decision.selected_action)}`", "inline": True},
+        {"name": tr(locale, "ai_review.field_reviewer"), "value": f"<@{decision.reviewed_by_user_id}> (`{decision.reviewed_by_user_id}`)" if decision.reviewed_by_user_id else f"`{tr(locale, 'modlog.unknown')}`", "inline": True},
     ]
     if action_id or decision.linked_action_id:
-        fields.append({"name": "Action ID", "value": f"`{action_id or decision.linked_action_id}`", "inline": False})
+        fields.append({"name": tr(locale, "modlog.action_id_label"), "value": f"`{action_id or decision.linked_action_id}`", "inline": False})
     if decision.linked_case_id:
-        fields.append({"name": "Case ID", "value": f"`{decision.linked_case_id}`", "inline": False})
+        fields.append({"name": tr(locale, "ai_review.field_case_id"), "value": f"`{decision.linked_case_id}`", "inline": False})
     if decision.action_reason:
-        fields.append({"name": "Reason", "value": _truncate(decision.action_reason), "inline": False})
+        fields.append({"name": tr(locale, "modlog.reason_label"), "value": _truncate(decision.action_reason), "inline": False})
     embed = {
-        "title": "AI moderation review resolved",
-        "description": "Review controls were disabled.",
+        "title": tr(locale, "ai_review.resolved_title"),
+        "description": tr(locale, "ai_review.resolved_description"),
         "color": _resolution_color(decision.status),
         "fields": fields,
-        "footer": {"text": f"AI decision ID: {decision.id}"},
+        "footer": {"text": tr(locale, "ai_review.footer_decision_id", decision_id=decision.id)},
     }
     if decision.reviewed_at:
         embed["timestamp"] = decision.reviewed_at.isoformat()
@@ -454,10 +467,12 @@ async def _publish_ai_review_resolution(
     *,
     decision: AIModerationDecision,
     action_id: str | None = None,
+    session: AsyncSession | None = None,
 ) -> None:
     if not decision.review_channel_id or not decision.review_message_id:
         return
     try:
+        locale = await _decision_locale(session, decision.server_id)
         original_embeds: list[dict] = []
         try:
             message = await fetch_channel_message(
@@ -473,7 +488,7 @@ async def _publish_ai_review_resolution(
         await edit_channel_message(
             channel_id=decision.review_channel_id,
             message_id=decision.review_message_id,
-            embeds=[*original_embeds, _ai_review_resolution_embed_payload(decision, action_id=action_id)],
+            embeds=[*original_embeds, _ai_review_resolution_embed_payload(decision, action_id=action_id, locale=locale)],
             components=[],
         )
     except Exception:
@@ -513,7 +528,7 @@ async def _apply_decision_action(
         decision.action_override = (decision.suggested_action or "none") != "watch"
         session.add(decision)
         await session.flush()
-        await _publish_ai_review_resolution(decision=decision, action_id=None)
+        await _publish_ai_review_resolution(decision=decision, action_id=None, session=session)
         return AIResolveSuggestionResponseModel(
             suggestion=await to_ai_decision_model(session, decision),
             action_id=None,
@@ -547,7 +562,7 @@ async def _apply_decision_action(
     decision.action_override = (decision.suggested_action or "none") != action_type.value
     session.add(decision)
     await session.flush()
-    await _publish_ai_review_resolution(decision=decision, action_id=str(moderation_action.id))
+    await _publish_ai_review_resolution(decision=decision, action_id=str(moderation_action.id), session=session)
 
     return AIResolveSuggestionResponseModel(
         suggestion=await to_ai_decision_model(session, decision),
@@ -615,7 +630,7 @@ async def dismiss_ai_suggestion(
     decision.action_override = (decision.suggested_action or "none") != "none"
     session.add(decision)
     await session.flush()
-    await _publish_ai_review_resolution(decision=decision, action_id=None)
+    await _publish_ai_review_resolution(decision=decision, action_id=None, session=session)
     return AIResolveSuggestionResponseModel(
         suggestion=await to_ai_decision_model(session, decision),
         action_id=None,

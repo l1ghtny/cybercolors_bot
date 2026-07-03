@@ -12,6 +12,7 @@ from src.modules.ai.moderation_review import (
     _bot_can_read_message_channel,
     _bot_can_send_ai_mod_log,
     build_ai_moderation_embed,
+    build_ai_review_resolution_embed,
     create_ai_moderation_decision,
     screen_message_with_ai,
 )
@@ -231,9 +232,38 @@ def test_ai_moderation_embed_contains_review_summary():
     assert embed.title == "AI moderation review needed"
     assert "Likely insult" in embed.description
     assert any(field.name == "Context" and "Open in Discord" in field.value for field in embed.fields)
-    assert any(field.name == "Suggested action" and "manual_review" in field.value for field in embed.fields)
+    assert any(field.name == "Suggested action" and "manual review" in field.value for field in embed.fields)
     assert any(field.name == "Possible rules" and "rule-1" in field.value for field in embed.fields)
 
+
+def test_ai_moderation_embed_uses_russian_labels_and_values():
+    decision = AIModerationDecision(
+        server_id=123,
+        channel_id=456,
+        message_id=789,
+        author_user_id=101,
+        flagged=True,
+        severity="high",
+        reason="ru: Нужно проверить",
+        suggested_action="warn",
+        strictness="standard",
+        status="dismissed",
+        selected_action="none",
+        reviewed_by_user_id=202,
+    )
+
+    embed = build_ai_moderation_embed(decision, _fake_message(), locale="ru")
+    resolved = build_ai_review_resolution_embed(decision, locale="ru")
+
+    assert embed.title == "Срочная AI-проверка модерации"
+    assert embed.description == "Нужно проверить"
+    assert any(field.name == "Контекст" and "Открыть в Discord" in field.value for field in embed.fields)
+    assert any(field.name == "Предложенное действие" and "Предупреждение" in field.value for field in embed.fields)
+    assert any(field.name == "Строгость" and "стандартная" in field.value for field in embed.fields)
+    assert "ID AI-решения" in embed.footer.text
+    assert resolved.title == "AI-проверка модерации завершена"
+    assert any(field.name == "Статус" and "отклонено" in field.value for field in resolved.fields)
+    assert any(field.name == "Выбранное действие" and "Без действия" in field.value for field in resolved.fields)
 
 def test_send_ai_moderation_review_uses_configured_review_channel(monkeypatch):
     import src.modules.ai.moderation_review as moderation_review
@@ -338,7 +368,7 @@ def test_ai_moderation_embed_surfaces_moderator_override():
     embed = build_ai_moderation_embed(decision, _fake_message())
 
     assert embed.title == "AI moderation review needed"
-    assert any(field.name == "Moderator action" and "mute" in field.value and "override: yes" in field.value for field in embed.fields)
+    assert any(field.name == "Moderator action" and "Mute" in field.value and "override" in field.value and "Yes" in field.value for field in embed.fields)
 
 
 def test_ai_moderation_review_view_uses_persistent_custom_ids():
