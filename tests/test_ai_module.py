@@ -227,6 +227,64 @@ def test_check_message_normalizes_unflagged_action_leak():
     assert verdict.rule_ids == []
 
 
+def test_check_message_suppresses_trusted_staff_url_distribution_guess():
+    provider = FakeProvider(
+        '{"flagged": true, "severity": "high", '
+        '"categories": ["spam", "malicious_or_unwanted_link_sharing", "attempted_distribution_of_private_content"], '
+        '"reason": "The URL update may distribute restricted content.", '
+        '"suggested_action": "warn", "rule_ids": ["rule-1"], "link_content_inspected": false}'
+    )
+    ai = AIMain(provider=provider, model="test-model")
+
+    verdict = asyncio.run(
+        ai.check_message(
+            MessageModerationInput(
+                content="The resource URL changed after the official update: https://example.com/video",
+                author_is_admin=True,
+                author_is_moderator=True,
+                author_roles=[{"id": "1", "name": "Admin", "permissions": ["administrator"]}],
+            ),
+            include_member_profile=False,
+            moderation_strictness="standard",
+        )
+    )
+
+    assert verdict.flagged is False
+    assert verdict.severity == "none"
+    assert verdict.suggested_action == "none"
+    assert "Trusted staff URL/resource announcements" in verdict.reason
+    prompt = provider.last_request.messages[-1].content
+    assert '"author_is_admin": true' in prompt
+    assert '"author_is_moderator": true' in prompt
+    assert "trusted staff context" in provider.last_request.system_prompt
+
+
+def test_check_message_keeps_trusted_staff_explicit_link_violation():
+    provider = FakeProvider(
+        '{"flagged": true, "severity": "high", '
+        '"categories": ["phishing", "credential_theft"], '
+        '"reason": "The link is a phishing page for credentials.", '
+        '"suggested_action": "manual_review", "rule_ids": ["rule-1"], "link_content_inspected": true}'
+    )
+    ai = AIMain(provider=provider, model="test-model")
+
+    verdict = asyncio.run(
+        ai.check_message(
+            MessageModerationInput(
+                content="Use this login link: https://evil.example/login",
+                author_is_admin=True,
+                author_is_moderator=True,
+            ),
+            include_member_profile=False,
+            moderation_strictness="standard",
+        )
+    )
+
+    assert verdict.flagged is True
+    assert verdict.severity == "high"
+    assert verdict.suggested_action == "manual_review"
+
+
 def test_check_message_suppresses_uninspected_link_only_guess():
     provider = FakeProvider(
         '{"flagged": true, "severity": "medium", "categories": ["external_link", "nsfw_risk"], '

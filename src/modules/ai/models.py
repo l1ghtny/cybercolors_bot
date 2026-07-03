@@ -104,6 +104,9 @@ class MessageModerationInput:
     message_id: int | None = None
     author_display_name: str | None = None
     author_is_bot: bool = False
+    author_roles: list[dict[str, Any]] = field(default_factory=list)
+    author_is_admin: bool = False
+    author_is_moderator: bool = False
     server_locale: str | None = None
     bot_user_id: int | None = None
     mentioned_users: list[dict[str, Any]] = field(default_factory=list)

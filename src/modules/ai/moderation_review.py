@@ -42,6 +42,15 @@ logger = logger.logging.getLogger("bot")
 AI_MOD_COMPONENT_PREFIX = "ai_mod"
 AI_REVIEW_ACTIVE_STATUSES = {"pending_review", "action_requested", "case_created", "case_linked"}
 AI_MODERATION_DEFAULT_TIMEOUT_SECONDS = 20
+TRUSTED_AUTHOR_PERMISSION_NAMES = (
+    "administrator",
+    "manage_guild",
+    "manage_messages",
+    "ban_members",
+    "kick_members",
+    "moderate_members",
+    "manage_roles",
+)
 ACTIONABLE_AI_ACTIONS = {
     "warn": ActionType.WARN,
     "mute": ActionType.MUTE,
@@ -216,6 +225,39 @@ def _current_bot_mentioned(message: discord.Message) -> bool:
 
 def _message_author_role_ids(message: discord.Message) -> list[int]:
     return [int(role.id) for role in getattr(getattr(message, "author", None), "roles", []) if getattr(role, "id", None) is not None]
+
+
+def _permission_names(permissions) -> list[str]:
+    if permissions is None:
+        return []
+    return [name for name in TRUSTED_AUTHOR_PERMISSION_NAMES if bool(getattr(permissions, name, False))]
+
+
+def _message_author_roles(message: discord.Message) -> list[dict]:
+    roles = []
+    for role in getattr(getattr(message, "author", None), "roles", []) or []:
+        role_id = getattr(role, "id", None)
+        permissions = _permission_names(getattr(role, "permissions", None))
+        roles.append(
+            {
+                "id": str(role_id) if role_id is not None else None,
+                "name": str(getattr(role, "name", None)) if getattr(role, "name", None) is not None else None,
+                "permissions": permissions,
+                "administrator": "administrator" in permissions,
+            }
+        )
+    return roles
+
+
+def _message_author_trust_flags(message: discord.Message, roles: list[dict]) -> tuple[bool, bool]:
+    author = getattr(message, "author", None)
+    guild_permissions = _permission_names(getattr(author, "guild_permissions", None))
+    role_permissions = {permission for role in roles for permission in role.get("permissions", [])}
+    is_admin = "administrator" in guild_permissions or "administrator" in role_permissions
+    is_moderator = is_admin or bool(set(guild_permissions).intersection(TRUSTED_AUTHOR_PERMISSION_NAMES)) or bool(
+        role_permissions.intersection(TRUSTED_AUTHOR_PERMISSION_NAMES)
+    )
+    return is_admin, is_moderator
 
 
 def _is_allowed_answer_flow_invocation(settings: ServerAISettings, message: discord.Message) -> bool:
@@ -1500,6 +1542,8 @@ async def screen_message_with_ai(message: discord.Message) -> None:
                 return
             locale = await _server_locale(session, message.guild.id)
             bot_user_id = _current_bot_user_id(message)
+            author_roles = _message_author_roles(message)
+            author_is_admin, author_is_moderator = _message_author_trust_flags(message, author_roles)
             images = ai_images_from_discord_message(
                 message,
                 include_attachments=settings.moderation_monitor_attachments,
@@ -1517,6 +1561,9 @@ async def screen_message_with_ai(message: discord.Message) -> None:
                             message_id=message.id,
                             author_display_name=getattr(message.author, "display_name", None) or getattr(message.author, "name", None),
                             author_is_bot=bool(getattr(message.author, "bot", False)),
+                            author_roles=author_roles,
+                            author_is_admin=author_is_admin,
+                            author_is_moderator=author_is_moderator,
                             server_locale=locale,
                             bot_user_id=bot_user_id,
                             mentioned_users=_mentioned_user_payload(message),

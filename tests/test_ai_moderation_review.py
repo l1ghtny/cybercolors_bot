@@ -519,7 +519,14 @@ def test_screen_message_with_ai_moderates_allowed_answer_flow_invocation_with_co
     message.guild.name = "Guild"
     message.guild.me = bot_member
     message.author.bot = False
-    message.author.roles = []
+    message.author.roles = [
+        SimpleNamespace(
+            id=777,
+            name="Moderator",
+            permissions=SimpleNamespace(manage_messages=True),
+        )
+    ]
+    message.author.guild_permissions = SimpleNamespace(manage_messages=True)
     message.mentions = [bot_member]
     message.reference = SimpleNamespace(
         resolved=SimpleNamespace(
@@ -547,6 +554,16 @@ def test_screen_message_with_ai_moderates_allowed_answer_flow_invocation_with_co
             assert message_input.current_bot_mentioned is True
             assert message_input.answer_flow_invocation is True
             assert message_input.bot_user_id == 999
+            assert message_input.author_is_admin is False
+            assert message_input.author_is_moderator is True
+            assert message_input.author_roles == [
+                {
+                    "id": "777",
+                    "name": "Moderator",
+                    "permissions": ["manage_messages"],
+                    "administrator": False,
+                }
+            ]
             assert message_input.reply_to_message_id == 222
             assert message_input.reply_to_author_user_id == 333
             assert message_input.reply_to_author_display_name == "original"

@@ -50,6 +50,7 @@ Still flag bot-directed messages when they contain spam, harassment, threats, sl
 If Message metadata.current_bot_mentioned is true, the user is speaking to this bot, not necessarily to another member.
 Use replied-to message context to disambiguate sarcasm, callbacks, quotes, and playful riffs on another message. Do not classify phrasing copied from or jokingly mirroring the replied-to message as a threat or harassment unless the new message adds a credible targeted attack.
 Treat meta-discussion about moderation, AI moderation, or moderator workflow in moderator/admin contexts as ordinary operational discussion unless it directly attacks someone, leaks private data, bypasses moderation, or violates a rule on its own.
+If Message metadata.author_is_admin or author_is_moderator is true, treat server operational announcements, resource updates, and moderator explanations from that author as trusted staff context. Do not classify their URL or resource update as spam, unwanted link sharing, private-content distribution, or restriction bypass unless there is concrete evidence of phishing, malware, scams, doxxing, explicit content, or a compromised-account pattern.
 Suggest watch only for a concrete ongoing concern such as repeated borderline behavior, evasion, spam/abuse patterns, or concerning member context. Do not suggest watch for a single low-severity joke, laugh, or ambiguous meta message.
 Do not flag ordinary casual profanity, obscene idioms, laughter, all-caps excitement, roleplay banter, or vague rude commentary when it is not clearly targeted at a person or protected group.
 Do not flag "toxic tone" by itself. Flag harassment only when there is a clear target and the message is a direct insult, demeaning attack, threat, sustained pile-on, or explicit encouragement of self-harm.
@@ -132,6 +133,15 @@ EXPLICIT_SEXUAL_TEXT_PATTERN = re.compile(
     r"\b(porn|porno|nude|nudity|genitals?|sex act|intercourse|explicit sex|onlyfans)\b|"
     r"\u043f\u043e\u0440\u043d|\u043d\u0430\u0433\u043e\u0442|\u0433\u0435\u043d\u0438\u0442\u0430\u043b|\u044d\u0440\u043e\u0442\u0438\u043a|\u0441\u0435\u043a\u0441\u0443\u0430\u043b",
     re.IGNORECASE,
+)
+TRUSTED_AUTHOR_PERMISSION_NAMES = (
+    "administrator",
+    "manage_guild",
+    "manage_messages",
+    "ban_members",
+    "kick_members",
+    "moderate_members",
+    "manage_roles",
 )
 
 
@@ -492,6 +502,44 @@ class AIMain:
         return text
 
     @staticmethod
+    def _permission_names(permissions: Any) -> list[str]:
+        if permissions is None:
+            return []
+        return [name for name in TRUSTED_AUTHOR_PERMISSION_NAMES if bool(getattr(permissions, name, False))]
+
+    @staticmethod
+    def _role_id(role: Any) -> str | None:
+        role_id = getattr(role, "id", None)
+        return str(role_id) if role_id is not None else None
+
+    @staticmethod
+    def _author_role_payload(author: Any) -> list[dict[str, Any]]:
+        roles = []
+        for role in getattr(author, "roles", []) or []:
+            role_id = AIMain._role_id(role)
+            name = getattr(role, "name", None)
+            permissions = AIMain._permission_names(getattr(role, "permissions", None))
+            roles.append(
+                {
+                    "id": role_id,
+                    "name": str(name) if name is not None else None,
+                    "permissions": permissions,
+                    "administrator": "administrator" in permissions,
+                }
+            )
+        return roles
+
+    @staticmethod
+    def _author_trust_flags(author: Any, roles: list[dict[str, Any]]) -> tuple[bool, bool]:
+        guild_permissions = AIMain._permission_names(getattr(author, "guild_permissions", None))
+        role_permissions = {permission for role in roles for permission in role.get("permissions", [])}
+        is_admin = "administrator" in guild_permissions or "administrator" in role_permissions
+        is_moderator = is_admin or bool(set(guild_permissions).intersection(TRUSTED_AUTHOR_PERMISSION_NAMES)) or bool(
+            role_permissions.intersection(TRUSTED_AUTHOR_PERMISSION_NAMES)
+        )
+        return is_admin, is_moderator
+
+    @staticmethod
     def _normalize_moderation_input(message: str | MessageModerationInput | Any) -> MessageModerationInput:
         if isinstance(message, MessageModerationInput):
             return message
@@ -518,8 +566,13 @@ class AIMain:
                 }
             )
         author_display_name = None
+        author_roles = []
+        author_is_admin = False
+        author_is_moderator = False
         if author is not None:
             author_display_name = getattr(author, "display_name", None) or getattr(author, "name", None)
+            author_roles = AIMain._author_role_payload(author)
+            author_is_admin, author_is_moderator = AIMain._author_trust_flags(author, author_roles)
         return MessageModerationInput(
             content=getattr(message, "content", "") or "",
             server_id=getattr(guild, "id", None),
@@ -528,6 +581,9 @@ class AIMain:
             message_id=getattr(message, "id", None),
             author_display_name=author_display_name,
             author_is_bot=bool(getattr(author, "bot", False)),
+            author_roles=author_roles,
+            author_is_admin=author_is_admin,
+            author_is_moderator=author_is_moderator,
             bot_user_id=bot_user_id,
             mentioned_users=mentioned_users,
             current_bot_mentioned=any(item.get("is_current_bot") for item in mentioned_users),
@@ -559,6 +615,9 @@ class AIMain:
             "message_id": str(message.message_id) if message.message_id is not None else None,
             "author_display_name": message.author_display_name,
             "author_is_bot": message.author_is_bot,
+            "author_roles": message.author_roles,
+            "author_is_admin": message.author_is_admin,
+            "author_is_moderator": message.author_is_moderator,
             "server_locale": message.server_locale,
             "bot_user_id": str(message.bot_user_id) if message.bot_user_id is not None else None,
             "mentioned_users": message.mentioned_users,
@@ -650,6 +709,12 @@ class AIMain:
                     "Uninspected link-only messages are not actionable without explicit malicious URL text.",
                 )
 
+        if moderation_input is not None and AIMain._trusted_author_link_distribution_guess(verdict, moderation_input):
+            return AIMain._suppress_verdict(
+                verdict,
+                "Trusted staff URL/resource announcements require concrete malicious evidence before flagging.",
+            )
+
         if verdict.suggested_action == "watch" and not AIMain._watch_has_concrete_basis(verdict):
             return AIMain._suppress_verdict(
                 verdict,
@@ -719,6 +784,32 @@ class AIMain:
             "child sexual",
         }
         return any(term in signal for term in explicit_terms)
+
+    @staticmethod
+    def _trusted_author_link_distribution_guess(verdict: ModerationVerdict, moderation_input: MessageModerationInput) -> bool:
+        if not (moderation_input.author_is_admin or moderation_input.author_is_moderator):
+            return False
+        if AIMain._has_explicit_link_violation(verdict):
+            return False
+        if not URL_PATTERN.search(moderation_input.content):
+            return False
+        signal = " ".join([*verdict.categories, verdict.reason]).lower()
+        link_distribution_terms = {
+            "spam",
+            "link",
+            "url",
+            "external_link",
+            "unwanted",
+            "private_content",
+            "distribution",
+            "promotion",
+            "advertising",
+            "restriction bypass",
+            "bypass",
+            "unauthorized",
+            "unauthorised",
+        }
+        return any(term in signal for term in link_distribution_terms)
 
     @staticmethod
     def _watch_has_concrete_basis(verdict: ModerationVerdict) -> bool:
