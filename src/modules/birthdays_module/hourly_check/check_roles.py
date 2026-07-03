@@ -38,7 +38,18 @@ async def check_roles(client):
             logger.info(f'timedelta in days: {timedelta.days}')
             if timedelta.days >= 1 and current_member and current_role:
                 logger.info('checked role is older than 1 day')
-                await current_member.remove_roles(current_role)
+                try:
+                    await current_member.remove_roles(current_role)
+                except (discord.Forbidden, discord.HTTPException) as error:
+                    logger.warning(
+                        'Could not remove birthday role ID %s from user ID %s in server ID %s: %s',
+                        server_role_id,
+                        role_user_id,
+                        role_guild_id,
+                        error,
+                    )
+                    continue
+
                 birthday.role_added_at = None
                 await session.merge(birthday)
                 await session.commit()

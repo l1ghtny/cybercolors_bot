@@ -20,6 +20,7 @@ from api.models.birthday_settings import (
     CelebrationMessageReadModel,
     CelebrationMessageUpdateModel,
 )
+from api.services.birthday_permission_warnings import build_birthday_settings_warnings
 from api.services.birthdays_service import (
     get_member_or_404,
     get_or_create_server,
@@ -126,7 +127,8 @@ async def get_birthday_settings(server_id: int, session: AsyncSession = Depends(
     if not server:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Server settings not found")
     role_name = await resolve_birthday_role_name(server_id, server.birthday_role_id)
-    return to_settings_model(server, birthday_role_name=role_name)
+    warnings = await build_birthday_settings_warnings(server)
+    return to_settings_model(server, birthday_role_name=role_name, validation_warnings=warnings)
 
 
 @birthdays.put("/{server_id}/settings/channel", response_model=BirthdaySettingsModel)
@@ -144,7 +146,8 @@ async def update_birthday_channel(
     await session.flush()
     await session.refresh(server)
     role_name = await resolve_birthday_role_name(server_id, server.birthday_role_id)
-    return to_settings_model(server, birthday_role_name=role_name)
+    warnings = await build_birthday_settings_warnings(server)
+    return to_settings_model(server, birthday_role_name=role_name, validation_warnings=warnings)
 
 
 @birthdays.put("/{server_id}/settings/role", response_model=BirthdaySettingsModel)
@@ -160,7 +163,8 @@ async def update_birthday_role(
     await session.flush()
     await session.refresh(server)
     role_name = body.role_name or await resolve_birthday_role_name(server_id, server.birthday_role_id)
-    return to_settings_model(server, birthday_role_name=role_name)
+    warnings = await build_birthday_settings_warnings(server)
+    return to_settings_model(server, birthday_role_name=role_name, validation_warnings=warnings)
 
 
 @birthdays.get("/{server_id}/settings/messages", response_model=list[CelebrationMessageReadModel])

@@ -3,6 +3,12 @@ from datetime import datetime
 from pydantic import BaseModel, Field, field_validator
 
 
+class BirthdaySettingsWarningModel(BaseModel):
+    target: str
+    key: str
+    message: str
+
+
 class BirthdaySettingsModel(BaseModel):
     server_id: str
     server_name: str | None = None
@@ -10,6 +16,7 @@ class BirthdaySettingsModel(BaseModel):
     birthday_channel_name: str | None = None
     birthday_role_id: str | None = None
     birthday_role_name: str | None = None
+    validation_warnings: list[BirthdaySettingsWarningModel] = Field(default_factory=list)
 
 
 class BirthdayChannelUpdateModel(BaseModel):

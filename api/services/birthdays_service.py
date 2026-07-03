@@ -4,7 +4,12 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.models.birthdays import BirthdayReadModel, BirthdayWriteModel, ServerBirthdayUserModel
-from api.models.birthday_settings import BirthdayActorModel, BirthdaySettingsModel, CelebrationMessageReadModel
+from api.models.birthday_settings import (
+    BirthdayActorModel,
+    BirthdaySettingsModel,
+    BirthdaySettingsWarningModel,
+    CelebrationMessageReadModel,
+)
 from api.services.discord_guilds import fetch_guild_roles
 from src.db.models import Birthday, Congratulation, GlobalUser, Server, User
 
@@ -33,7 +38,11 @@ def to_birthday_read(user: User, global_user: GlobalUser, birthday: Birthday) ->
     )
 
 
-def to_settings_model(server: Server, birthday_role_name: str | None = None) -> BirthdaySettingsModel:
+def to_settings_model(
+    server: Server,
+    birthday_role_name: str | None = None,
+    validation_warnings: list[BirthdaySettingsWarningModel] | None = None,
+) -> BirthdaySettingsModel:
     return BirthdaySettingsModel(
         server_id=str(server.server_id),
         server_name=server.server_name,
@@ -41,6 +50,7 @@ def to_settings_model(server: Server, birthday_role_name: str | None = None) -> 
         birthday_channel_name=server.birthday_channel_name,
         birthday_role_id=str(server.birthday_role_id) if server.birthday_role_id else None,
         birthday_role_name=birthday_role_name,
+        validation_warnings=validation_warnings or [],
     )
 
 
