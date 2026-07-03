@@ -304,6 +304,7 @@ class ServerAISettings(SQLModel, table=True):
     moderation_enabled: bool = Field(default=False, nullable=False)
     moderation_channel_mode: str = Field(default="all", nullable=False, max_length=20)
     moderation_included_channel_ids: list[str] = Field(default_factory=list, sa_column=Column(sa.JSON, nullable=False))
+    moderation_excluded_channel_ids: list[str] = Field(default_factory=list, sa_column=Column(sa.JSON, nullable=False))
     moderation_monitor_attachments: bool = Field(default=False, nullable=False)
     moderation_monitor_bots: bool = Field(default=False, nullable=False)
     moderation_strictness: str = Field(default="standard", nullable=False, max_length=20)

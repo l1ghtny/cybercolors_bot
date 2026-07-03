@@ -59,6 +59,7 @@ def to_server_ai_settings_read_model(settings: ServerAISettings) -> ServerAISett
         moderation_enabled=settings.moderation_enabled,
         moderation_channel_mode=settings.moderation_channel_mode,
         moderation_included_channel_ids=list(settings.moderation_included_channel_ids or []),
+        moderation_excluded_channel_ids=list(settings.moderation_excluded_channel_ids or []),
         moderation_monitor_attachments=settings.moderation_monitor_attachments,
         moderation_monitor_bots=settings.moderation_monitor_bots,
         moderation_strictness=settings.moderation_strictness,
@@ -98,6 +99,8 @@ async def update_server_ai_settings(
         settings.moderation_channel_mode = body.moderation_channel_mode
     if body.moderation_included_channel_ids is not None:
         settings.moderation_included_channel_ids = body.moderation_included_channel_ids
+    if body.moderation_excluded_channel_ids is not None:
+        settings.moderation_excluded_channel_ids = body.moderation_excluded_channel_ids
     if body.moderation_monitor_attachments is not None:
         settings.moderation_monitor_attachments = body.moderation_monitor_attachments
     if body.moderation_monitor_bots is not None:
@@ -136,6 +139,11 @@ async def update_server_ai_settings(
         list(settings.moderation_included_channel_ids or []),
         "moderation_included_channel_ids",
     )
+    if settings.moderation_channel_mode == "exclude_selected" and not list(settings.moderation_excluded_channel_ids or []):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="moderation_excluded_channel_ids cannot be empty when mode is exclude_selected",
+        )
 
     settings.updated_at = naive_utcnow()
     session.add(settings)
@@ -169,4 +177,6 @@ def should_moderate_message_channel(settings: ServerAISettings, *, channel_id: i
         return False
     if settings.moderation_channel_mode == "selected":
         return str(channel_id) in set(settings.moderation_included_channel_ids or [])
+    if settings.moderation_channel_mode == "exclude_selected":
+        return str(channel_id) not in set(settings.moderation_excluded_channel_ids or [])
     return True

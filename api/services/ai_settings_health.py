@@ -243,6 +243,16 @@ def _moderation_channel_ids(server_id: int, settings, channels: list[dict]) -> l
         return []
     if settings.moderation_channel_mode == "selected":
         return [int(channel_id) for channel_id in settings.moderation_included_channel_ids or [] if str(channel_id).isdigit()]
+    if settings.moderation_channel_mode == "exclude_selected":
+        excluded = {str(channel_id) for channel_id in settings.moderation_excluded_channel_ids or []}
+        return [
+            int(channel["id"])
+            for channel in channels
+            if _int_or_none(channel.get("id")) is not None
+            and channel.get("type") in TEXT_CHANNEL_TYPES
+            and str(channel["id"]) not in excluded
+            and should_moderate_message_channel(settings, channel_id=int(channel["id"]))
+        ]
     return [
         int(channel["id"])
         for channel in channels

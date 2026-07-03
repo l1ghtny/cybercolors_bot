@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-AIChannelMode = Literal["none", "all", "selected"]
+AIChannelMode = Literal["none", "all", "selected", "exclude_selected"]
 AIModerationStrictness = Literal["low", "standard", "high"]
 AIModerationActionMode = Literal["review_only"]
 
@@ -40,6 +40,7 @@ class ServerAISettingsReadModel(BaseModel):
     moderation_enabled: bool
     moderation_channel_mode: AIChannelMode
     moderation_included_channel_ids: list[str] = Field(default_factory=list)
+    moderation_excluded_channel_ids: list[str] = Field(default_factory=list)
     moderation_monitor_attachments: bool
     moderation_monitor_bots: bool
     moderation_strictness: AIModerationStrictness
@@ -62,6 +63,7 @@ class ServerAISettingsUpdateModel(BaseModel):
     moderation_enabled: bool | None = None
     moderation_channel_mode: AIChannelMode | None = None
     moderation_included_channel_ids: list[str] | None = None
+    moderation_excluded_channel_ids: list[str] | None = None
     moderation_monitor_attachments: bool | None = None
     moderation_monitor_bots: bool | None = None
     moderation_strictness: AIModerationStrictness | None = None
@@ -89,6 +91,11 @@ class ServerAISettingsUpdateModel(BaseModel):
     def validate_moderation_channel_ids(cls, value: list[str] | None) -> list[str] | None:
         return _normalize_discord_ids(value, "moderation_included_channel_ids")
 
+    @field_validator("moderation_excluded_channel_ids")
+    @classmethod
+    def validate_moderation_excluded_channel_ids(cls, value: list[str] | None) -> list[str] | None:
+        return _normalize_discord_ids(value, "moderation_excluded_channel_ids")
+
     @field_validator("moderation_review_channel_id", mode="before")
     @classmethod
     def normalize_review_channel_id(cls, value: str | None) -> str | None:
@@ -111,6 +118,8 @@ class ServerAISettingsUpdateModel(BaseModel):
             raise ValueError("answer_allowed_channel_ids cannot be empty when answer_channel_mode is selected")
         if self.moderation_channel_mode == "selected" and self.moderation_included_channel_ids == []:
             raise ValueError("moderation_included_channel_ids cannot be empty when moderation_channel_mode is selected")
+        if self.moderation_channel_mode == "exclude_selected" and self.moderation_excluded_channel_ids == []:
+            raise ValueError("moderation_excluded_channel_ids cannot be empty when moderation_channel_mode is exclude_selected")
         return self
 
 

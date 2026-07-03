@@ -15,16 +15,21 @@ def test_ai_settings_update_normalizes_ids_and_deduplicates():
         answer_allowed_channel_ids=["123", " 456 ", "123"],
         answer_allowed_role_ids=["777", "777", "888"],
         moderation_included_channel_ids=["999", " 111 "],
+        moderation_excluded_channel_ids=["222", "999", "222"],
     )
 
     assert body.answer_allowed_channel_ids == ["123", "456"]
     assert body.answer_allowed_role_ids == ["777", "888"]
     assert body.moderation_included_channel_ids == ["999", "111"]
+    assert body.moderation_excluded_channel_ids == ["222", "999"]
 
 
 def test_ai_settings_update_rejects_invalid_ids():
     with pytest.raises(ValidationError):
         ServerAISettingsUpdateModel(answer_allowed_role_ids=["123", "not-a-role"])
+
+    with pytest.raises(ValidationError):
+        ServerAISettingsUpdateModel(moderation_excluded_channel_ids=["123", "not-a-channel"])
 
 
 def test_ai_settings_update_rejects_selected_mode_with_empty_ids():
@@ -33,6 +38,9 @@ def test_ai_settings_update_rejects_selected_mode_with_empty_ids():
 
     with pytest.raises(ValidationError):
         ServerAISettingsUpdateModel(moderation_channel_mode="selected", moderation_included_channel_ids=[])
+
+    with pytest.raises(ValidationError):
+        ServerAISettingsUpdateModel(moderation_channel_mode="exclude_selected", moderation_excluded_channel_ids=[])
 
 
 def test_ai_settings_route_is_registered_under_server_settings():
@@ -60,6 +68,7 @@ def test_ai_settings_read_model_defaults_to_read_only_permission():
 
     assert payload.permissions.can_edit is False
     assert payload.moderation_review_channel_id is None
+    assert payload.moderation_excluded_channel_ids == []
     assert payload.moderation_kill_switch_enabled is False
     assert payload.moderation_daily_token_limit is None
     assert payload.moderation_provider_timeout_seconds == 20
@@ -239,6 +248,11 @@ def test_should_moderate_message_channel_checks_enabled_and_channel_mode():
     assert should_moderate_message_channel(settings, channel_id=11) is False
 
     settings.moderation_review_channel_id = None
+    settings.moderation_channel_mode = "exclude_selected"
+    settings.moderation_excluded_channel_ids = ["11"]
+    assert should_moderate_message_channel(settings, channel_id=10) is True
+    assert should_moderate_message_channel(settings, channel_id=11) is False
+
     settings.moderation_channel_mode = "none"
     assert should_moderate_message_channel(settings, channel_id=10) is False
 
@@ -321,6 +335,67 @@ def test_ai_settings_health_reports_channel_and_mod_log_permissions(monkeypatch)
     assert payload.ai_review_channel.ok is False
     assert payload.ai_review_channel.purpose == "ai_review"
     assert payload.warnings
+
+
+
+def test_ai_settings_health_exclude_selected_omits_excluded_channels(monkeypatch):
+    server_id = 123
+    bot_id = 456
+    included_channel_id = 10
+    excluded_channel_id = 11
+    review_channel_id = 12
+    permissions = VIEW_CHANNEL | READ_MESSAGE_HISTORY | SEND_MESSAGES | EMBED_LINKS
+    settings = ServerAISettings(
+        server_id=server_id,
+        moderation_enabled=True,
+        moderation_channel_mode="exclude_selected",
+        moderation_excluded_channel_ids=[str(excluded_channel_id)],
+        moderation_review_channel_id=review_channel_id,
+    )
+
+    class FakeSession:
+        async def get(self, model, key):
+            if model is ServerModerationSettings:
+                return ServerModerationSettings(server_id=server_id, mod_log_channel_id=review_channel_id)
+            return None
+
+    async def fake_get_settings(_session, requested_server_id):
+        assert requested_server_id == server_id
+        return settings
+
+    async def fake_channels(requested_server_id):
+        assert requested_server_id == server_id
+        return [
+            {"id": str(included_channel_id), "name": "chat", "type": 0, "permission_overwrites": []},
+            {"id": str(excluded_channel_id), "name": "flood", "type": 0, "permission_overwrites": []},
+            {"id": str(review_channel_id), "name": "ai-review", "type": 0, "permission_overwrites": []},
+        ]
+
+    async def fake_roles(requested_server_id):
+        assert requested_server_id == server_id
+        return [{"id": str(server_id), "name": "@everyone", "permissions": str(permissions)}]
+
+    async def fake_bot_user():
+        return {"id": str(bot_id)}
+
+    async def fake_member(server_id, user_id):
+        assert user_id == bot_id
+        return {"roles": []}
+
+    import api.services.ai_settings_health as health_service
+
+    monkeypatch.setattr(health_service, "get_or_create_server_ai_settings", fake_get_settings)
+    monkeypatch.setattr(health_service, "fetch_guild_channels", fake_channels)
+    monkeypatch.setattr(health_service, "fetch_guild_roles", fake_roles)
+    monkeypatch.setattr(health_service, "fetch_current_bot_user", fake_bot_user)
+    monkeypatch.setattr(health_service, "fetch_guild_member", fake_member)
+
+    import asyncio
+
+    payload = asyncio.run(build_ai_settings_health(FakeSession(), server_id))
+
+    assert [item.channel_id for item in payload.moderation_channels] == [str(included_channel_id)]
+    assert payload.ok is True
 
 
 def test_ai_settings_health_reports_writable_mod_log(monkeypatch):
