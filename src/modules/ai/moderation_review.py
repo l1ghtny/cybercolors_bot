@@ -18,6 +18,7 @@ from src.db.models import (
     AIModerationDecision,
     ActionType,
     ModerationRule,
+    MessageLog,
     ServerAISettings,
     ServerLocalizationSettings,
     ServerModerationSettings,
@@ -173,6 +174,71 @@ async def _referenced_message_for_moderation(message: discord.Message):
         return None
     return fetched if fetched is not None and getattr(fetched, "id", None) is not None else None
 
+
+def _message_created_at_naive_utc(message: discord.Message) -> datetime | None:
+    created_at = getattr(message, "created_at", None)
+    if created_at is None:
+        return None
+    if getattr(created_at, "tzinfo", None) is not None:
+        return created_at.astimezone(timezone.utc).replace(tzinfo=None)
+    return created_at
+
+
+def _message_log_context_item(log: MessageLog, *, target_author_id: int | None) -> dict[str, str | bool | None]:
+    return {
+        "message_id": str(log.message_id),
+        "author_user_id": str(log.user_id),
+        "is_target_author": target_author_id is not None and int(log.user_id) == int(target_author_id),
+        "created_at": log.created_at.isoformat() if log.created_at else None,
+        "reply_to_message_id": str(log.reply_to_message_id) if log.reply_to_message_id is not None else None,
+        "content": _truncate(log.content, 500),
+    }
+
+
+async def _recent_message_context_payload(session, message: discord.Message) -> dict[str, list[dict[str, str | bool | None]]]:
+    if not hasattr(session, "exec"):
+        return {}
+    guild_id = getattr(getattr(message, "guild", None), "id", None)
+    channel_id = getattr(getattr(message, "channel", None), "id", None)
+    message_id = getattr(message, "id", None)
+    author_id = getattr(getattr(message, "author", None), "id", None)
+    if guild_id is None or channel_id is None or message_id is None:
+        return {}
+
+    created_at = _message_created_at_naive_utc(message)
+    cutoff = (created_at or _naive_utcnow()) - timedelta(minutes=5)
+    filters = [
+        MessageLog.server_id == int(guild_id),
+        MessageLog.channel_id == int(channel_id),
+        MessageLog.message_id != int(message_id),
+        MessageLog.created_at >= cutoff,
+    ]
+    if created_at is not None:
+        filters.append(MessageLog.created_at <= created_at)
+    else:
+        filters.append(MessageLog.message_id < int(message_id))
+
+    try:
+        result = await session.exec(
+            select(MessageLog)
+            .where(*filters)
+            .order_by(MessageLog.created_at.desc(), MessageLog.message_id.desc())
+            .limit(12)
+        )
+        rows = list(result.all())
+    except Exception:
+        logger.exception("Failed to load AI moderation message context for message %s", message_id)
+        return {}
+
+    rows = list(reversed(rows))
+    channel_context = [_message_log_context_item(row, target_author_id=author_id) for row in rows]
+    author_context = [item for item in channel_context if item.get("is_target_author")]
+    payload: dict[str, list[dict[str, str | bool | None]]] = {}
+    if channel_context:
+        payload["recent_channel_messages"] = channel_context[-10:]
+    if author_context:
+        payload["recent_author_messages"] = author_context[-6:]
+    return payload
 
 async def _reply_context_payload(message: discord.Message) -> dict[str, int | str | bool | None]:
     referenced = await _referenced_message_for_moderation(message)
@@ -1550,6 +1616,7 @@ async def screen_message_with_ai(message: discord.Message) -> None:
                 include_custom_emojis=True,
             )
             reply_context = await _reply_context_payload(message)
+            recent_context = await _recent_message_context_payload(session, message)
             try:
                 verdict = await asyncio.wait_for(
                     ai_main_class.check_message(
@@ -1570,6 +1637,7 @@ async def screen_message_with_ai(message: discord.Message) -> None:
                             current_bot_mentioned=_current_bot_mentioned(message),
                             answer_flow_invocation=answer_flow_invocation,
                             **reply_context,
+                            **recent_context,
                             images=images,
                         ),
                         session=session,

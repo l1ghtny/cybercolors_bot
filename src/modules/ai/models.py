@@ -117,6 +117,8 @@ class MessageModerationInput:
     reply_to_author_display_name: str | None = None
     reply_to_author_is_bot: bool = False
     reply_to_content: str | None = None
+    recent_channel_messages: list[dict[str, Any]] = field(default_factory=list)
+    recent_author_messages: list[dict[str, Any]] = field(default_factory=list)
     images: list[AIImageInput] = field(default_factory=list)
 
 

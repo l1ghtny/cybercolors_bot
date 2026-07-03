@@ -356,6 +356,62 @@ def test_check_message_keeps_credible_low_strictness_threat_and_structured_field
     assert verdict.is_banter_or_hyperbole is False
     assert verdict.requires_context is False
 
+def test_check_message_uses_recent_context_to_suppress_game_threat_false_positive():
+    provider = FakeProvider(
+        '{"flagged": true, "severity": "medium", "categories": ["threats"], '
+        '"reason": "Threat-like wording.", "suggested_action": "warn", "rule_ids": ["rule-2"], '
+        '"targeted": false, "credible_threat": false, "requires_context": false}'
+    )
+    ai = AIMain(provider=provider, model="test-model")
+
+    verdict = asyncio.run(
+        ai.check_message(
+            MessageModerationInput(
+                content="И застрелит вас",
+                recent_channel_messages=[
+                    {
+                        "message_id": "1",
+                        "author_user_id": "101",
+                        "is_target_author": True,
+                        "created_at": "2026-07-03T12:32:00",
+                        "reply_to_message_id": None,
+                        "content": "Мое предсказание Дельтарун",
+                    },
+                    {
+                        "message_id": "2",
+                        "author_user_id": "101",
+                        "is_target_author": True,
+                        "created_at": "2026-07-03T12:32:10",
+                        "reply_to_message_id": None,
+                        "content": "В конце игра вас убьет",
+                    },
+                    {
+                        "message_id": "3",
+                        "author_user_id": "101",
+                        "is_target_author": True,
+                        "created_at": "2026-07-03T12:32:20",
+                        "reply_to_message_id": None,
+                        "content": "Из консоли появится дуло пистолета",
+                    },
+                ],
+                recent_author_messages=[
+                    {"message_id": "2", "author_user_id": "101", "is_target_author": True, "content": "В конце игра вас убьет"},
+                    {"message_id": "3", "author_user_id": "101", "is_target_author": True, "content": "Из консоли появится дуло пистолета"},
+                ],
+            ),
+            include_member_profile=False,
+            moderation_strictness="standard",
+        )
+    )
+
+    assert verdict.flagged is False
+    assert verdict.suggested_action == "none"
+    assert "game/story/roleplay" in verdict.reason
+    prompt = provider.last_request.messages[0].content
+    assert "Recent same-channel context" in prompt
+    assert "Target message content" in prompt
+    assert "И застрелит вас" in prompt
+
 def test_moderation_prompt_keeps_standard_and_high_usable_for_normal_chat():
     standard_prompt = moderation_system_prompt("standard")
     high_prompt = moderation_system_prompt("high")
