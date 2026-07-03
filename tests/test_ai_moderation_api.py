@@ -7,6 +7,7 @@ from starlette.routing import Match
 
 from api.api_main import app
 from api.models.ai_moderation import AIApproveSuggestionModel, AIDismissSuggestionModel
+from api.services import ai_moderation
 from api.services.ai_moderation import approve_ai_suggestion, dismiss_ai_suggestion, get_ai_suggestion_stream_state, list_ai_decisions, list_ai_suggestions
 from api.services.server_overview import build_server_overview
 from src.db.database import engine, get_async_session
@@ -51,6 +52,56 @@ def test_ai_moderation_routes_are_registered():
         "/servers/{server_id}/ai/suggestions/{suggestion_id}/dismiss",
     )
     _assert_route("/servers/123/ai/decisions", "GET", "/servers/{server_id}/ai/decisions")
+
+
+def test_dashboard_resolution_edits_original_review_message(monkeypatch):
+    edited: dict = {}
+
+    async def fake_fetch_channel_message(*, channel_id: int, message_id: int):
+        edited["fetched"] = (channel_id, message_id)
+        return {"embeds": [{"title": "Original AI review"}, {"title": "Old resolved embed"}]}
+
+    async def fake_edit_channel_message(**kwargs):
+        edited["edit"] = kwargs
+        return {}
+
+    monkeypatch.setattr(ai_moderation, "fetch_channel_message", fake_fetch_channel_message)
+    monkeypatch.setattr(ai_moderation, "edit_channel_message", fake_edit_channel_message)
+
+    decision = AIModerationDecision(
+        id=uuid4(),
+        server_id=123,
+        channel_id=456,
+        message_id=789,
+        author_user_id=111,
+        message_content="message",
+        provider="fake",
+        model="test-model",
+        strictness="standard",
+        flagged=True,
+        severity="medium",
+        categories=["spam"],
+        reason="Needs review",
+        suggested_action="manual_review",
+        status="dismissed",
+        selected_action="none",
+        action_reason="false positive",
+        reviewed_by_user_id=222,
+        reviewed_at=_naive_now(),
+        review_channel_id=333,
+        review_message_id=444,
+    )
+
+    asyncio.run(ai_moderation._publish_ai_review_resolution(decision=decision, action_id=None))
+
+    assert edited["fetched"] == (333, 444)
+    assert edited["edit"]["channel_id"] == 333
+    assert edited["edit"]["message_id"] == 444
+    assert edited["edit"]["components"] == []
+    assert [embed["title"] for embed in edited["edit"]["embeds"]] == [
+        "Original AI review",
+        "AI moderation review resolved",
+    ]
 
 
 async def _ai_moderation_api_scenario() -> None:

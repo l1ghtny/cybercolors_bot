@@ -20,7 +20,7 @@ from api.models.ai_moderation import (
     AITweakSuggestionModel,
 )
 from api.models.moderation_actions import ModerationActionCreate
-from api.services.discord_guilds import create_channel_message, edit_channel_message
+from api.services.discord_guilds import edit_channel_message, fetch_channel_message
 from api.services.monitoring_service import upsert_monitored_user
 from api.services.moderation_actions_service import create_action
 from api.services.moderation_core import build_optional_actor, naive_utcnow, to_moderation_history
@@ -458,14 +458,23 @@ async def _publish_ai_review_resolution(
     if not decision.review_channel_id or not decision.review_message_id:
         return
     try:
+        original_embeds: list[dict] = []
+        try:
+            message = await fetch_channel_message(
+                channel_id=decision.review_channel_id,
+                message_id=decision.review_message_id,
+            )
+            embeds = message.get("embeds") if isinstance(message, dict) else None
+            if isinstance(embeds, list):
+                original_embeds = [item for item in embeds[:1] if isinstance(item, dict)]
+        except Exception:
+            original_embeds = []
+
         await edit_channel_message(
             channel_id=decision.review_channel_id,
             message_id=decision.review_message_id,
+            embeds=[*original_embeds, _ai_review_resolution_embed_payload(decision, action_id=action_id)],
             components=[],
-        )
-        await create_channel_message(
-            channel_id=decision.review_channel_id,
-            embeds=[_ai_review_resolution_embed_payload(decision, action_id=action_id)],
         )
     except Exception:
         # Dashboard moderation should still succeed if Discord cannot update the old review message.
