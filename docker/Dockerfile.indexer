@@ -14,7 +14,7 @@ RUN apt-get update \
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir "sentence-transformers>=3.0.0"
+    && pip install --no-cache-dir "sentence-transformers>=3.0.0" "uuid6>=2024.7.10"
 
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-m3')"
 

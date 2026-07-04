@@ -19,6 +19,8 @@ spec:
       labels:
         app: cybercolors-indexer-worker
     spec:
+      nodeSelector:
+        kubernetes.io/hostname: main-server
       containers:
         - name: worker
           image: localhost:32000/cybercolors-indexer:latest
