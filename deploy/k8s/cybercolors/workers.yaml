@@ -21,7 +21,7 @@ spec:
     spec:
       containers:
         - name: worker
-          image: localhost:32000/cybercolors-backend:latest
+          image: localhost:32000/cybercolors-indexer:latest
           imagePullPolicy: Always
           command: ["python", "scripts/run_ai_knowledge_worker.py"]
           envFrom:
@@ -45,11 +45,11 @@ spec:
                   key: password
           resources:
             requests:
-              cpu: 100m
-              memory: 256Mi
-            limits:
               cpu: 500m
-              memory: 768Mi
+              memory: 2Gi
+            limits:
+              cpu: "2"
+              memory: 6Gi
 ---
 apiVersion: apps/v1
 kind: Deployment
