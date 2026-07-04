@@ -412,6 +412,73 @@ def test_check_message_uses_recent_context_to_suppress_game_threat_false_positiv
     assert "Target message content" in prompt
     assert "И застрелит вас" in prompt
 
+
+def test_check_message_suppresses_quoted_roleplay_attack_false_positive():
+    provider = FakeProvider(
+        '{"flagged": true, "severity": "medium", "categories": ["harassment", "threats"], '
+        '"reason": "The quoted phrase sounds like a violent threat toward a character.", '
+        '"suggested_action": "warn", "rule_ids": ["rule-2"], '
+        '"targeted": true, "credible_threat": false, "requires_context": false}'
+    )
+    ai = AIMain(provider=provider, model="test-model")
+
+    verdict = asyncio.run(
+        ai.check_message(
+            MessageModerationInput(
+                content='"\u041e\u043d \u043e\u0431\u044f\u0437\u0430\u043d \u043f\u043e\u043b\u0443\u0447\u0438\u0442\u044c \u043f\u0438\u0437\u0434\u044b" @Metal Sonic',
+                mentioned_users=[{"user_id": "123", "display_name": "Metal Sonic", "username": "metal"}],
+                recent_channel_messages=[
+                    {
+                        "message_id": "1",
+                        "author_user_id": "101",
+                        "is_target_author": False,
+                        "content": "\u0427\u0442\u043e \u0431\u044b \u043e\u0442\u0432\u0435\u0442\u0438\u043b \u0432\u043e\u043e\u0431\u0440\u0430\u0436\u0430\u0435\u043c\u044b\u0439 \u043f\u0435\u0440\u0441\u043e\u043d\u0430\u0436?",
+                    },
+                    {
+                        "message_id": "2",
+                        "author_user_id": "102",
+                        "is_target_author": False,
+                        "content": "\u042d\u0442\u043e \u0442\u0435\u043e\u0440\u0435\u0442\u0438\u0447\u0435\u0441\u043a\u0438\u0439 \u043e\u0442\u0432\u0435\u0442 \u043f\u0435\u0440\u0441\u043e\u043d\u0430\u0436\u0430, \u043d\u0435 \u0443\u0433\u0440\u043e\u0437\u0430.",
+                    },
+                ],
+                recent_author_messages=[],
+            ),
+            include_member_profile=False,
+            moderation_strictness="standard",
+        )
+    )
+
+    assert verdict.flagged is False
+    assert verdict.suggested_action == "none"
+    assert "quoted, theoretical, or roleplayed speech" in verdict.reason
+
+
+def test_check_message_keeps_direct_member_threat_despite_roleplay_context():
+    provider = FakeProvider(
+        '{"flagged": true, "severity": "medium", "categories": ["harassment", "threats"], '
+        '"reason": "The user directly threatens another member.", '
+        '"suggested_action": "warn", "rule_ids": ["rule-2"], '
+        '"targeted": true, "credible_threat": true, "requires_context": false}'
+    )
+    ai = AIMain(provider=provider, model="test-model")
+
+    verdict = asyncio.run(
+        ai.check_message(
+            MessageModerationInput(
+                content='@Metal Sonic \u0442\u044b \u043e\u0431\u044f\u0437\u0430\u043d \u043f\u043e\u043b\u0443\u0447\u0438\u0442\u044c \u043f\u0438\u0437\u0434\u044b',
+                mentioned_users=[{"user_id": "123", "display_name": "Metal Sonic", "username": "metal"}],
+                recent_channel_messages=[
+                    {"message_id": "1", "author_user_id": "101", "content": "\u042d\u0442\u043e \u0442\u0435\u043e\u0440\u0435\u0442\u0438\u0447\u0435\u0441\u043a\u0438\u0439 \u0440\u043e\u043b\u0435\u0432\u043e\u0439 \u043a\u043e\u043d\u0442\u0435\u043a\u0441\u0442."},
+                ],
+            ),
+            include_member_profile=False,
+            moderation_strictness="standard",
+        )
+    )
+
+    assert verdict.flagged is True
+    assert verdict.suggested_action == "warn"
+
 def test_moderation_prompt_keeps_standard_and_high_usable_for_normal_chat():
     standard_prompt = moderation_system_prompt("standard")
     high_prompt = moderation_system_prompt("high")

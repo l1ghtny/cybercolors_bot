@@ -54,6 +54,7 @@ If Message metadata.author_is_admin or author_is_moderator is true, treat server
 Suggest watch only for a concrete ongoing concern such as repeated borderline behavior, evasion, spam/abuse patterns, or concerning member context. Do not suggest watch for a single low-severity joke, laugh, or ambiguous meta message.
 Do not flag ordinary casual profanity, obscene idioms, laughter, all-caps excitement, roleplay banter, or vague rude commentary when it is not clearly targeted at a person or protected group.
 Do not flag "toxic tone" by itself. Flag harassment only when there is a clear target and the message is a direct insult, demeaning attack, threat, sustained pile-on, or explicit encouragement of self-harm.
+Do not treat quoted, fictional, theoretical, or roleplayed speech as the author's direct threat or harassment just because it contains rough wording. Mentions near quoted speech may identify the fictional subject or previous speaker, not necessarily the target. Still flag it when the author directly addresses a real member, replies to them with threat wording, names them as the intended victim, or adds real-world intent.
 For visual links and GIFs, judge sexual/18+ content from the actual visual input or clearly explicit surrounding text. Do not flag ambiguous objects that only resemble body parts, clenched fists, cropped meme frames, or non-explicit suggestive jokes as 18+/NSFW. Only set explicit_visual_sexual_content=true for unmistakable exposed genitals, explicit nudity, or sex acts. Do not infer an 18+ violation from a filename, URL slug, or domain alone. If the message is only an external link and the linked content was not inspected, stay conservative and return flagged=false unless the URL text itself is clearly malicious. Treat casual Russian idioms equivalent to "I am dying", "I will not survive", or rough profanity as slang/hyperbole unless they include credible intent, a concrete plan, targeted self-harm encouragement, or a direct threat.
 Do not take action. Only decide whether a human moderator should review it.
 When rules are relevant, cite the exact rule ids from active_rules. Do not return rule numbers, titles, or invented ids in rule_ids.
@@ -122,6 +123,27 @@ WATCH_BASIS_PATTERN = re.compile(
 GAME_OR_STORY_CONTEXT_PATTERN = re.compile(
     r"\b(game|gaming|mod|addon|console|boss|mob|npc|quest|roleplay|rp|story|fiction|lore|minecraft|server)\b|"
     r"\u0438\u0433\u0440|\u043c\u043e\u0434|\u0430\u0434\u0434\u043e\u043d|\u043a\u043e\u043d\u0441\u043e\u043b|\u0434\u0443\u043b\u043e|\u043f\u0438\u0441\u0442\u043e\u043b|\u0433\u043b\u0430\u0432|\u0441\u044e\u0436\u0435\u0442|\u0440\u043e\u043b\u0435\u0432|\u043c\u0430\u0439\u043d\u043a\u0440\u0430\u0444\u0442",
+    re.IGNORECASE,
+)
+QUOTE_MARKER_PATTERN = re.compile(r"[\"'\u201c\u201d\u2018\u2019\u00ab\u00bb\u201e]")
+ROLEPLAY_OR_THEORETICAL_CONTEXT_PATTERN = re.compile(
+    r"\b(roleplay|rp|character|fiction|fictional|imaginary|theoretical|hypothetical|quote|quoted|"
+    r"would say|would answer|persona|story|lore|scene|dialogue|dialog)\b|"
+    r"\u0440\u043e\u043b\u0435\u0432|\u043f\u0435\u0440\u0441\u043e\u043d\u0430\u0436|\u0432\u044b\u043c\u044b\u0448\u043b|\u0432\u043e\u043e\u0431\u0440\u0430\u0436|\u0442\u0435\u043e\u0440\u0435\u0442|\u0433\u0438\u043f\u043e\u0442\u0435\u0442|"
+    r"\u0446\u0438\u0442\u0430\u0442|\u0441\u043a\u0430\u0437\u0430\u043b \u0431\u044b|\u043e\u0442\u0432\u0435\u0442\u0438\u043b \u0431\u044b|\u0441\u044e\u0436\u0435\u0442|\u0441\u0446\u0435\u043d|\u0434\u0438\u0430\u043b\u043e\u0433",
+    re.IGNORECASE,
+)
+THIRD_PERSON_REFERENCE_PATTERN = re.compile(
+    r"\b(he|she|they|him|her|them|that guy|that person)\b|"
+    r"\b(\u043e\u043d|\u043e\u043d\u0430|\u043e\u043d\u0438|\u0435\u0433\u043e|\u0435\u0435|\u0435\u0451|\u0435\u043c\u0443|\u0435\u0439|\u0438\u0445|\u044d\u0442\u043e\u0442|\u044d\u0442\u0430|\u044d\u0442\u0438)\b",
+    re.IGNORECASE,
+)
+DIRECT_SECOND_PERSON_OR_INTENT_PATTERN = re.compile(
+    r"\b(you|your|yours|u)\b|"
+    r"\b(i|we)\s+(will|am going to|gonna)\s+(kill|shoot|stab|beat|hurt)\b|"
+    r"\b(\u0442\u044b|\u0442\u0435\u0431\u044f|\u0442\u0435\u0431\u0435|\u0442\u0432\u043e\u0439|\u0442\u0432\u043e\u044e|\u0442\u0432\u043e\u0438|\u0432\u0430\u0441|\u0432\u0430\u043c|\u0432\u0430\u0448)\b|"
+    r"\b(\u044f|\u043c\u044b)\s+(\u0442\u0435\u0431\u044f|\u0442\u0435\u0431\u0435|\u0432\u0430\u0441|\u0432\u0430\u043c)\b|"
+    r"\b(\u0442\u044b|\u0432\u044b)\s+.*(\u043f\u043e\u043b\u0443\u0447\u0438\u0448|\u043f\u043e\u043b\u0443\u0447\u0438\u0442\u0435|\u0441\u0434\u043e\u0445\u043d|\u0443\u043c\u0440)\b",
     re.IGNORECASE,
 )
 CREDIBLE_THREAT_PATTERN = re.compile(
@@ -748,6 +770,12 @@ class AIMain:
                 "Recent context frames the threat-like wording as game/story/roleplay talk, not a credible real-world threat.",
             )
 
+        if moderation_input is not None and AIMain._contextual_attack_is_quoted_or_roleplay(verdict, moderation_input):
+            return AIMain._suppress_verdict(
+                verdict,
+                "Recent context frames the rough wording as quoted, theoretical, or roleplayed speech rather than the author's direct attack.",
+            )
+
         if verdict.suggested_action == "watch" and not AIMain._watch_has_concrete_basis(verdict):
             return AIMain._suppress_verdict(
                 verdict,
@@ -858,6 +886,37 @@ class AIMain:
         if not context_text.strip():
             return False
         return bool(GAME_OR_STORY_CONTEXT_PATTERN.search(context_text))
+
+    @staticmethod
+    def _contextual_attack_is_quoted_or_roleplay(verdict: ModerationVerdict, moderation_input: MessageModerationInput) -> bool:
+        signal = " ".join([*verdict.categories, verdict.reason]).lower()
+        if not any(term in signal for term in ("threat", "harassment", "abuse", "violent", "violence", "insult")):
+            return False
+
+        content = moderation_input.content.strip()
+        if not content:
+            return False
+
+        has_quote_or_third_person = bool(QUOTE_MARKER_PATTERN.search(content)) or bool(
+            THIRD_PERSON_REFERENCE_PATTERN.search(content)
+        )
+        if not has_quote_or_third_person:
+            return False
+
+        if DIRECT_SECOND_PERSON_OR_INTENT_PATTERN.search(content):
+            return False
+
+        context_text = "\n".join(
+            str(item.get("content") or "")
+            for item in [*moderation_input.recent_channel_messages, *moderation_input.recent_author_messages]
+        )
+        if not context_text.strip() or not ROLEPLAY_OR_THEORETICAL_CONTEXT_PATTERN.search(context_text):
+            return False
+
+        if moderation_input.reply_to_author_user_id is not None and not QUOTE_MARKER_PATTERN.search(content):
+            return False
+
+        return True
 
     @staticmethod
     def _watch_has_concrete_basis(verdict: ModerationVerdict) -> bool:
