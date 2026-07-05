@@ -1,17 +1,12 @@
 import uuid
 from typing import List, Optional
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid7
 from datetime import datetime, UTC, timezone
 
 import sqlalchemy as sa
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import BigInteger, Column, ForeignKey, JSON, String, TIMESTAMP, Text, UniqueConstraint
 from sqlmodel import Field, Relationship, SQLModel
-
-try:
-    from uuid import uuid7
-except ImportError:  # Python < 3.14
-    from uuid6 import uuid7
 
 
 def utcnow_utc_tz():
