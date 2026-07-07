@@ -35,6 +35,7 @@ from src.db.models import (
     Birthday,
     CaseStatus,
     GlobalUser,
+    MessageLog,
     ModerationActionRuleCitation,
     ModerationCase,
     ModerationCaseRuleCitation,
@@ -99,6 +100,60 @@ def _make_action_payload(
         server_name=f"server-{server_id}",
     )
 
+
+
+async def _scenario_user_profile_hydrates_membership_dates() -> None:
+    import api.services.moderation_users_service as moderation_users_service
+
+    server_id = _make_discord_id()
+    member_id = _make_discord_id()
+    absent_id = _make_discord_id()
+    joined_at = datetime(2026, 6, 1, 12, 34, 56)
+
+    async def fake_fetch_guild_member(request_server_id: int, request_user_id: int):
+        assert request_server_id == server_id
+        if request_user_id == member_id:
+            return {
+                "joined_at": "2026-06-01T12:34:56.000000+00:00",
+                "nick": "server-nick",
+                "user": {"id": str(member_id), "username": "member-user", "global_name": "Member User"},
+            }
+        if request_user_id == absent_id:
+            return None
+        raise AssertionError(f"unexpected user id {request_user_id}")
+
+    original_fetch_guild_member = moderation_users_service.fetch_guild_member
+    moderation_users_service.fetch_guild_member = fake_fetch_guild_member
+    try:
+        async with get_async_session() as session:
+            session.add(Server(server_id=server_id, server_name="hydration-server", bot_active=True))
+            session.add(GlobalUser(discord_id=member_id, username="old-member"))
+            session.add(GlobalUser(discord_id=absent_id, username="absent-user"))
+            await session.flush()
+            session.add(
+                MessageLog(
+                    message_id=_make_discord_id(),
+                    user_id=absent_id,
+                    channel_id=_make_discord_id(),
+                    content="historical message",
+                    created_at=datetime(2026, 5, 1, 10, 0, 0),
+                    server_id=server_id,
+                )
+            )
+            await session.flush()
+
+            member_profile = await build_user_profile_card(session=session, server_id=server_id, user_id=member_id)
+            assert member_profile.is_member is True
+            assert member_profile.server_nickname == "server-nick"
+            assert member_profile.joined_server_at == joined_at
+            assert member_profile.left_server_at is None
+
+            absent_profile = await build_user_profile_card(session=session, server_id=server_id, user_id=absent_id)
+            assert absent_profile.is_member is False
+            assert absent_profile.left_server_at is not None
+            assert absent_profile.flagged_absent_at == absent_profile.left_server_at
+    finally:
+        moderation_users_service.fetch_guild_member = original_fetch_guild_member
 
 async def _scenario_rule_citations_survive_hard_delete() -> None:
     server_id = _make_discord_id()
@@ -649,6 +704,7 @@ async def _scenario_case_action_rich_links_and_case_badges() -> None:
 
 def test_moderation_refactor_integration():
     async def scenario() -> None:
+        await _scenario_user_profile_hydrates_membership_dates()
         await _scenario_rule_citations_survive_hard_delete()
         await _scenario_monitoring_cross_refs_and_profile_rule_stats()
         await _scenario_case_action_rich_links_and_case_badges()

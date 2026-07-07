@@ -80,6 +80,7 @@ from src.commands.birthdays.show_birthday_list import send_birthday_list
 from src.modules.birthdays_module.hourly_check.check_birthday_redone import check_birthday_new
 from src.modules.birthdays_module.hourly_check.check_roles import check_roles
 from src.modules.birthdays_module.hourly_check.check_time import check_time
+from src.modules.birthdays_module.user_validation.flag_users_who_left import flag_user
 from src.modules.birthdays_module.user_validation.validation_main import main_validation_process
 from src.modules.guild_lifecycle import mark_guild_presence, sync_active_guild_presence
 from src.modules.logs_setup import logger
@@ -680,7 +681,16 @@ async def on_guild_join(guild: discord.Guild):
 
 @client.event
 async def on_member_join(member: discord.Member):
+    async with get_async_session() as session:
+        await check_if_server_exists(member.guild, session)
+        await check_if_user_exists(member, member.guild, session)
+        await session.commit()
     await handle_new_member_restriction(member)
+
+
+@client.event
+async def on_member_remove(member: discord.Member):
+    await flag_user(member.id, member.guild.id)
 
 
 @client.event
