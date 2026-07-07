@@ -45,17 +45,17 @@ class NewDayAgain(discord.ui.Modal):
                 await interaction.response.send_message('Извини, ни в одном месяце не бывает столько дней')
             else:
                 user_id = interaction.user.id
+                await interaction.response.defer(ephemeral=True)
                 status = await basevariables.add_new_day_month(user_id, day, self.month, interaction)
                 if status == 'ok':
-                    await interaction.response.defer(ephemeral=True)
                     month_num = int(self.month)
                     month = calendar.month_name[month_num]
                     view = DropdownTimezones(day, month, client=self.client)
                     view.user = interaction.user
-                    message = await interaction.followup.send('А теперь выбери свой часовой пояс:', view=view, ephemeral=True)
+                    message = await interaction.followup.send('\u0410 \u0442\u0435\u043f\u0435\u0440\u044c \u0432\u044b\u0431\u0435\u0440\u0438 \u0441\u0432\u043e\u0439 \u0447\u0430\u0441\u043e\u0432\u043e\u0439 \u043f\u043e\u044f\u0441:', view=view, ephemeral=True)
                     view.message = message
                 else:
-                    await interaction.channel.send('Извини, что-то пошло не так')
+                    await interaction.followup.send('\u0418\u0437\u0432\u0438\u043d\u0438, \u0447\u0442\u043e-\u0442\u043e \u043f\u043e\u0448\u043b\u043e \u043d\u0435 \u0442\u0430\u043a. \u041f\u043e\u043f\u0440\u043e\u0431\u0443\u0439 \u0435\u0449\u0451 \u0440\u0430\u0437.', ephemeral=True)
         else:
             await interaction.response.send_message('Извини, это не число. Попробуй добавить день рождения командой '
                                                    '/add_my_birthday', ephemeral=True)

@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 from sqlmodel import select
 
 from src.db.database import get_async_session
-from src.db.models import Server, Birthday, VoiceChannel
+from src.db.models import Server, Birthday, VoiceChannel, GlobalUser, User
 from src.modules.logs_setup import logger
 
 load_dotenv(override=True)
@@ -80,11 +80,40 @@ async def update_server_role(interaction, server_id, role_id):
 
 async def add_new_day_month(user_id, day, month, interaction):
     try:
+        day = int(day)
+        month = int(month)
+    except (TypeError, ValueError) as error:
+        logger.exception("Invalid birthday date values for user %s: day=%r month=%r", user_id, day, month)
+        return error
+
+    try:
         async with get_async_session() as session:
-            result = await session.exec(select(Birthday).where(Birthday.user_id == user_id))
-            birthday = result.first()
+            global_user = await session.get(GlobalUser, user_id)
+            if global_user is None:
+                global_user = GlobalUser(
+                    discord_id=user_id,
+                    username=getattr(interaction.user, "global_name", None) or interaction.user.name,
+                )
+                session.add(global_user)
+                await session.flush()
+
+            if interaction.guild is not None:
+                membership = await session.exec(
+                    select(User).where(User.user_id == user_id, User.server_id == interaction.guild.id)
+                )
+                membership = membership.first()
+                if membership is None:
+                    membership = User(
+                        user_id=user_id,
+                        server_id=interaction.guild.id,
+                        nickname=getattr(interaction.user, "global_name", None) or interaction.user.name,
+                        server_nickname=getattr(interaction.user, "display_name", None),
+                        is_member=True,
+                    )
+                    session.add(membership)
+
+            birthday = await session.get(Birthday, user_id)
             if birthday is None:
-                # If for some reason it doesn't exist yet, create it
                 birthday = Birthday(user_id=user_id, day=day, month=month)
                 session.add(birthday)
             else:
@@ -93,14 +122,10 @@ async def add_new_day_month(user_id, day, month, interaction):
                 session.add(birthday)
             await session.commit()
             await session.refresh(birthday)
-            status = 'ok'
-            return status
-    except Exception  as error:
+            return 'ok'
+    except Exception as error:
+        logger.exception("Failed to add birthday day/month for user %s", user_id)
         return error
-        # await interaction.response.send_message(
-        #     'Всё сломалось из-за ошибки "{}"'.format(error.__str__()))
-
-
 async def delete_channel_id(channel_id, server_id):
     async with get_async_session() as session:
         selected_channel = await session.exec(select(VoiceChannel).where(VoiceChannel.channel_id == channel_id and VoiceChannel.server_id == server_id))
