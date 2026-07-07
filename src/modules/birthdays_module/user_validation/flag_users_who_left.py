@@ -47,10 +47,11 @@ async def flag_user(user_id, server_id):
         user = result.first()
 
         if user is None:
-            user = User(user_id=user_id, server_id=server_id, is_member=False, flagged_absent_at=utc_now)
+            user = User(user_id=user_id, server_id=server_id, is_member=False, flagged_absent_at=utc_now, left_server_at=utc_now)
         else:
             user.is_member = False
             user.flagged_absent_at = utc_now
+            user.left_server_at = utc_now
 
         session.add(user)
         await session.commit()

@@ -119,6 +119,8 @@ class UserProfileCardModel(BaseModel):
     display_name: str
     avatar_hash: str | None = None
     joined_discord: datetime | None = None
+    joined_server_at: datetime | None = None
+    left_server_at: datetime | None = None
     is_member: bool
     flagged_absent_at: datetime | None = None
     birthday: UserBirthdayModel | None = None

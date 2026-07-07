@@ -71,6 +71,7 @@ async def get_or_create_user_membership(
     user_id: int,
     username: str | None = None,
     server_nickname: str | None = None,
+    joined_server_at: datetime | None = None,
 ) -> tuple[GlobalUser, User]:
     global_user = await session.get(GlobalUser, user_id)
     if not global_user:
@@ -89,6 +90,8 @@ async def get_or_create_user_membership(
             user_id=user_id,
             server_id=server_id,
             server_nickname=server_nickname,
+            joined_server_at=joined_server_at,
+            left_server_at=None,
             is_member=True,
         )
         session.add(membership)
@@ -96,7 +99,10 @@ async def get_or_create_user_membership(
     else:
         if server_nickname:
             membership.server_nickname = server_nickname
+        if joined_server_at:
+            membership.joined_server_at = joined_server_at
         membership.is_member = True
+        membership.left_server_at = None
         session.add(membership)
 
     return global_user, membership

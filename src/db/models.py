@@ -167,6 +167,8 @@ class User(SQLModel, table=True):
     # Per-server membership. Composite PK (server_id, user_id)
     user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), primary_key=True))
     server_nickname: Optional[str] = None
+    joined_server_at: Optional[datetime] = None
+    left_server_at: Optional[datetime] = None
     flagged_absent_at: Optional[datetime] = None
     is_member: bool = True
 

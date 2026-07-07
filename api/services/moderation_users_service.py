@@ -258,6 +258,8 @@ async def build_user_profile_card(
         display_name=display_name,
         avatar_hash=global_user.avatar_hash,
         joined_discord=global_user.joined_discord,
+        joined_server_at=membership.joined_server_at if membership else None,
+        left_server_at=(membership.left_server_at or membership.flagged_absent_at) if membership else None,
         is_member=membership.is_member if membership else False,
         flagged_absent_at=membership.flagged_absent_at if membership else None,
         birthday=(

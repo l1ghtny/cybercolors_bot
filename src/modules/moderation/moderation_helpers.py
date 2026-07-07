@@ -19,6 +19,19 @@ from src.db.models import (
 )
 
 
+def _as_naive_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
+def _member_joined_server_at(user: d.Member | d.User) -> datetime | None:
+    if not isinstance(user, d.Member):
+        return None
+    return _as_naive_utc(getattr(user, "joined_at", None))
+
 async def ensure_message_foreign_keys(message: d.Message, session: AsyncSession) -> None:
     """
     Ensure FK dependencies for message_log exist in the same transaction as claim insert.
@@ -83,7 +96,7 @@ async def check_if_user_exists(user: d.Member | d.User, server: d.Guild, session
     display_avatar = getattr(user, "display_avatar", None)
     avatar_url = str(display_avatar.url) if display_avatar else None
     joined_discord = getattr(user, "created_at", None) or getattr(user, "joined_at", None)
-
+    joined_server_at = _member_joined_server_at(user)
     if not user_in_db:
         new_user = GlobalUser(
             discord_id=user.id,
@@ -108,7 +121,7 @@ async def check_if_user_exists(user: d.Member | d.User, server: d.Guild, session
     if isinstance(user, d.Member):
         is_member_of_server = any(m.server_id == server.id for m in user_in_db.memberships)
         if not is_member_of_server:
-            await add_user_to_current_server(user_in_db, server, user.nick, session)
+            await add_user_to_current_server(user_in_db, server, user.nick, joined_server_at, session)
         else:
             membership = next(m for m in user_in_db.memberships if m.server_id == server.id)
             changed = False
@@ -118,6 +131,12 @@ async def check_if_user_exists(user: d.Member | d.User, server: d.Guild, session
             if not membership.is_member:
                 membership.is_member = True
                 changed = True
+            if membership.left_server_at is not None:
+                membership.left_server_at = None
+                changed = True
+            if joined_server_at is not None and membership.joined_server_at != joined_server_at:
+                membership.joined_server_at = joined_server_at
+                changed = True
             if changed:
                 session.add(membership)
 
@@ -126,6 +145,7 @@ async def add_user_to_current_server(
     user: GlobalUser,
     server: d.Guild,
     server_nickname: str | None,
+    joined_server_at: datetime | None,
     session: AsyncSession,
 ):
     """Adds a server membership link for a global user. Uses the provided session."""
@@ -134,6 +154,8 @@ async def add_user_to_current_server(
             user_id=user.discord_id,
             server_id=server.id,
             server_nickname=server_nickname,
+            joined_server_at=joined_server_at,
+            left_server_at=None,
             is_member=True,
         )
     )

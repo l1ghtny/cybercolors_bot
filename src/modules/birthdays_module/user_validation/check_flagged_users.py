@@ -47,6 +47,7 @@ async def remove_flag_user(user_id, server_id):
             return
         user_updated.is_member = True
         user_updated.flagged_absent_at = None
+        user_updated.left_server_at = None
         session.add(user_updated)
         await session.commit()
         await session.refresh(user_updated)

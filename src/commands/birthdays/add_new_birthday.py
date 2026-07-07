@@ -1,5 +1,6 @@
 import discord
 from sqlalchemy.orm import selectinload
+from datetime import datetime, timezone
 from sqlmodel import select
 
 from src.db.database import get_async_session
@@ -7,6 +8,14 @@ from src.db.models import User, Birthday, GlobalUser
 from src.views.birthday.change_date import UserAlreadyExists
 from src.views.birthday.timezones import DropdownTimezones
 
+
+def _interaction_joined_server_at(interaction) -> datetime | None:
+    joined_at = getattr(interaction.user, "joined_at", None)
+    if joined_at is None:
+        return None
+    if getattr(joined_at, "tzinfo", None) is not None:
+        return joined_at.astimezone(timezone.utc).replace(tzinfo=None)
+    return joined_at
 
 def _birthday_date_error(month_value: str, day: int) -> str | None:
     if month_value == '02' and day > 28:
@@ -42,14 +51,24 @@ async def change_birthday(client, interaction, month, day):
             membership_q = select(User).where(User.user_id == user_id, User.server_id == server_id)
             membership_res = await session.exec(membership_q)
             membership = membership_res.first()
+            joined_server_at = _interaction_joined_server_at(interaction)
             if membership is None:
                 membership = User(
                     user_id=user_id,
                     server_id=server_id,
                     nickname=interaction.user.global_name,
                     server_nickname=interaction.user.display_name,
+                    joined_server_at=joined_server_at,
+                    left_server_at=None,
                     is_member=True,
                 )
+                session.add(membership)
+            else:
+                membership.server_nickname = interaction.user.display_name
+                if joined_server_at is not None and membership.joined_server_at is None:
+                    membership.joined_server_at = joined_server_at
+                membership.is_member = True
+                membership.left_server_at = None
                 session.add(membership)
 
             if gu.birthday is None:
@@ -105,8 +124,16 @@ async def add_birthday(client, interaction, month, day):
                 membership_q = select(User).where(User.user_id == user_id, User.server_id == server_id)
                 membership_res = await session.exec(membership_q)
                 membership = membership_res.first()
+                joined_server_at = _interaction_joined_server_at(interaction)
                 if membership is None:
-                    membership = User(user_id=user_id, server_id=server_id, nickname=interaction.user.global_name, server_nickname=interaction.user.display_name, is_member=True)
+                    membership = User(user_id=user_id, server_id=server_id, nickname=interaction.user.global_name, server_nickname=interaction.user.display_name, joined_server_at=joined_server_at, left_server_at=None, is_member=True)
+                    session.add(membership)
+                else:
+                    membership.server_nickname = interaction.user.display_name
+                    if joined_server_at is not None and membership.joined_server_at is None:
+                        membership.joined_server_at = joined_server_at
+                    membership.is_member = True
+                    membership.left_server_at = None
                     session.add(membership)
 
                 # Handle birthday
