@@ -72,6 +72,9 @@ async def to_server_temp_voice_read_model(
         archive_post_mode=settings.archive_post_mode,
         channel_name_template=settings.channel_name_template,
         owner_manage_channel_enabled=settings.owner_manage_channel_enabled,
+        owner_rename_enabled=settings.owner_rename_enabled,
+        owner_user_limit_enabled=settings.owner_user_limit_enabled,
+        owner_control_allowed_role_ids=settings.owner_control_allowed_role_ids or [],
         updated_at=settings.updated_at,
     )
 
@@ -97,6 +100,12 @@ async def update_server_temp_voice_settings(
         settings.channel_name_template = body.channel_name_template
     if body.owner_manage_channel_enabled is not None:
         settings.owner_manage_channel_enabled = body.owner_manage_channel_enabled
+    if body.owner_rename_enabled is not None:
+        settings.owner_rename_enabled = body.owner_rename_enabled
+    if body.owner_user_limit_enabled is not None:
+        settings.owner_user_limit_enabled = body.owner_user_limit_enabled
+    if body.owner_control_allowed_role_ids is not None:
+        settings.owner_control_allowed_role_ids = body.owner_control_allowed_role_ids
     settings.updated_at = naive_utcnow()
     session.add(settings)
     await session.flush()

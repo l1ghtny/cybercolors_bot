@@ -36,6 +36,17 @@ def _safe_channel_name(template: str, member: discord.Member) -> str:
     return (channel_name or f"{display_name}'s channel")[:100]
 
 
+def temp_voice_owner_has_allowed_role(member: discord.Member, settings: ServerTempVoiceSettings) -> bool:
+    allowed_role_ids = {str(role_id) for role_id in (settings.owner_control_allowed_role_ids or []) if str(role_id).strip()}
+    if not allowed_role_ids:
+        return True
+    return any(str(role.id) in allowed_role_ids for role in getattr(member, "roles", []))
+
+
+def temp_voice_owner_can_receive_native_manage(member: discord.Member, settings: ServerTempVoiceSettings) -> bool:
+    return settings.owner_manage_channel_enabled and temp_voice_owner_has_allowed_role(member, settings)
+
+
 async def _active_voice_channel(session, server_id: int, channel_id: int) -> VoiceChannel | None:
     return await session.get(VoiceChannel, (server_id, channel_id))
 
@@ -99,7 +110,7 @@ async def _create_temp_channel(member: discord.Member, after: discord.VoiceState
             name=channel_name,
             reason=f"Temporary voice channel for {member} ({member.id})",
         )
-        if settings.owner_manage_channel_enabled:
+        if temp_voice_owner_can_receive_native_manage(member, settings):
             await _grant_owner_permissions(temp_channel, member)
         await member.move_to(temp_channel)
     except (discord.Forbidden, discord.HTTPException) as error:

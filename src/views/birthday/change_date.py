@@ -2,10 +2,8 @@ import calendar
 
 import discord
 import discord.ui
-from sqlmodel import select
-
 from src.db.database import get_async_session
-from src.db.models import Birthday, User
+from src.db.models import Birthday
 from src.misc_files import basevariables
 from src.views.birthday.timezones import DropdownTimezones
 
@@ -137,10 +135,10 @@ class UserAlreadyExists(discord.ui.View):
         if interaction.user == self.user:
             await self.disable_all_items()
             async with get_async_session() as session:
-                user = await session.exec(select(Birthday).join(User).where(User.user_id == interaction.user.id and User.server_id == interaction.guild.id))
-                user = user.first()
-                await session.delete(user)
-                await session.commit()
+                birthday = await session.get(Birthday, interaction.user.id)
+                if birthday is not None:
+                    await session.delete(birthday)
+                    await session.commit()
             embed = discord.Embed(title='Твой день рождения удален. Что хочешь сделать дальше?')
             view = ChangeBirthday(client=self.client)
             await interaction.response.send_message(embed=embed, view=view, ephemeral=True)

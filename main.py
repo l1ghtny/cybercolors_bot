@@ -11,6 +11,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.commands.misc.cats import cat_command, cat_command_text
+from src.commands.temp_voice import temp_voice_limit, temp_voice_rename
 from src.commands.moderation.security import (
     security_create_newcomer_role,
     security_newcomer_role_suggestion,
@@ -74,7 +75,7 @@ from src.modules.moderation.moderation_helpers import (
 )
 from src.db.models import Server, Replies, Triggers, GlobalUser, ModerationRule
 from src.modules.birthdays_module.user_validation.user_validate_time import users_time
-from src.commands.birthdays.add_new_birthday import add_birthday
+from src.commands.birthdays.add_new_birthday import add_birthday, change_birthday
 from src.commands.birthdays.show_birthday_list import send_birthday_list
 from src.modules.birthdays_module.hourly_check.check_birthday_redone import check_birthday_new
 from src.modules.birthdays_module.hourly_check.check_roles import check_roles
@@ -247,6 +248,10 @@ moderation_actions_group = app_commands.Group(
     parent=moderation_group,
 )
 
+temp_voice_group = app_commands.Group(
+    name="tempvoice",
+    description="Temporary voice channel controls",
+)
 moderation_group.add_command(warn)
 moderation_group.add_command(mute)
 moderation_group.add_command(unmute)
@@ -295,7 +300,11 @@ moderation_actions_group.add_command(actions_list)
 moderation_actions_group.add_command(action_manage)
 moderation_actions_group.add_command(action_revert)
 
+temp_voice_group.add_command(temp_voice_rename)
+temp_voice_group.add_command(temp_voice_limit)
+
 tree.add_command(moderation_group)
+tree.add_command(temp_voice_group)
 tree.add_command(rules_import_from_message_ctx)
 
 
@@ -319,6 +328,26 @@ tree.add_command(rules_import_from_message_ctx)
 )
 async def add_my_birthday(interaction: discord.Interaction, day: int, month: app_commands.Choice[str]):
     await add_birthday(client, interaction, month, day)
+
+@tree.command(name='change_birthday', description='Измени свой день рождения')
+@app_commands.choices(
+    month=[
+        app_commands.Choice(name='Январь', value='01'),
+        app_commands.Choice(name='Февраль', value='02'),
+        app_commands.Choice(name='Март', value='03'),
+        app_commands.Choice(name='Апрель', value='04'),
+        app_commands.Choice(name='Май', value='05'),
+        app_commands.Choice(name='Июнь', value='06'),
+        app_commands.Choice(name='Июль', value='07'),
+        app_commands.Choice(name='Август', value='08'),
+        app_commands.Choice(name='Сентябрь', value='09'),
+        app_commands.Choice(name='Октябрь', value='10'),
+        app_commands.Choice(name='Ноябрь', value='11'),
+        app_commands.Choice(name='Декабрь', value='12'),
+    ]
+)
+async def change_birthday_command(interaction: discord.Interaction, day: int, month: app_commands.Choice[str]):
+    await change_birthday(client, interaction, month, day)
 
 
 # TODO:

@@ -255,6 +255,9 @@ class ServerTempVoiceSettings(SQLModel, table=True):
     archive_post_mode: str = Field(default="mod_log_fallback", nullable=False, max_length=30)
     channel_name_template: str = Field(default="{display_name}'s channel", nullable=False, max_length=100)
     owner_manage_channel_enabled: bool = Field(default=True, nullable=False)
+    owner_rename_enabled: bool = Field(default=False, nullable=False)
+    owner_user_limit_enabled: bool = Field(default=False, nullable=False)
+    owner_control_allowed_role_ids: list[str] = Field(default_factory=list, sa_column=Column(sa.JSON, nullable=False))
     updated_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
 
     server: Server = Relationship(back_populates="temp_voice_settings")

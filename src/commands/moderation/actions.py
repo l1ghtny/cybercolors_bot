@@ -23,7 +23,7 @@ from src.modules.moderation.bot_services import (
     build_action_payload,
     build_message_cleanup_request,
     fetch_active_rule_models,
-    fetch_open_case_models,
+    fetch_case_autocomplete_models,
     find_rule,
     message_cleanup_receipt_lines,
     resolve_case_id_for_action,
@@ -523,7 +523,7 @@ async def action_case_autocomplete(interaction: discord.Interaction, current: st
     target_id = getattr(target, "id", None)
     try:
         async with get_async_session() as session:
-            cases = await fetch_open_case_models(session=session, server_id=interaction.guild_id, user_id=target_id)
+            cases = await fetch_case_autocomplete_models(session=session, server_id=interaction.guild_id, user_id=target_id)
     except Exception:
         return []
     return case_choices(cases, current)

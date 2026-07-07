@@ -12,7 +12,7 @@ from src.modules.moderation.bot_services import (
     case_choices,
     create_bot_moderation_action,
     fetch_active_rule_models,
-    fetch_open_case_models,
+    fetch_case_autocomplete_models,
     find_rule,
     message_cleanup_receipt_lines,
     resolve_case_id_for_action,
@@ -174,7 +174,7 @@ async def warn_case_autocomplete(interaction: discord.Interaction, current: str)
     target_id = getattr(target, "id", None)
     try:
         async with get_async_session() as session:
-            cases = await fetch_open_case_models(
+            cases = await fetch_case_autocomplete_models(
                 session=session,
                 server_id=interaction.guild_id,
                 user_id=target_id,

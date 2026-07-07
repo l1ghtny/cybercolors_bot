@@ -212,6 +212,31 @@ async def fetch_open_case_models(
     )
 
 
+async def fetch_case_autocomplete_models(
+    session: AsyncSession,
+    server_id: int,
+    user_id: int | None = None,
+    limit: int = 20,
+) -> list[ModerationCaseSummaryModel]:
+    cases = await fetch_open_case_models(
+        session=session,
+        server_id=server_id,
+        user_id=user_id,
+        limit=limit,
+    )
+    if user_id is None or len(cases) >= limit:
+        return cases[:limit]
+
+    fallback = await fetch_open_case_models(
+        session=session,
+        server_id=server_id,
+        user_id=None,
+        limit=limit,
+    )
+    seen = {case.id for case in cases}
+    cases.extend(case for case in fallback if case.id not in seen)
+    return cases[:limit]
+
 def case_label(case: ModerationCaseSummaryModel) -> str:
     target = case.target_user.display_name or case.target_user.user_id
     return f"#{case.id[:8]} {case.title} ({target})"

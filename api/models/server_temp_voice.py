@@ -26,6 +26,9 @@ class ServerTempVoiceSettingsReadModel(BaseModel):
     archive_post_mode: str
     channel_name_template: str
     owner_manage_channel_enabled: bool
+    owner_rename_enabled: bool
+    owner_user_limit_enabled: bool
+    owner_control_allowed_role_ids: list[str] = Field(default_factory=list)
     updated_at: datetime
     permissions: ServerTempVoicePermissionsModel = Field(default_factory=ServerTempVoicePermissionsModel)
 
@@ -37,6 +40,27 @@ class ServerTempVoiceSettingsUpdateModel(BaseModel):
     archive_post_mode: str | None = None
     channel_name_template: str | None = Field(default=None, min_length=1, max_length=100)
     owner_manage_channel_enabled: bool | None = None
+    owner_rename_enabled: bool | None = None
+    owner_user_limit_enabled: bool | None = None
+    owner_control_allowed_role_ids: list[str] | None = None
+
+    @field_validator("owner_control_allowed_role_ids")
+    @classmethod
+    def validate_owner_control_allowed_role_ids(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            role_id = str(item).strip()
+            if not role_id:
+                continue
+            if not role_id.isdigit():
+                raise ValueError("owner_control_allowed_role_ids must contain Discord role IDs")
+            if role_id not in seen:
+                cleaned.append(role_id)
+                seen.add(role_id)
+        return cleaned
 
     @field_validator("archive_post_mode")
     @classmethod

@@ -86,6 +86,34 @@ DELETE_MESSAGE_CHANNEL_PARAM = _param(
 
 BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
     BotCommandDocModel(
+        id="tempvoice.rename",
+        name="rename",
+        qualified_name="tempvoice rename",
+        invoke="/tempvoice rename",
+        category="temp-voice",
+        summary="Rename your owned temporary voice channel when server settings allow it.",
+        parameters=[_param("name", "string", "New temporary voice channel name, from 1 to 100 characters.")],
+        workflow=[
+            "Requires the caller to be in an active temporary voice channel they created.",
+            "Checks the server's owner rename setting and optional owner-control role gate.",
+            "Renames the Discord voice channel and updates the stored active channel/archive name.",
+        ],
+    ),
+    BotCommandDocModel(
+        id="tempvoice.limit",
+        name="limit",
+        qualified_name="tempvoice limit",
+        invoke="/tempvoice limit",
+        category="temp-voice",
+        summary="Set the user limit on your owned temporary voice channel.",
+        parameters=[_param("limit", "integer", "User limit from 0 to 99; 0 means unlimited.")],
+        workflow=[
+            "Requires the caller to be in an active temporary voice channel they created.",
+            "Checks the server's owner user-limit setting and optional owner-control role gate.",
+            "Updates the Discord voice channel user limit through the bot.",
+        ],
+    ),
+    BotCommandDocModel(
         id="mod.warn",
         name="warn",
         qualified_name="mod warn",
@@ -733,6 +761,20 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         workflow=["Passes the selected day/month to the birthday module for validation and storage."],
     ),
     BotCommandDocModel(
+        id="change_birthday",
+        name="change_birthday",
+        qualified_name="change_birthday",
+        invoke="/change_birthday",
+        category="birthdays",
+        summary="Change your saved birthday and confirm the timezone again.",
+        parameters=[
+            _param("day", "integer", "Day of month."),
+            _param("month", "choice", "Month.", choices=[_choice(str(month).zfill(2), str(month).zfill(2)) for month in range(1, 13)]),
+        ],
+        components=[_component("choices", "month", "Twelve month choices.")],
+        workflow=["Updates the saved birthday date, then prompts the user to confirm their timezone."],
+    ),
+    BotCommandDocModel(
         id="birthdays_settings",
         name="birthdays_settings",
         qualified_name="birthdays_settings",
@@ -1202,6 +1244,10 @@ RU_COMMAND_TEXT: dict[str, dict[str, list[str] | str]] = {
     "add_my_birthday": {
         "summary": "Добавить свой день рождения в список сервера.",
         "workflow": ["Передает выбранные день и месяц в модуль дней рождения для проверки и сохранения."],
+    },
+    "change_birthday": {
+        "summary": "Изменить сохраненный день рождения и снова подтвердить часовой пояс.",
+        "workflow": ["Обновляет сохраненную дату дня рождения и предлагает пользователю подтвердить часовой пояс."],
     },
     "birthdays_settings": {
         "summary": "Настроить канал дней рождения и роль именинника через Discord UI.",

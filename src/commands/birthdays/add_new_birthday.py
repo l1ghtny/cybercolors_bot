@@ -8,6 +8,65 @@ from src.views.birthday.change_date import UserAlreadyExists
 from src.views.birthday.timezones import DropdownTimezones
 
 
+def _birthday_date_error(month_value: str, day: int) -> str | None:
+    if month_value == '02' and day > 28:
+        return 'Извини, в Феврале не бывает больше 28 дней (Я знаю, что бывает 29, но пока бот не умеет его корректно проверять)'
+    if month_value in {'04', '06', '09', '11'} and day > 30:
+        return 'Извини, такой даты не существует'
+    if day > 31:
+        return 'Извини, такой даты не существует'
+    return None
+
+
+async def change_birthday(client, interaction, month, day):
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    user_id = interaction.user.id
+    server_id = interaction.guild.id
+    day = int(day)
+    error_message = _birthday_date_error(month.value, day)
+    if error_message:
+        await interaction.followup.send(error_message)
+        return
+
+    try:
+        async with get_async_session() as session:
+            query = select(GlobalUser).where(GlobalUser.discord_id == user_id).options(selectinload(GlobalUser.birthday))
+            result = await session.exec(query)
+            gu = result.first()
+
+            if gu is None:
+                gu = GlobalUser(discord_id=user_id, username=interaction.user.global_name)
+                session.add(gu)
+                await session.flush()
+
+            membership_q = select(User).where(User.user_id == user_id, User.server_id == server_id)
+            membership_res = await session.exec(membership_q)
+            membership = membership_res.first()
+            if membership is None:
+                membership = User(
+                    user_id=user_id,
+                    server_id=server_id,
+                    nickname=interaction.user.global_name,
+                    server_nickname=interaction.user.display_name,
+                    is_member=True,
+                )
+                session.add(membership)
+
+            if gu.birthday is None:
+                gu.birthday = Birthday(user_id=user_id, day=day, month=int(month.value), timezone=None)
+                session.add(gu)
+            else:
+                gu.birthday.day = day
+                gu.birthday.month = int(month.value)
+                session.add(gu.birthday)
+
+            await session.commit()
+        await added_birthday_send_reply(interaction, client, month, day)
+    except Exception as error:
+        await interaction.followup.send(
+            'Сервер ещё не настроен или что-то пошло не так. Напишите админу сервера или создателю бота')
+        raise Exception(error)
+
 async def add_birthday(client, interaction, month, day):
     await interaction.response.defer(thinking=True, ephemeral=True)
     if month.value == '02' and day > 28:
