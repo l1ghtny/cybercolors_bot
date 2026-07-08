@@ -5,6 +5,7 @@ metadata:
   namespace: cybercolors
 spec:
   replicas: 1
+  progressDeadlineSeconds: 3600
   revisionHistoryLimit: 3
   selector:
     matchLabels:
@@ -32,7 +33,7 @@ spec:
       containers:
         - name: worker
           image: localhost:32000/cybercolors-indexer:latest
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           command: ["python", "scripts/run_ai_knowledge_worker.py"]
           envFrom:
             - configMapRef:
