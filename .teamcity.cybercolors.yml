@@ -18,9 +18,14 @@ jobs:
           IMAGE="$PUSH_REGISTRY/cybercolors-backend"
           TAG="%build.number%"
 
+          cd cybercolors_bot
           docker build -f docker/Dockerfile -t "$IMAGE:$TAG" -t "$IMAGE:latest" .
           docker push "$IMAGE:$TAG"
           docker push "$IMAGE:latest"
+    repositories:
+      - main:
+          path: cybercolors_bot
+          enabled: true
 
   build_indexer:
     name: 2. Build Indexer Image
@@ -41,9 +46,14 @@ jobs:
           IMAGE="$PUSH_REGISTRY/cybercolors-indexer"
           TAG="%build.number%"
 
+          cd cybercolors_bot
           docker build -f docker/Dockerfile.indexer -t "$IMAGE:$TAG" -t "$IMAGE:latest" .
           docker push "$IMAGE:$TAG"
           docker push "$IMAGE:latest"
+    repositories:
+      - main:
+          path: cybercolors_bot
+          enabled: true
 
   build_frontend:
     name: 3. Build Frontend Image
@@ -63,8 +73,6 @@ jobs:
 
           IMAGE="$PUSH_REGISTRY/cybercolors-frontend"
           TAG="%build.number%"
-
-          cd bot-command-center
 
           cat > Dockerfile <<'DOCKERFILE'
           FROM node:22-alpine AS build
