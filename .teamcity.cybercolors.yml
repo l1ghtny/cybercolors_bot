@@ -18,14 +18,15 @@ jobs:
           IMAGE="$PUSH_REGISTRY/cybercolors-backend"
           TAG="%build.number%"
 
+          rm -rf cybercolors_bot
+          git clone --depth 1 --branch master https://github.com/l1ghtny/cybercolors_bot.git cybercolors_bot
           cd cybercolors_bot
           docker build -f docker/Dockerfile -t "$IMAGE:$TAG" -t "$IMAGE:latest" .
           docker push "$IMAGE:$TAG"
           docker push "$IMAGE:latest"
     repositories:
       - main:
-          path: cybercolors_bot
-          enabled: true
+          enabled: false
 
   build_indexer:
     name: 2. Build Indexer Image
@@ -46,14 +47,15 @@ jobs:
           IMAGE="$PUSH_REGISTRY/cybercolors-indexer"
           TAG="%build.number%"
 
+          rm -rf cybercolors_bot
+          git clone --depth 1 --branch master https://github.com/l1ghtny/cybercolors_bot.git cybercolors_bot
           cd cybercolors_bot
           docker build -f docker/Dockerfile.indexer -t "$IMAGE:$TAG" -t "$IMAGE:latest" .
           docker push "$IMAGE:$TAG"
           docker push "$IMAGE:latest"
     repositories:
       - main:
-          path: cybercolors_bot
-          enabled: true
+          enabled: false
 
   build_frontend:
     name: 3. Build Frontend Image
@@ -223,7 +225,10 @@ jobs:
           FRONTEND_TAG="%dep.build_frontend.build.number%"
           INDEXER_TAG="%dep.build_indexer.build.number%"
 
-          kubectl apply -f deploy/argocd/cybercolors-application.yaml
+          rm -rf cybercolors_bot
+          git clone --depth 1 --branch master https://github.com/l1ghtny/cybercolors_bot.git cybercolors_bot
+
+          kubectl apply -f cybercolors_bot/deploy/argocd/cybercolors-application.yaml
           kubectl -n argocd patch application cybercolors --type merge -p "{\"spec\":{\"source\":{\"kustomize\":{\"images\":[\"localhost:32000/cybercolors-backend:$BACKEND_TAG\",\"localhost:32000/cybercolors-frontend:$FRONTEND_TAG\",\"localhost:32000/cybercolors-indexer:$INDEXER_TAG\"]}}}}"
           kubectl -n argocd annotate application cybercolors argocd.argoproj.io/refresh=hard --overwrite
 
