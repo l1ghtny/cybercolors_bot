@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cybercolors
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: cybercolors
+    app.kubernetes.io/part-of: cybercolors
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/l1ghtny/cybercolors_bot.git
+    targetRevision: master
+    path: deploy/k8s/cybercolors
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cybercolors
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

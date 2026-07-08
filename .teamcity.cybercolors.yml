@@ -1,0 +1,242 @@
+jobs:
+  build_backend:
+    name: 1. Build Backend Image
+    runs-on: self-hosted
+    steps:
+      - type: script
+        name: Docker build and push backend
+        script-content: |-
+          #!/bin/bash
+          set -euo pipefail
+
+          if [ -n "${DOCKER_HOST:-}" ]; then
+            PUSH_REGISTRY="registry.container-registry.svc.cluster.local:5000"
+          else
+            PUSH_REGISTRY="localhost:32000"
+          fi
+
+          IMAGE="$PUSH_REGISTRY/cybercolors-backend"
+          TAG="%build.number%"
+
+          docker build -f docker/Dockerfile -t "$IMAGE:$TAG" -t "$IMAGE:latest" .
+          docker push "$IMAGE:$TAG"
+          docker push "$IMAGE:latest"
+
+  build_indexer:
+    name: 2. Build Indexer Image
+    runs-on: self-hosted
+    steps:
+      - type: script
+        name: Docker build and push indexer
+        script-content: |-
+          #!/bin/bash
+          set -euo pipefail
+
+          if [ -n "${DOCKER_HOST:-}" ]; then
+            PUSH_REGISTRY="registry.container-registry.svc.cluster.local:5000"
+          else
+            PUSH_REGISTRY="localhost:32000"
+          fi
+
+          IMAGE="$PUSH_REGISTRY/cybercolors-indexer"
+          TAG="%build.number%"
+
+          docker build -f docker/Dockerfile.indexer -t "$IMAGE:$TAG" -t "$IMAGE:latest" .
+          docker push "$IMAGE:$TAG"
+          docker push "$IMAGE:latest"
+
+  build_frontend:
+    name: 3. Build Frontend Image
+    runs-on: self-hosted
+    steps:
+      - type: script
+        name: Docker build and push frontend
+        script-content: |-
+          #!/bin/bash
+          set -euo pipefail
+
+          if [ -n "${DOCKER_HOST:-}" ]; then
+            PUSH_REGISTRY="registry.container-registry.svc.cluster.local:5000"
+          else
+            PUSH_REGISTRY="localhost:32000"
+          fi
+
+          IMAGE="$PUSH_REGISTRY/cybercolors-frontend"
+          TAG="%build.number%"
+
+          cd bot-command-center
+
+          cat > Dockerfile <<'DOCKERFILE'
+          FROM node:22-alpine AS build
+          WORKDIR /app
+          COPY package*.json ./
+          RUN npm ci
+          COPY . .
+          RUN npm run build
+
+          FROM nginx:1.27-alpine
+          COPY --from=build /app/dist /usr/share/nginx/html
+          RUN cat > /etc/nginx/conf.d/default.conf <<'NGINX'
+          server {
+            listen 80;
+            server_name _;
+            root /usr/share/nginx/html;
+            index index.html;
+
+            location / {
+              try_files $uri $uri/ /index.html;
+            }
+          }
+          NGINX
+          DOCKERFILE
+
+          docker build -t "$IMAGE:$TAG" -t "$IMAGE:latest" .
+          docker push "$IMAGE:$TAG"
+          docker push "$IMAGE:latest"
+    repositories:
+      - CyberColors_FrontendGit:
+          path: bot-command-center
+          enabled: true
+
+  run_migrations:
+    name: 4. Run Alembic Migrations
+    runs-on: self-hosted
+    dependencies:
+      - build_backend
+    steps:
+      - type: script
+        name: Run migration job in Kubernetes
+        script-content: |-
+          #!/bin/bash
+          set -euo pipefail
+
+          ensure_kubectl() {
+            if command -v kubectl >/dev/null 2>&1; then
+              return
+            fi
+            BIN_DIR="${HOME:-/tmp}/.local/bin"
+            mkdir -p "$BIN_DIR"
+            curl -fsSLo "$BIN_DIR/kubectl" "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+            chmod +x "$BIN_DIR/kubectl"
+            export PATH="$BIN_DIR:$PATH"
+          }
+
+          ensure_kubectl
+
+          BACKEND_TAG="%dep.build_backend.build.number%"
+          JOB_NAME="cybercolors-migration-$BACKEND_TAG"
+
+          kubectl -n cybercolors delete job "$JOB_NAME" --ignore-not-found=true
+          cat <<YAML | kubectl apply -f -
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: $JOB_NAME
+            namespace: cybercolors
+          spec:
+            backoffLimit: 1
+            template:
+              spec:
+                restartPolicy: Never
+                containers:
+                  - name: migration
+                    image: localhost:32000/cybercolors-backend:$BACKEND_TAG
+                    imagePullPolicy: Always
+                    command: ["alembic", "upgrade", "head"]
+                    envFrom:
+                      - configMapRef:
+                          name: cybercolors-config
+                      - secretRef:
+                          name: cybercolors-app-secrets
+                          optional: true
+                    env:
+                      - name: DB_USER
+                        valueFrom:
+                          secretKeyRef:
+                            name: cybercolors-db-pguser-backend
+                            key: user
+                      - name: DB_PASSWORD
+                        valueFrom:
+                          secretKeyRef:
+                            name: cybercolors-db-pguser-backend
+                            key: password
+          YAML
+
+          for i in $(seq 1 60); do
+            POD_NAME="$(kubectl -n cybercolors get pods -l "job-name=$JOB_NAME" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+            if [ -n "$POD_NAME" ]; then
+              break
+            fi
+            sleep 1
+          done
+
+          if ! kubectl -n cybercolors wait --for=condition=complete "job.batch/$JOB_NAME" --timeout=600s; then
+            kubectl -n cybercolors describe "job.batch/$JOB_NAME" || true
+            kubectl -n cybercolors get pods -l "job-name=$JOB_NAME" -o wide || true
+            kubectl -n cybercolors logs -l "job-name=$JOB_NAME" --all-containers=true --tail=200 || true
+            exit 1
+          fi
+
+          kubectl -n cybercolors logs -l "job-name=$JOB_NAME" --all-containers=true --tail=200 || true
+
+  deploy:
+    name: 5. Deploy with Argo CD
+    runs-on: self-hosted
+    dependencies:
+      - build_frontend
+      - build_indexer
+      - run_migrations
+    steps:
+      - type: script
+        name: Patch Argo image tags and verify workloads
+        script-content: |-
+          #!/bin/bash
+          set -euo pipefail
+
+          ensure_kubectl_tools() {
+            BIN_DIR="${HOME:-/tmp}/.local/bin"
+            mkdir -p "$BIN_DIR"
+            export PATH="$BIN_DIR:$PATH"
+
+            if ! command -v kubectl >/dev/null 2>&1; then
+              curl -fsSLo "$BIN_DIR/kubectl" "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+              chmod +x "$BIN_DIR/kubectl"
+            fi
+
+            if ! kubectl argo rollouts version >/dev/null 2>&1; then
+              curl -fsSLo "$BIN_DIR/kubectl-argo-rollouts" "https://github.com/argoproj/argo-rollouts/releases/latest/download/kubectl-argo-rollouts-linux-amd64"
+              chmod +x "$BIN_DIR/kubectl-argo-rollouts"
+            fi
+          }
+
+          ensure_kubectl_tools
+
+          BACKEND_TAG="%dep.build_backend.build.number%"
+          FRONTEND_TAG="%dep.build_frontend.build.number%"
+          INDEXER_TAG="%dep.build_indexer.build.number%"
+
+          kubectl apply -f deploy/argocd/cybercolors-application.yaml
+          kubectl -n argocd patch application cybercolors --type merge -p "{\"spec\":{\"source\":{\"kustomize\":{\"images\":[\"localhost:32000/cybercolors-backend:$BACKEND_TAG\",\"localhost:32000/cybercolors-frontend:$FRONTEND_TAG\",\"localhost:32000/cybercolors-indexer:$INDEXER_TAG\"]}}}}"
+          kubectl -n argocd annotate application cybercolors argocd.argoproj.io/refresh=hard --overwrite
+
+          for i in $(seq 1 90); do
+            if kubectl -n cybercolors get rollout cybercolors-backend >/dev/null 2>&1 && \
+               kubectl -n cybercolors get rollout cybercolors-frontend >/dev/null 2>&1 && \
+               kubectl -n cybercolors get deployment cybercolors-bot >/dev/null 2>&1 && \
+               kubectl -n cybercolors get deployment cybercolors-indexer-worker >/dev/null 2>&1 && \
+               kubectl -n cybercolors get deployment cybercolors-newcomer-release-worker >/dev/null 2>&1; then
+              break
+            fi
+            sleep 5
+          done
+
+          kubectl -n cybercolors set image deployment/cybercolors-bot bot="localhost:32000/cybercolors-backend:$BACKEND_TAG"
+          kubectl -n cybercolors set image deployment/cybercolors-newcomer-release-worker worker="localhost:32000/cybercolors-backend:$BACKEND_TAG"
+          kubectl -n cybercolors set image deployment/cybercolors-indexer-worker worker="localhost:32000/cybercolors-indexer:$INDEXER_TAG"
+          kubectl -n cybercolors rollout status deployment/cybercolors-bot --timeout=300s
+          kubectl -n cybercolors rollout status deployment/cybercolors-newcomer-release-worker --timeout=300s
+          kubectl -n cybercolors rollout status deployment/cybercolors-indexer-worker --timeout=300s
+
+          kubectl argo rollouts get rollout cybercolors-backend -n cybercolors
+          kubectl argo rollouts get rollout cybercolors-frontend -n cybercolors
+          kubectl -n cybercolors get pods -o wide
