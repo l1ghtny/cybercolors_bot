@@ -45,11 +45,31 @@ jobs:
           fi
 
           IMAGE="$PUSH_REGISTRY/cybercolors-indexer"
-          TAG="%build.number%"
 
           rm -rf cybercolors_bot
           git clone --depth 1 --branch master https://github.com/l1ghtny/cybercolors_bot.git cybercolors_bot
           cd cybercolors_bot
+
+          INDEXER_HASH="$(
+            git ls-files \
+              docker/Dockerfile.indexer \
+              requirements.txt \
+              scripts/run_ai_knowledge_worker.py \
+              src/db \
+              src/modules/ai/knowledge.py \
+              src/modules/ai/knowledge_imports.py \
+            | sort \
+            | xargs sha256sum \
+            | sha256sum \
+            | cut -c1-16
+          )"
+          TAG="idx-$INDEXER_HASH"
+
+          if docker manifest inspect "$IMAGE:$TAG" >/dev/null 2>&1; then
+            echo "Indexer image $IMAGE:$TAG already exists; skipping build."
+            exit 0
+          fi
+
           docker build -f docker/Dockerfile.indexer -t "$IMAGE:$TAG" -t "$IMAGE:latest" .
           docker push "$IMAGE:$TAG"
           docker push "$IMAGE:latest"
@@ -223,10 +243,26 @@ jobs:
 
           BACKEND_TAG="%job.build_backend.build.number%"
           FRONTEND_TAG="%job.build_frontend.build.number%"
-          INDEXER_TAG="%job.build_indexer.build.number%"
 
           rm -rf cybercolors_bot
           git clone --depth 1 --branch master https://github.com/l1ghtny/cybercolors_bot.git cybercolors_bot
+
+          cd cybercolors_bot
+          INDEXER_HASH="$(
+            git ls-files \
+              docker/Dockerfile.indexer \
+              requirements.txt \
+              scripts/run_ai_knowledge_worker.py \
+              src/db \
+              src/modules/ai/knowledge.py \
+              src/modules/ai/knowledge_imports.py \
+            | sort \
+            | xargs sha256sum \
+            | sha256sum \
+            | cut -c1-16
+          )"
+          INDEXER_TAG="idx-$INDEXER_HASH"
+          cd ..
 
           kubectl apply -f cybercolors_bot/deploy/argocd/cybercolors-application.yaml
           kubectl -n argocd patch application cybercolors --type merge -p "{\"spec\":{\"source\":{\"kustomize\":{\"images\":[\"localhost:32000/cybercolors-backend:$BACKEND_TAG\",\"localhost:32000/cybercolors-frontend:$FRONTEND_TAG\",\"localhost:32000/cybercolors-indexer:$INDEXER_TAG\"]}}}}"

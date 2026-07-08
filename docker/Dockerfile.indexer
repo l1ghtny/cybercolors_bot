@@ -19,12 +19,12 @@ RUN pip install --no-cache-dir -r requirements.txt \
 
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-m3')"
 
-COPY src ./src
-COPY api ./api
-COPY alembic ./alembic
-COPY alembic.ini .
-COPY scripts ./scripts
-COPY main.py .
+COPY src/__init__.py ./src/__init__.py
+COPY src/db ./src/db
+COPY src/modules/__init__.py ./src/modules/__init__.py
+RUN mkdir -p ./src/modules/ai ./scripts
+COPY src/modules/ai/knowledge.py src/modules/ai/knowledge_imports.py ./src/modules/ai/
+COPY scripts/run_ai_knowledge_worker.py ./scripts/run_ai_knowledge_worker.py
 
 RUN mkdir -p /home/discord-bot/.cache/huggingface
 
