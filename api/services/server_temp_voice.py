@@ -11,13 +11,24 @@ from api.models.server_temp_voice import (
     TempVoiceArchiveDetailModel,
     TempVoiceArchiveMessageModel,
     TempVoiceArchiveSummaryModel,
+    TempVoiceParticipantModel,
     ServerTempVoiceCreateTriggerChannelModel,
     ServerTempVoiceSettingsReadModel,
     ServerTempVoiceSettingsUpdateModel,
 )
 from api.services.discord_guilds import create_guild_voice_channel, fetch_guild_channels
 from api.services.moderation_core import naive_utcnow
-from src.db.models import AttachmentLog, DeletedMessage, MessageLog, Server, ServerTempVoiceSettings, TempVoiceLog
+from src.db.models import (
+    AttachmentLog,
+    DeletedMessage,
+    GlobalUser,
+    MessageLog,
+    Server,
+    ServerTempVoiceSettings,
+    TempVoiceLog,
+    TempVoiceParticipant,
+    User,
+)
 
 
 DEFAULT_TEMP_VOICE_NAME_TEMPLATE = "{display_name}'s channel"
@@ -111,6 +122,60 @@ async def update_server_temp_voice_settings(
     await session.flush()
     await session.refresh(settings)
     return settings
+
+
+
+def _duration_seconds(start, end) -> int:
+    finished_at = end or naive_utcnow()
+    return max(0, int((finished_at - start).total_seconds()))
+
+
+async def _participants_for_archive(
+    session: AsyncSession,
+    temp_log: TempVoiceLog,
+) -> list[TempVoiceParticipantModel]:
+    rows = (
+        await session.exec(
+            select(TempVoiceParticipant)
+            .where(TempVoiceParticipant.log_id == temp_log.id)
+            .order_by(TempVoiceParticipant.joined_at.asc(), TempVoiceParticipant.user_id.asc())
+        )
+    ).all()
+    if not rows:
+        return []
+
+    user_ids = [row.user_id for row in rows]
+    global_rows = (
+        await session.exec(select(GlobalUser.discord_id, GlobalUser.username).where(GlobalUser.discord_id.in_(user_ids)))
+    ).all()
+    global_user_map = {int(user_id): username for user_id, username in global_rows}
+    member_rows = (
+        await session.exec(
+            select(User.user_id, User.server_nickname).where(
+                User.server_id == temp_log.server_id,
+                User.user_id.in_(user_ids),
+            )
+        )
+    ).all()
+    member_map = {int(user_id): server_nickname for user_id, server_nickname in member_rows}
+
+    payload: list[TempVoiceParticipantModel] = []
+    for row in rows:
+        username = global_user_map.get(row.user_id)
+        server_nickname = member_map.get(row.user_id)
+        payload.append(
+            TempVoiceParticipantModel(
+                id=row.id,
+                user_id=str(row.user_id),
+                username=username,
+                server_nickname=server_nickname,
+                display_name=server_nickname or username or str(row.user_id),
+                joined_at=row.joined_at,
+                left_at=row.left_at,
+                duration_seconds=_duration_seconds(row.joined_at, row.left_at),
+            )
+        )
+    return payload
 
 
 def _archive_jump_url(temp_log: TempVoiceLog) -> str | None:
@@ -223,6 +288,7 @@ def _summary_from_rows(
         deleted_message_count=len(deleted_messages),
         attachment_count=sum(len(items) for items in attachments_by_message_id.values()),
         deleted_attachment_count=deleted_attachment_count,
+        duration_seconds=_duration_seconds(temp_log.created_at, temp_log.deleted_at),
     )
 
 
@@ -266,6 +332,7 @@ async def get_temp_voice_archive_detail(
     deleted_messages = await _deleted_messages_for_archive(session, temp_log)
     attachments_by_message_id = await _attachments_by_message_id(session, messages)
     summary = _summary_from_rows(temp_log, messages, deleted_messages, attachments_by_message_id)
+    participants = await _participants_for_archive(session, temp_log)
     payload_messages: list[TempVoiceArchiveMessageModel] = []
     for message in messages:
         payload_messages.append(
@@ -300,7 +367,7 @@ async def get_temp_voice_archive_detail(
             )
         )
     payload_messages.sort(key=lambda item: (item.created_at, item.message_id))
-    return TempVoiceArchiveDetailModel(**summary.model_dump(), messages=payload_messages)
+    return TempVoiceArchiveDetailModel(**summary.model_dump(), participants=participants, messages=payload_messages)
 
 
 def _archive_message_line(message: TempVoiceArchiveMessageModel) -> str:

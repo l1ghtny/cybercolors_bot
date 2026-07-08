@@ -119,6 +119,16 @@ class TempVoiceArchiveMessageModel(BaseModel):
     attachments: list[TempVoiceArchiveAttachmentModel] = Field(default_factory=list)
 
 
+class TempVoiceParticipantModel(BaseModel):
+    id: UUID
+    user_id: str
+    username: str | None = None
+    server_nickname: str | None = None
+    display_name: str
+    joined_at: datetime
+    left_at: datetime | None = None
+    duration_seconds: int
+
 class TempVoiceArchiveSummaryModel(BaseModel):
     id: UUID
     server_id: str
@@ -135,7 +145,9 @@ class TempVoiceArchiveSummaryModel(BaseModel):
     deleted_message_count: int
     attachment_count: int
     deleted_attachment_count: int
+    duration_seconds: int
 
 
 class TempVoiceArchiveDetailModel(TempVoiceArchiveSummaryModel):
+    participants: list[TempVoiceParticipantModel] = Field(default_factory=list)
     messages: list[TempVoiceArchiveMessageModel] = Field(default_factory=list)

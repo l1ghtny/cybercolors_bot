@@ -9,7 +9,15 @@ from api.services.server_temp_voice import (
     list_temp_voice_archives,
 )
 from src.db.database import engine, get_async_session
-from src.db.models import AttachmentLog, DeletedMessage, GlobalUser, MessageLog, Server, TempVoiceLog
+from src.db.models import (
+    AttachmentLog,
+    DeletedMessage,
+    GlobalUser,
+    MessageLog,
+    Server,
+    TempVoiceLog,
+    TempVoiceParticipant,
+)
 
 
 def _make_discord_id() -> int:
@@ -43,6 +51,16 @@ async def _temp_voice_archive_scenario() -> None:
             )
         )
         await session.flush()
+        session.add(
+            TempVoiceParticipant(
+                log_id=temp_log_id,
+                server_id=server_id,
+                channel_id=channel_id,
+                user_id=owner_id,
+                joined_at=now,
+                left_at=now + timedelta(minutes=15),
+            )
+        )
         session.add(
             MessageLog(
                 message_id=message_id,
@@ -90,8 +108,12 @@ async def _temp_voice_archive_scenario() -> None:
         assert archives[0].deleted_message_count == 1
         assert archives[0].attachment_count == 1
         assert archives[0].deleted_attachment_count == 1
+        assert archives[0].duration_seconds == 1800
 
         detail = await get_temp_voice_archive_detail(session=session, server_id=server_id, log_id=temp_log_id)
+        assert len(detail.participants) == 1
+        assert detail.participants[0].display_name == "owner"
+        assert detail.participants[0].duration_seconds == 900
         assert [message.deleted for message in detail.messages] == [False, True]
         assert detail.messages[0].attachments[0].file_name == "live.png"
         assert detail.messages[1].attachments[0].file_name == "deleted.png"

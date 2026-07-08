@@ -33,6 +33,7 @@ class Server(SQLModel, table=True):
     replies: List["Replies"] = Relationship(back_populates="server")
     voice_channels: List["VoiceChannel"] = Relationship(back_populates="server")
     temp_voice_logs: List["TempVoiceLog"] = Relationship(back_populates="server")
+    temp_voice_participants: List["TempVoiceParticipant"] = Relationship(back_populates="server")
     temp_voice_settings: Optional["ServerTempVoiceSettings"] = Relationship(
         back_populates="server",
         sa_relationship_kwargs={"uselist": False},
@@ -1056,6 +1057,19 @@ class TempVoiceLog(SQLModel, table=True):
 
     server: Server = Relationship(back_populates="temp_voice_logs")
 
+
+class TempVoiceParticipant(SQLModel, table=True):
+    __tablename__ = "temp_voice_participants"
+
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    log_id: UUID = Field(foreign_key="temp_voice_log.id", nullable=False, index=True)
+    server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False, index=True))
+    channel_id: int = Field(sa_column=Column(BigInteger, nullable=False, index=True))
+    user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False, index=True))
+    joined_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+    left_at: Optional[datetime] = Field(default=None, nullable=True, index=True)
+
+    server: Server = Relationship(back_populates="temp_voice_participants")
 
 class MessageLog(SQLModel, table=True):
     __tablename__ = "message_log"

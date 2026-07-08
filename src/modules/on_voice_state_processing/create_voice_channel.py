@@ -16,6 +16,7 @@ from src.db.models import (
     ServerModerationSettings,
     ServerTempVoiceSettings,
     TempVoiceLog,
+    TempVoiceParticipant,
     VoiceChannel,
 )
 from src.modules.logs_setup import logger
@@ -85,6 +86,69 @@ async def _create_temp_log(
     return temp_log
 
 
+
+async def _record_temp_voice_join(session, temp_log: TempVoiceLog, member: discord.Member, joined_at: datetime) -> None:
+    existing = (
+        await session.exec(
+            select(TempVoiceParticipant).where(
+                TempVoiceParticipant.log_id == temp_log.id,
+                TempVoiceParticipant.user_id == member.id,
+                TempVoiceParticipant.left_at.is_(None),
+            )
+        )
+    ).first()
+    if existing is not None:
+        return
+    session.add(
+        TempVoiceParticipant(
+            log_id=temp_log.id,
+            server_id=temp_log.server_id,
+            channel_id=temp_log.channel_id,
+            user_id=member.id,
+            joined_at=joined_at,
+        )
+    )
+
+
+async def _close_temp_voice_participation(session, temp_log: TempVoiceLog, user_id: int, left_at: datetime) -> None:
+    rows = (
+        await session.exec(
+            select(TempVoiceParticipant).where(
+                TempVoiceParticipant.log_id == temp_log.id,
+                TempVoiceParticipant.user_id == user_id,
+                TempVoiceParticipant.left_at.is_(None),
+            )
+        )
+    ).all()
+    for row in rows:
+        row.left_at = left_at
+        session.add(row)
+
+
+async def _record_temp_voice_participation(
+    member: discord.Member,
+    before: discord.VoiceState,
+    after: discord.VoiceState,
+) -> None:
+    before_channel_id = before.channel.id if before.channel is not None else None
+    after_channel_id = after.channel.id if after.channel is not None else None
+    if before_channel_id == after_channel_id:
+        return
+
+    now = _naive_utcnow()
+    async with get_async_session() as session:
+        await check_if_server_exists(member.guild, session)
+        await check_if_user_exists(member, member.guild, session)
+        if before_channel_id is not None:
+            before_log = await _active_temp_log(session, member.guild.id, before_channel_id)
+            if before_log is not None:
+                await _close_temp_voice_participation(session, before_log, member.id, now)
+        if after_channel_id is not None:
+            after_log = await _active_temp_log(session, member.guild.id, after_channel_id)
+            if after_log is not None:
+                await _record_temp_voice_join(session, after_log, member, now)
+        await session.commit()
+
 async def _grant_owner_permissions(channel: discord.VoiceChannel, member: discord.Member) -> None:
     overwrite = channel.overwrites_for(member)
     overwrite.manage_channels = True
@@ -130,7 +194,7 @@ async def _create_temp_channel(member: discord.Member, after: discord.VoiceState
                 created_at=_naive_utcnow(),
             )
         )
-        await _create_temp_log(
+        temp_log = await _create_temp_log(
             session,
             server_id=member.guild.id,
             channel_id=temp_channel.id,
@@ -138,6 +202,7 @@ async def _create_temp_channel(member: discord.Member, after: discord.VoiceState
             trigger_channel_id=settings.trigger_channel_id,
             owner_user_id=member.id,
         )
+        await _record_temp_voice_join(session, temp_log, member, temp_log.created_at)
         await session.commit()
     logger.info("Temp voice channel %s created in guild %s", temp_channel.id, member.guild.id)
 
@@ -426,5 +491,6 @@ async def create_voice_channel(member: discord.Member, before: discord.VoiceStat
         if settings is None or not settings.enabled or settings.trigger_channel_id is None:
             return
 
+    await _record_temp_voice_participation(member, before, after)
     await _create_temp_channel(member, after, settings)
     await _delete_empty_temp_channel(member, before, settings)
