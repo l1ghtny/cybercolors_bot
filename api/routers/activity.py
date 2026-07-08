@@ -17,10 +17,11 @@ from api.models.user_profiles import (
     UserActivityLeaderboardItemModel,
     UserActivitySummaryModel,
     UserActivityUpsertModel,
+    UserActivityWarningModel,
 )
 from api.services.discord_guilds import TEXT_CHANNEL_TYPES, fetch_guild_channels, fetch_guild_member
 from src.db.database import get_session
-from src.db.models import GlobalUser, MessageLog, Server, ServerModerationSettings, User, UserActivity
+from src.db.models import ActionType, GlobalUser, MessageLog, ModerationAction, Server, ServerModerationSettings, User, UserActivity
 
 activity = APIRouter(
     prefix="/activity",
@@ -779,6 +780,33 @@ async def get_server_activity_leaderboard(
             )
         )
 
+    warn_rows = (
+        await session.exec(
+            select(
+                ModerationAction.target_user_id,
+                ModerationAction.id,
+                ModerationAction.created_at,
+                ModerationAction.reason,
+            )
+            .where(
+                ModerationAction.server_id == server_id,
+                ModerationAction.target_user_id.in_(user_ids),
+                ModerationAction.action_type == ActionType.WARN,
+                ModerationAction.is_active.is_(True),
+            )
+            .order_by(ModerationAction.target_user_id.asc(), ModerationAction.created_at.desc())
+        )
+    ).all()
+    warnings_by_user: dict[int, list[UserActivityWarningModel]] = {}
+    for target_user_id, action_id, created_at, reason in warn_rows:
+        warnings_by_user.setdefault(int(target_user_id), []).append(
+            UserActivityWarningModel(
+                action_id=str(action_id),
+                created_at=_as_naive_utc(created_at) or _naive_utcnow(),
+                reason=reason,
+            )
+        )
+
     result: list[UserActivityLeaderboardItemModel] = []
     for user_id, message_count, last_message_at in leaderboard_rows:
         user_key = int(user_id)
@@ -794,6 +822,8 @@ async def get_server_activity_leaderboard(
                 message_count=int(message_count),
                 last_message_at=_as_naive_utc(last_message_at) or _naive_utcnow(),
                 channels=channels_by_user.get(user_key, []),
+                warn_count=len(warnings_by_user.get(user_key, [])),
+                warnings=warnings_by_user.get(user_key, []),
                 period_start=period_start_out,
                 period_end=period_end_out,
             )

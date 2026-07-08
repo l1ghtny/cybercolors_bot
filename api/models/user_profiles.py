@@ -27,6 +27,12 @@ class UserActivityChannelCountModel(BaseModel):
     message_count: int
 
 
+class UserActivityWarningModel(BaseModel):
+    action_id: str
+    created_at: datetime
+    reason: str | None = None
+
+
 class UserActivitySummaryModel(BaseModel):
     user_id: str
     server_id: str
@@ -46,6 +52,8 @@ class UserActivityLeaderboardItemModel(BaseModel):
     message_count: int
     last_message_at: datetime
     channels: list[UserActivityChannelCountModel] = Field(default_factory=list)
+    warn_count: int = 0
+    warnings: list[UserActivityWarningModel] = Field(default_factory=list)
     period_start: datetime | None = None
     period_end: datetime | None = None
 
