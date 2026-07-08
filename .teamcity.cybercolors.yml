@@ -246,9 +246,9 @@ jobs:
           kubectl -n cybercolors set image deployment/cybercolors-bot bot="localhost:32000/cybercolors-backend:$BACKEND_TAG"
           kubectl -n cybercolors set image deployment/cybercolors-newcomer-release-worker worker="localhost:32000/cybercolors-backend:$BACKEND_TAG"
           kubectl -n cybercolors set image deployment/cybercolors-indexer-worker worker="localhost:32000/cybercolors-indexer:$INDEXER_TAG"
-          kubectl -n cybercolors rollout status deployment/cybercolors-bot --timeout=300s
-          kubectl -n cybercolors rollout status deployment/cybercolors-newcomer-release-worker --timeout=300s
-          kubectl -n cybercolors rollout status deployment/cybercolors-indexer-worker --timeout=300s
+          kubectl -n cybercolors rollout status deployment/cybercolors-bot --timeout=900s
+          kubectl -n cybercolors rollout status deployment/cybercolors-newcomer-release-worker --timeout=900s
+          kubectl -n cybercolors rollout status deployment/cybercolors-indexer-worker --timeout=1800s
 
           kubectl argo rollouts get rollout cybercolors-backend -n cybercolors
           kubectl argo rollouts get rollout cybercolors-frontend -n cybercolors
