@@ -19,8 +19,16 @@ spec:
       labels:
         app: cybercolors-indexer-worker
     spec:
-      nodeSelector:
-        kubernetes.io/hostname: main-server
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values:
+                      - k8s-node-2
+                      - k8s-node-3
       containers:
         - name: worker
           image: localhost:32000/cybercolors-indexer:latest
