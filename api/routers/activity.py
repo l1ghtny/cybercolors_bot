@@ -829,6 +829,7 @@ async def get_server_activity_leaderboard(
     server_id: int,
     response: Response,
     limit: int = Query(default=50, ge=1, le=10000),
+    all_users: bool = Query(default=False, description="Return every matching user instead of applying limit."),
     date_from: date | None = Query(default=None, description="Inclusive UTC date (YYYY-MM-DD)."),
     date_to: date | None = Query(default=None, description="Inclusive UTC date (YYYY-MM-DD)."),
     channels_limit: int = Query(default=5, ge=1, le=20, description="Max channels per user in breakdown."),
@@ -910,8 +911,9 @@ async def get_server_activity_leaderboard(
         include_channel_ids=effective_include_channel_ids,
         exclude_channel_ids=effective_exclude_channel_ids,
     )
-    if not role_filters_requested:
-        leaderboard_rows = leaderboard_rows[:limit]
+    requested_limit = None if all_users else limit
+    if not role_filters_requested and requested_limit is not None:
+        leaderboard_rows = leaderboard_rows[:requested_limit]
 
     if not leaderboard_rows:
         return []
@@ -935,7 +937,7 @@ async def get_server_activity_leaderboard(
             ):
                 continue
             filtered_rows.append((user_key, int(message_count), last_message_at))
-            if len(filtered_rows) >= limit:
+            if requested_limit is not None and len(filtered_rows) >= requested_limit:
                 break
         leaderboard_rows = filtered_rows
     else:
