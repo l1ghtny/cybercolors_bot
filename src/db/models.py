@@ -1,7 +1,7 @@
 import uuid
 from typing import List, Optional
 from uuid import UUID, uuid4, uuid7
-from datetime import datetime, UTC, timezone
+from datetime import date, datetime, UTC, timezone
 
 import sqlalchemy as sa
 from pgvector.sqlalchemy import Vector
@@ -43,6 +43,8 @@ class Server(SQLModel, table=True):
     deleted_messages: List["DeletedMessage"] = Relationship(back_populates="server")
     past_nicknames: List["PastNickname"] = Relationship(back_populates="server")
     user_activity: List["UserActivity"] = Relationship(back_populates="server")
+    historical_activity: List["HistoricalUserActivityDaily"] = Relationship(back_populates="server")
+    historical_activity_import_cursors: List["HistoricalActivityImportCursor"] = Relationship(back_populates="server")
     monitored_users: List["MonitoredUser"] = Relationship(back_populates="server")
     monitoring_settings: Optional["ServerMonitoringSettings"] = Relationship(
         back_populates="server",
@@ -168,6 +170,7 @@ class GlobalUser(SQLModel, table=True):
 
     replies: List["Replies"] = Relationship(back_populates="created_by")
     user_activity: List["UserActivity"] = Relationship(back_populates="global_user")
+    historical_activity: List["HistoricalUserActivityDaily"] = Relationship(back_populates="global_user")
     moderation_rules_created: List["ModerationRule"] = Relationship(back_populates="created_by")
 
 
@@ -1117,6 +1120,41 @@ class UserActivity(SQLModel, table=True):
 
     server: Server = Relationship(back_populates="user_activity")
     global_user: GlobalUser = Relationship(back_populates="user_activity")
+
+class HistoricalUserActivityDaily(SQLModel, table=True):
+    __tablename__ = "historical_user_activity_daily"
+    server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), primary_key=True))
+    user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), primary_key=True))
+    channel_id: int = Field(sa_column=Column(BigInteger, primary_key=True))
+    activity_date: date = Field(sa_column=Column(sa.Date, primary_key=True))
+
+    message_count: int = Field(default=0, nullable=False)
+    last_message_at: datetime = Field(sa_column=Column(TIMESTAMP(timezone=False), nullable=False))
+    created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+    updated_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+
+    server: Server = Relationship(back_populates="historical_activity")
+    global_user: GlobalUser = Relationship(back_populates="historical_activity")
+
+
+class HistoricalActivityImportCursor(SQLModel, table=True):
+    __tablename__ = "historical_activity_import_cursors"
+    server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), primary_key=True))
+    channel_id: int = Field(sa_column=Column(BigInteger, primary_key=True))
+    channel_name: Optional[str] = None
+    channel_type: Optional[str] = None
+
+    last_before_message_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
+    reached_start: bool = Field(default=False, nullable=False)
+    pages_scanned: int = Field(default=0, nullable=False)
+    messages_scanned: int = Field(default=0, nullable=False)
+    messages_imported: int = Field(default=0, nullable=False)
+    oldest_message_at: Optional[datetime] = None
+    newest_message_at: Optional[datetime] = None
+    last_error: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    updated_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+
+    server: Server = Relationship(back_populates="historical_activity_import_cursors")
 
 
 class TempVoiceLog(SQLModel, table=True):

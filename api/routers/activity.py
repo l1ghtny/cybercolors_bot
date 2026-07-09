@@ -21,7 +21,7 @@ from api.models.user_profiles import (
 )
 from api.services.discord_guilds import TEXT_CHANNEL_TYPES, fetch_guild_channels, fetch_guild_member
 from src.db.database import get_session
-from src.db.models import ActionType, GlobalUser, MessageLog, ModerationAction, Server, ServerModerationSettings, User, UserActivity
+from src.db.models import ActionType, GlobalUser, HistoricalUserActivityDaily, MessageLog, ModerationAction, Server, ServerModerationSettings, User, UserActivity
 
 activity = APIRouter(
     prefix="/activity",
@@ -327,6 +327,69 @@ def _build_activity_filters(
     return conditions
 
 
+def _build_historical_activity_filters(
+    server_id: int,
+    user_id: int | None = None,
+    period_start: datetime | None = None,
+    period_end_exclusive: datetime | None = None,
+    include_user_ids: set[int] | None = None,
+    exclude_user_ids: set[int] | None = None,
+    include_channel_ids: set[int] | None = None,
+    exclude_channel_ids: set[int] | None = None,
+) -> list:
+    conditions = [HistoricalUserActivityDaily.server_id == server_id]
+    if user_id is not None:
+        conditions.append(HistoricalUserActivityDaily.user_id == user_id)
+    if include_user_ids is not None:
+        conditions.append(HistoricalUserActivityDaily.user_id.in_(include_user_ids))
+    if exclude_user_ids:
+        conditions.append(HistoricalUserActivityDaily.user_id.notin_(exclude_user_ids))
+    if period_start is not None:
+        conditions.append(HistoricalUserActivityDaily.activity_date >= period_start.date())
+    if period_end_exclusive is not None:
+        conditions.append(HistoricalUserActivityDaily.activity_date < period_end_exclusive.date())
+    if include_channel_ids is not None:
+        conditions.append(HistoricalUserActivityDaily.channel_id.in_(include_channel_ids))
+    if exclude_channel_ids:
+        conditions.append(HistoricalUserActivityDaily.channel_id.notin_(exclude_channel_ids))
+    return conditions
+
+
+def _merge_channel_counts(*row_sets: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    counts: dict[int, int] = {}
+    for rows in row_sets:
+        for channel_id, message_count in rows:
+            counts[int(channel_id)] = counts.get(int(channel_id), 0) + int(message_count)
+    return sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+
+
+def _activity_sort_timestamp(value: datetime | None) -> float:
+    if value is None:
+        return float("-inf")
+    try:
+        return value.timestamp()
+    except (OSError, OverflowError, ValueError):
+        return 0.0
+
+
+def _merge_leaderboard_rows(*row_sets: list[tuple[int, int, datetime | None]]) -> list[tuple[int, int, datetime | None]]:
+    merged: dict[int, tuple[int, datetime | None]] = {}
+    for rows in row_sets:
+        for user_id, message_count, last_message_at in rows:
+            user_key = int(user_id)
+            previous_count, previous_last = merged.get(user_key, (0, None))
+            normalized_last = _as_naive_utc(last_message_at)
+            if previous_last is None or (normalized_last is not None and normalized_last > previous_last):
+                latest = normalized_last
+            else:
+                latest = previous_last
+            merged[user_key] = (previous_count + int(message_count), latest)
+    return sorted(
+        ((user_id, message_count, last_message_at) for user_id, (message_count, last_message_at) in merged.items()),
+        key=lambda item: (-item[1], -_activity_sort_timestamp(item[2]), item[0]),
+    )
+
+
 async def _get_or_create_server_record(server_id: int, session: AsyncSession) -> Server:
     server = await session.get(Server, server_id)
     if server:
@@ -397,7 +460,7 @@ async def _fetch_user_channel_counts(
 ) -> list[tuple[int, int]]:
     if include_channel_ids is not None and not include_channel_ids:
         return []
-    conditions = _build_activity_filters(
+    live_conditions = _build_activity_filters(
         server_id=server_id,
         user_id=user_id,
         period_start=period_start,
@@ -405,18 +468,35 @@ async def _fetch_user_channel_counts(
         include_channel_ids=include_channel_ids,
         exclude_channel_ids=exclude_channel_ids,
     )
-    rows = (
+    live_rows = (
         await session.exec(
-            select(
-                MessageLog.channel_id,
-                func.count().label("message_count"),
-            )
-            .where(*conditions)
+            select(MessageLog.channel_id, func.count().label("message_count"))
+            .where(*live_conditions)
             .group_by(MessageLog.channel_id)
-            .order_by(func.count().desc(), MessageLog.channel_id.asc())
         )
     ).all()
-    return [(int(channel_id), int(message_count)) for channel_id, message_count in rows]
+    historical_conditions = _build_historical_activity_filters(
+        server_id=server_id,
+        user_id=user_id,
+        period_start=period_start,
+        period_end_exclusive=period_end_exclusive,
+        include_channel_ids=include_channel_ids,
+        exclude_channel_ids=exclude_channel_ids,
+    )
+    historical_rows = (
+        await session.exec(
+            select(
+                HistoricalUserActivityDaily.channel_id,
+                func.sum(HistoricalUserActivityDaily.message_count).label("message_count"),
+            )
+            .where(*historical_conditions)
+            .group_by(HistoricalUserActivityDaily.channel_id)
+        )
+    ).all()
+    return _merge_channel_counts(
+        [(int(channel_id), int(message_count or 0)) for channel_id, message_count in live_rows],
+        [(int(channel_id), int(message_count or 0)) for channel_id, message_count in historical_rows],
+    )
 
 
 async def _fetch_user_last_message_metadata(
@@ -430,7 +510,7 @@ async def _fetch_user_last_message_metadata(
 ) -> tuple[int | None, datetime | None]:
     if include_channel_ids is not None and not include_channel_ids:
         return None, None
-    conditions = _build_activity_filters(
+    live_conditions = _build_activity_filters(
         server_id=server_id,
         user_id=user_id,
         period_start=period_start,
@@ -438,18 +518,167 @@ async def _fetch_user_last_message_metadata(
         include_channel_ids=include_channel_ids,
         exclude_channel_ids=exclude_channel_ids,
     )
-    row = (
+    live_row = (
         await session.exec(
             select(MessageLog.channel_id, MessageLog.created_at)
-            .where(*conditions)
+            .where(*live_conditions)
             .order_by(MessageLog.created_at.desc())
             .limit(1)
         )
     ).first()
-    if not row:
+    historical_conditions = _build_historical_activity_filters(
+        server_id=server_id,
+        user_id=user_id,
+        period_start=period_start,
+        period_end_exclusive=period_end_exclusive,
+        include_channel_ids=include_channel_ids,
+        exclude_channel_ids=exclude_channel_ids,
+    )
+    historical_row = (
+        await session.exec(
+            select(HistoricalUserActivityDaily.channel_id, HistoricalUserActivityDaily.last_message_at)
+            .where(*historical_conditions)
+            .order_by(HistoricalUserActivityDaily.last_message_at.desc())
+            .limit(1)
+        )
+    ).first()
+    candidates: list[tuple[int, datetime]] = []
+    if live_row:
+        channel_id, created_at = live_row
+        normalized = _as_naive_utc(created_at)
+        if normalized is not None:
+            candidates.append((int(channel_id), normalized))
+    if historical_row:
+        channel_id, created_at = historical_row
+        normalized = _as_naive_utc(created_at)
+        if normalized is not None:
+            candidates.append((int(channel_id), normalized))
+    if not candidates:
         return None, None
-    channel_id, created_at = row
-    return int(channel_id), _as_naive_utc(created_at)
+    return max(candidates, key=lambda item: item[1])
+
+
+async def _fetch_leaderboard_rows(
+    session: AsyncSession,
+    server_id: int,
+    period_start: datetime | None,
+    period_end_exclusive: datetime | None,
+    include_user_ids: set[int] | None = None,
+    exclude_user_ids: set[int] | None = None,
+    include_channel_ids: set[int] | None = None,
+    exclude_channel_ids: set[int] | None = None,
+) -> list[tuple[int, int, datetime | None]]:
+    live_conditions = _build_activity_filters(
+        server_id=server_id,
+        period_start=period_start,
+        period_end_exclusive=period_end_exclusive,
+        include_user_ids=include_user_ids,
+        exclude_user_ids=exclude_user_ids,
+        include_channel_ids=include_channel_ids,
+        exclude_channel_ids=exclude_channel_ids,
+    )
+    live_rows = (
+        await session.exec(
+            select(
+                MessageLog.user_id,
+                func.count().label("message_count"),
+                func.max(MessageLog.created_at).label("last_message_at"),
+            )
+            .where(*live_conditions)
+            .group_by(MessageLog.user_id)
+        )
+    ).all()
+    historical_conditions = _build_historical_activity_filters(
+        server_id=server_id,
+        period_start=period_start,
+        period_end_exclusive=period_end_exclusive,
+        include_user_ids=include_user_ids,
+        exclude_user_ids=exclude_user_ids,
+        include_channel_ids=include_channel_ids,
+        exclude_channel_ids=exclude_channel_ids,
+    )
+    historical_rows = (
+        await session.exec(
+            select(
+                HistoricalUserActivityDaily.user_id,
+                func.sum(HistoricalUserActivityDaily.message_count).label("message_count"),
+                func.max(HistoricalUserActivityDaily.last_message_at).label("last_message_at"),
+            )
+            .where(*historical_conditions)
+            .group_by(HistoricalUserActivityDaily.user_id)
+        )
+    ).all()
+    return _merge_leaderboard_rows(
+        [(int(user_id), int(message_count or 0), last_message_at) for user_id, message_count, last_message_at in live_rows],
+        [(int(user_id), int(message_count or 0), last_message_at) for user_id, message_count, last_message_at in historical_rows],
+    )
+
+
+async def _fetch_channel_counts_for_users(
+    session: AsyncSession,
+    server_id: int,
+    user_ids: list[int],
+    period_start: datetime | None,
+    period_end_exclusive: datetime | None,
+    include_channel_ids: set[int] | None = None,
+    exclude_channel_ids: set[int] | None = None,
+) -> dict[int, list[UserActivityChannelCountModel]]:
+    if not user_ids:
+        return {}
+    live_conditions = _build_activity_filters(
+        server_id=server_id,
+        period_start=period_start,
+        period_end_exclusive=period_end_exclusive,
+        include_user_ids=set(user_ids),
+        include_channel_ids=include_channel_ids,
+        exclude_channel_ids=exclude_channel_ids,
+    )
+    live_rows = (
+        await session.exec(
+            select(
+                MessageLog.user_id,
+                MessageLog.channel_id,
+                func.count().label("message_count"),
+            )
+            .where(*live_conditions)
+            .group_by(MessageLog.user_id, MessageLog.channel_id)
+        )
+    ).all()
+    historical_conditions = _build_historical_activity_filters(
+        server_id=server_id,
+        period_start=period_start,
+        period_end_exclusive=period_end_exclusive,
+        include_user_ids=set(user_ids),
+        include_channel_ids=include_channel_ids,
+        exclude_channel_ids=exclude_channel_ids,
+    )
+    historical_rows = (
+        await session.exec(
+            select(
+                HistoricalUserActivityDaily.user_id,
+                HistoricalUserActivityDaily.channel_id,
+                func.sum(HistoricalUserActivityDaily.message_count).label("message_count"),
+            )
+            .where(*historical_conditions)
+            .group_by(HistoricalUserActivityDaily.user_id, HistoricalUserActivityDaily.channel_id)
+        )
+    ).all()
+    counts: dict[int, dict[int, int]] = {user_id: {} for user_id in user_ids}
+    for user_id, channel_id, message_count in live_rows:
+        user_key = int(user_id)
+        channel_key = int(channel_id)
+        counts.setdefault(user_key, {})[channel_key] = counts.setdefault(user_key, {}).get(channel_key, 0) + int(message_count or 0)
+    for user_id, channel_id, message_count in historical_rows:
+        user_key = int(user_id)
+        channel_key = int(channel_id)
+        counts.setdefault(user_key, {})[channel_key] = counts.setdefault(user_key, {}).get(channel_key, 0) + int(message_count or 0)
+    return {
+        user_id: [
+            UserActivityChannelCountModel(channel_id=str(channel_id), message_count=message_count)
+            for channel_id, message_count in sorted(user_counts.items(), key=lambda item: (-item[1], item[0]))
+        ]
+        for user_id, user_counts in counts.items()
+    }
 
 
 @activity.post(
@@ -671,7 +900,8 @@ async def get_server_activity_leaderboard(
 
     role_filters_requested = bool(include_role_ids_set or exclude_role_ids_set)
     sql_include_user_ids = include_user_ids_set if not include_role_ids_set else None
-    conditions = _build_activity_filters(
+    leaderboard_rows = await _fetch_leaderboard_rows(
+        session=session,
         server_id=server_id,
         period_start=period_start,
         period_end_exclusive=period_end_exclusive,
@@ -680,25 +910,9 @@ async def get_server_activity_leaderboard(
         include_channel_ids=effective_include_channel_ids,
         exclude_channel_ids=effective_exclude_channel_ids,
     )
-
-    leaderboard_query = (
-        select(
-            MessageLog.user_id,
-            func.count().label("message_count"),
-            func.max(MessageLog.created_at).label("last_message_at"),
-        )
-        .where(*conditions)
-        .group_by(MessageLog.user_id)
-        .order_by(
-            func.count().desc(),
-            func.max(MessageLog.created_at).desc(),
-            MessageLog.user_id.asc(),
-        )
-    )
     if not role_filters_requested:
-        leaderboard_query = leaderboard_query.limit(limit)
+        leaderboard_rows = leaderboard_rows[:limit]
 
-    leaderboard_rows = (await session.exec(leaderboard_query)).all()
     if not leaderboard_rows:
         return []
 
@@ -751,34 +965,19 @@ async def get_server_activity_leaderboard(
     ).all()
     membership_map = {int(user_id): server_nickname for user_id, server_nickname in membership_rows}
 
-    channel_rows = (
-        await session.exec(
-            select(
-                MessageLog.user_id,
-                MessageLog.channel_id,
-                func.count().label("message_count"),
-            )
-            .where(*conditions, MessageLog.user_id.in_(user_ids))
-            .group_by(MessageLog.user_id, MessageLog.channel_id)
-            .order_by(
-                MessageLog.user_id.asc(),
-                func.count().desc(),
-                MessageLog.channel_id.asc(),
-            )
-        )
-    ).all()
-    channels_by_user: dict[int, list[UserActivityChannelCountModel]] = {}
-    for user_id, channel_id, message_count in channel_rows:
-        user_key = int(user_id)
-        bucket = channels_by_user.setdefault(user_key, [])
-        if len(bucket) >= channels_limit:
-            continue
-        bucket.append(
-            UserActivityChannelCountModel(
-                channel_id=str(channel_id),
-                message_count=int(message_count),
-            )
-        )
+    channels_by_user = await _fetch_channel_counts_for_users(
+        session=session,
+        server_id=server_id,
+        user_ids=user_ids,
+        period_start=period_start,
+        period_end_exclusive=period_end_exclusive,
+        include_channel_ids=effective_include_channel_ids,
+        exclude_channel_ids=effective_exclude_channel_ids,
+    )
+    channels_by_user = {
+        user_id: channels[:channels_limit]
+        for user_id, channels in channels_by_user.items()
+    }
 
     warn_rows = (
         await session.exec(
