@@ -15,6 +15,11 @@ from api.models.monitoring import (
     MonitoredUserCreateModel,
     MonitoredUserReadModel,
     MonitoredUserStatusEventReadModel,
+    MonitoredUserActivityEventReadModel,
+    MonitoredUserNotificationSettingsReadModel,
+    MonitoredUserNotificationSettingsUpdateModel,
+    ServerMonitoringSettingsReadModel,
+    ServerMonitoringSettingsUpdateModel,
     MonitoredUserUpdateModel,
 )
 from api.models.moderation_actions import ModerationActionSummaryModel
@@ -31,7 +36,13 @@ from api.services.monitoring_service import (
     list_monitored_users as list_monitored_users_service,
     list_monitored_user_comments,
     list_monitored_user_status_events,
+    get_monitored_user_notification_settings,
+    get_or_create_server_monitoring_settings,
+    list_monitored_user_activity_events,
     update_monitored_user,
+    to_server_monitoring_settings_read_model,
+    update_monitored_user_notification_settings,
+    update_server_monitoring_settings,
     upsert_monitored_user,
 )
 from api.services.moderation_core import (
@@ -162,12 +173,35 @@ async def get_cases_for_user(
     )
 
 
+@moderation_users_router.get(
+    "/users/{server_id}/monitoring-settings",
+    response_model=ServerMonitoringSettingsReadModel,
+)
+async def get_server_monitoring_settings(
+    server_id: int,
+    session: AsyncSession = Depends(get_session),
+):
+    settings = await get_or_create_server_monitoring_settings(session, server_id)
+    return to_server_monitoring_settings_read_model(settings)
+
+
+@moderation_users_router.put(
+    "/users/{server_id}/monitoring-settings",
+    response_model=ServerMonitoringSettingsReadModel,
+)
+async def put_server_monitoring_settings(
+    server_id: int,
+    body: ServerMonitoringSettingsUpdateModel,
+    session: AsyncSession = Depends(get_session),
+):
+    return await update_server_monitoring_settings(session=session, server_id=server_id, body=body)
+
 @moderation_users_router.get("/users/{server_id}/monitored", response_model=list[MonitoredUserReadModel])
 async def get_monitored_users(
     server_id: int,
     active_only: bool = Query(default=True),
     include_counts: bool = Query(default=False),
-    source: str | None = Query(default=None, pattern=r"^(manual|newcomer)$"),
+    source: str | None = Query(default=None, pattern=r"^(manual|newcomer|auto)$"),
     session: AsyncSession = Depends(get_session),
 ):
     return await list_monitored_users_service(
@@ -346,6 +380,67 @@ async def get_monitored_user_status_history(
 ):
     try:
         return await list_monitored_user_status_events(
+            session=session,
+            server_id=server_id,
+            user_id=user_id,
+            limit=limit,
+        )
+    except LookupError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Monitored user not found")
+
+
+@moderation_users_router.get(
+    "/users/{server_id}/monitored/{user_id}/notification-settings",
+    response_model=MonitoredUserNotificationSettingsReadModel,
+)
+async def get_monitored_user_notifications(
+    server_id: int,
+    user_id: int,
+    session: AsyncSession = Depends(get_session),
+):
+    try:
+        return await get_monitored_user_notification_settings(
+            session=session,
+            server_id=server_id,
+            user_id=user_id,
+        )
+    except LookupError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Monitored user not found")
+
+
+@moderation_users_router.put(
+    "/users/{server_id}/monitored/{user_id}/notification-settings",
+    response_model=MonitoredUserNotificationSettingsReadModel,
+)
+async def put_monitored_user_notifications(
+    server_id: int,
+    user_id: int,
+    body: MonitoredUserNotificationSettingsUpdateModel,
+    session: AsyncSession = Depends(get_session),
+):
+    try:
+        return await update_monitored_user_notification_settings(
+            session=session,
+            server_id=server_id,
+            user_id=user_id,
+            body=body,
+        )
+    except LookupError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Monitored user not found")
+
+
+@moderation_users_router.get(
+    "/users/{server_id}/monitored/{user_id}/activity",
+    response_model=list[MonitoredUserActivityEventReadModel],
+)
+async def get_monitored_user_activity(
+    server_id: int,
+    user_id: int,
+    limit: int = Query(default=200, ge=1, le=1000),
+    session: AsyncSession = Depends(get_session),
+):
+    try:
+        return await list_monitored_user_activity_events(
             session=session,
             server_id=server_id,
             user_id=user_id,

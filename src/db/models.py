@@ -44,6 +44,11 @@ class Server(SQLModel, table=True):
     past_nicknames: List["PastNickname"] = Relationship(back_populates="server")
     user_activity: List["UserActivity"] = Relationship(back_populates="server")
     monitored_users: List["MonitoredUser"] = Relationship(back_populates="server")
+    monitoring_settings: Optional["ServerMonitoringSettings"] = Relationship(
+        back_populates="server",
+        sa_relationship_kwargs={"uselist": False},
+    )
+    monitored_user_activity_events: List["MonitoredUserActivityEvent"] = Relationship(back_populates="server")
     dashboard_access_users: List["DashboardAccessUser"] = Relationship(back_populates="server")
     dashboard_access_roles: List["DashboardAccessRole"] = Relationship(back_populates="server")
     rbac_assignments: List["ServerRbacAssignment"] = Relationship(back_populates="server")
@@ -127,6 +132,10 @@ class GlobalUser(SQLModel, table=True):
     monitored_comments_authored: List["MonitoredUserComment"] = Relationship(
         back_populates="author",
         sa_relationship_kwargs={'foreign_keys': '[MonitoredUserComment.author_user_id]'}
+    )
+    monitored_activity_events: List["MonitoredUserActivityEvent"] = Relationship(
+        back_populates="user",
+        sa_relationship_kwargs={'foreign_keys': '[MonitoredUserActivityEvent.user_id]'}
     )
     dashboard_access_user_targets: List["DashboardAccessUser"] = Relationship(
         back_populates="user",
@@ -298,6 +307,29 @@ class ServerModerationSettings(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
 
     server: Server = Relationship(back_populates="moderation_settings")
+
+
+class ServerMonitoringSettings(SQLModel, table=True):
+    __tablename__ = "server_monitoring_settings"
+
+    server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), primary_key=True))
+    notification_channel_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
+    discord_notifications_enabled: bool = Field(default=True, nullable=False)
+    default_notify_rejoin: bool = Field(default=True, nullable=False)
+    default_notify_messages: bool = Field(default=True, nullable=False)
+    default_message_threshold: int = Field(default=5, nullable=False)
+    default_notify_images: bool = Field(default=True, nullable=False)
+    default_notify_voice: bool = Field(default=True, nullable=False)
+    default_notify_threads: bool = Field(default=True, nullable=False)
+    default_notify_commands: bool = Field(default=True, nullable=False)
+    default_notify_ai_interactions: bool = Field(default=True, nullable=False)
+    auto_monitor_enabled: bool = Field(default=False, nullable=False)
+    auto_monitor_recent_account_days: int = Field(default=14, nullable=False)
+    auto_monitor_no_avatar: bool = Field(default=True, nullable=False)
+    auto_monitor_reason: str = Field(default="Automatic monitoring: newcomer risk signals", nullable=False, max_length=250)
+    updated_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+
+    server: Server = Relationship(back_populates="monitoring_settings")
 
 
 class ServerAISettings(SQLModel, table=True):
@@ -699,6 +731,11 @@ class MonitoredUser(SQLModel, table=True):
     )
     comments: List["MonitoredUserComment"] = Relationship(back_populates="monitored_user")
     status_events: List["MonitoredUserStatusEvent"] = Relationship(back_populates="monitored_user")
+    notification_settings: Optional["MonitoredUserNotificationSettings"] = Relationship(
+        back_populates="monitored_user",
+        sa_relationship_kwargs={"uselist": False},
+    )
+    activity_events: List["MonitoredUserActivityEvent"] = Relationship(back_populates="monitored_user")
 
 
 class MonitoredUserComment(SQLModel, table=True):
@@ -731,6 +768,46 @@ class MonitoredUserStatusEvent(SQLModel, table=True):
     changed_by: GlobalUser = Relationship(
         back_populates="monitored_status_changes",
         sa_relationship_kwargs={'foreign_keys': '[MonitoredUserStatusEvent.changed_by_user_id]'}
+    )
+
+
+class MonitoredUserNotificationSettings(SQLModel, table=True):
+    __tablename__ = "monitored_user_notification_settings"
+
+    monitored_user_id: UUID = Field(foreign_key="monitored_users.id", primary_key=True)
+    notify_rejoin: Optional[bool] = Field(default=None, nullable=True)
+    notify_messages: Optional[bool] = Field(default=None, nullable=True)
+    message_threshold: Optional[int] = Field(default=None, nullable=True)
+    notify_images: Optional[bool] = Field(default=None, nullable=True)
+    notify_voice: Optional[bool] = Field(default=None, nullable=True)
+    notify_threads: Optional[bool] = Field(default=None, nullable=True)
+    notify_commands: Optional[bool] = Field(default=None, nullable=True)
+    notify_ai_interactions: Optional[bool] = Field(default=None, nullable=True)
+    updated_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+
+    monitored_user: MonitoredUser = Relationship(back_populates="notification_settings")
+
+
+class MonitoredUserActivityEvent(SQLModel, table=True):
+    __tablename__ = "monitored_user_activity_events"
+
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    monitored_user_id: UUID = Field(foreign_key="monitored_users.id", nullable=False, index=True)
+    server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False, index=True))
+    user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False, index=True))
+    event_type: str = Field(sa_column=Column(String(length=40), nullable=False, index=True))
+    channel_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True, index=True))
+    message_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True, index=True))
+    message_content: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    metadata_json: dict = Field(default_factory=dict, sa_column=Column(sa.JSON, nullable=False))
+    notification_sent: bool = Field(default=False, nullable=False)
+    occurred_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False, index=True)
+
+    monitored_user: MonitoredUser = Relationship(back_populates="activity_events")
+    server: Server = Relationship(back_populates="monitored_user_activity_events")
+    user: GlobalUser = Relationship(
+        back_populates="monitored_activity_events",
+        sa_relationship_kwargs={'foreign_keys': '[MonitoredUserActivityEvent.user_id]'}
     )
 
 

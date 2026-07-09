@@ -102,3 +102,73 @@ class MonitoredUserFromCaseModel(BaseModel):
     user_id: str | None = Field(default=None, pattern=r"^\d+$")
     reason: str | None = Field(default=None, max_length=5000)
     added_by_user_id: str | None = Field(default=None, pattern=r"^\d*$")
+
+
+class MonitoringEventDefaultsModel(BaseModel):
+    notify_rejoin: bool = True
+    notify_messages: bool = True
+    message_threshold: int = Field(default=5, ge=1, le=1000)
+    notify_images: bool = True
+    notify_voice: bool = True
+    notify_threads: bool = True
+    notify_commands: bool = True
+    notify_ai_interactions: bool = True
+
+
+class MonitoringEventOverridesModel(BaseModel):
+    notify_rejoin: bool | None = None
+    notify_messages: bool | None = None
+    message_threshold: int | None = Field(default=None, ge=1, le=1000)
+    notify_images: bool | None = None
+    notify_voice: bool | None = None
+    notify_threads: bool | None = None
+    notify_commands: bool | None = None
+    notify_ai_interactions: bool | None = None
+
+
+class ServerMonitoringSettingsReadModel(BaseModel):
+    server_id: str
+    notification_channel_id: str | None = None
+    discord_notifications_enabled: bool
+    defaults: MonitoringEventDefaultsModel
+    auto_monitor_enabled: bool
+    auto_monitor_recent_account_days: int
+    auto_monitor_no_avatar: bool
+    auto_monitor_reason: str
+    updated_at: datetime
+
+
+class ServerMonitoringSettingsUpdateModel(BaseModel):
+    notification_channel_id: str | None = Field(default=None, pattern=r"^\d*$")
+    discord_notifications_enabled: bool | None = None
+    defaults: MonitoringEventDefaultsModel | None = None
+    auto_monitor_enabled: bool | None = None
+    auto_monitor_recent_account_days: int | None = Field(default=None, ge=1, le=3650)
+    auto_monitor_no_avatar: bool | None = None
+    auto_monitor_reason: str | None = Field(default=None, min_length=1, max_length=250)
+
+
+class MonitoredUserNotificationSettingsReadModel(BaseModel):
+    monitored_user_id: str
+    effective: MonitoringEventDefaultsModel
+    overrides: MonitoringEventOverridesModel
+    updated_at: datetime | None = None
+
+
+class MonitoredUserNotificationSettingsUpdateModel(MonitoringEventOverridesModel):
+    pass
+
+
+class MonitoredUserActivityEventReadModel(BaseModel):
+    id: str
+    monitored_user_id: str
+    server_id: str
+    user_id: str
+    event_type: str
+    channel_id: str | None = None
+    message_id: str | None = None
+    message_content: str | None = None
+    metadata: dict = Field(default_factory=dict)
+    notification_sent: bool
+    occurred_at: datetime
+    user: ModerationActorModel | None = None

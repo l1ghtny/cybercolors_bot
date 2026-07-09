@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -14,8 +14,16 @@ from api.models.monitoring import (
     MonitoredUserCommentReadModel,
     MonitoredUserReadModel,
     MonitoredUserStatusEventReadModel,
+    MonitoredUserActivityEventReadModel,
+    MonitoredUserNotificationSettingsReadModel,
+    MonitoredUserNotificationSettingsUpdateModel,
+    MonitoringEventDefaultsModel,
+    MonitoringEventOverridesModel,
+    ServerMonitoringSettingsReadModel,
+    ServerMonitoringSettingsUpdateModel,
 )
 from api.services.moderation_core import build_actor, get_case_or_404, naive_utcnow
+from api.services.discord_guilds import TEXT_CHANNEL_TYPES, fetch_channel
 from src.db.models import (
     CaseStatus,
     ModerationAction,
@@ -24,6 +32,12 @@ from src.db.models import (
     MonitoredUser,
     MonitoredUserComment,
     MonitoredUserStatusEvent,
+    MonitoredUserActivityEvent,
+    MonitoredUserNotificationSettings,
+    Server,
+    ServerModerationSettings,
+    ServerMonitoringSettings,
+    User,
 )
 
 
@@ -554,4 +568,352 @@ async def add_monitored_user_from_case(
     await session.flush()
     await session.refresh(item)
     return await _to_monitored_user_read(session, item)
+
+
+_EVENT_OVERRIDE_FIELD = {
+    "rejoin": "notify_rejoin",
+    "message": "notify_messages",
+    "image": "notify_images",
+    "voice_join": "notify_voice",
+    "thread_create": "notify_threads",
+    "bot_command": "notify_commands",
+    "ai_interaction": "notify_ai_interactions",
+}
+
+
+def _defaults_from_settings(settings: ServerMonitoringSettings) -> MonitoringEventDefaultsModel:
+    return MonitoringEventDefaultsModel(
+        notify_rejoin=settings.default_notify_rejoin,
+        notify_messages=settings.default_notify_messages,
+        message_threshold=settings.default_message_threshold,
+        notify_images=settings.default_notify_images,
+        notify_voice=settings.default_notify_voice,
+        notify_threads=settings.default_notify_threads,
+        notify_commands=settings.default_notify_commands,
+        notify_ai_interactions=settings.default_notify_ai_interactions,
+    )
+
+
+def _overrides_from_row(row: MonitoredUserNotificationSettings | None) -> MonitoringEventOverridesModel:
+    if row is None:
+        return MonitoringEventOverridesModel()
+    return MonitoringEventOverridesModel(
+        notify_rejoin=row.notify_rejoin,
+        notify_messages=row.notify_messages,
+        message_threshold=row.message_threshold,
+        notify_images=row.notify_images,
+        notify_voice=row.notify_voice,
+        notify_threads=row.notify_threads,
+        notify_commands=row.notify_commands,
+        notify_ai_interactions=row.notify_ai_interactions,
+    )
+
+
+def _effective_settings(
+    defaults: MonitoringEventDefaultsModel,
+    overrides: MonitoringEventOverridesModel,
+) -> MonitoringEventDefaultsModel:
+    values = defaults.model_dump()
+    for key, value in overrides.model_dump().items():
+        if value is not None:
+            values[key] = value
+    return MonitoringEventDefaultsModel(**values)
+
+
+async def get_or_create_server_monitoring_settings(
+    session: AsyncSession,
+    server_id: int,
+    server_name: str | None = None,
+) -> ServerMonitoringSettings:
+    server = await session.get(Server, server_id)
+    if not server:
+        server = Server(server_id=server_id, server_name=server_name or str(server_id))
+        session.add(server)
+        await session.flush()
+
+    settings = await session.get(ServerMonitoringSettings, server_id)
+    if settings:
+        return settings
+
+    settings = ServerMonitoringSettings(server_id=server_id)
+    session.add(settings)
+    await session.flush()
+    return settings
+
+
+def to_server_monitoring_settings_read_model(
+    settings: ServerMonitoringSettings,
+) -> ServerMonitoringSettingsReadModel:
+    return ServerMonitoringSettingsReadModel(
+        server_id=str(settings.server_id),
+        notification_channel_id=(
+            str(settings.notification_channel_id) if settings.notification_channel_id is not None else None
+        ),
+        discord_notifications_enabled=settings.discord_notifications_enabled,
+        defaults=_defaults_from_settings(settings),
+        auto_monitor_enabled=settings.auto_monitor_enabled,
+        auto_monitor_recent_account_days=settings.auto_monitor_recent_account_days,
+        auto_monitor_no_avatar=settings.auto_monitor_no_avatar,
+        auto_monitor_reason=settings.auto_monitor_reason,
+        updated_at=settings.updated_at,
+    )
+
+
+async def update_server_monitoring_settings(
+    session: AsyncSession,
+    server_id: int,
+    body: ServerMonitoringSettingsUpdateModel,
+) -> ServerMonitoringSettingsReadModel:
+    settings = await get_or_create_server_monitoring_settings(session, server_id)
+
+    if "notification_channel_id" in body.model_fields_set:
+        if body.notification_channel_id:
+            requested_channel_id = int(body.notification_channel_id)
+            channel = await fetch_channel(server_id=server_id, channel_id=requested_channel_id)
+            if not channel:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="notification_channel_id is not a channel in this server",
+                )
+            channel_type = channel.get("type")
+            if channel_type not in TEXT_CHANNEL_TYPES:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="notification_channel_id must be a text or announcement channel",
+                )
+            settings.notification_channel_id = requested_channel_id
+        else:
+            settings.notification_channel_id = None
+    if body.discord_notifications_enabled is not None:
+        settings.discord_notifications_enabled = body.discord_notifications_enabled
+    if body.defaults is not None:
+        defaults = body.defaults
+        settings.default_notify_rejoin = defaults.notify_rejoin
+        settings.default_notify_messages = defaults.notify_messages
+        settings.default_message_threshold = defaults.message_threshold
+        settings.default_notify_images = defaults.notify_images
+        settings.default_notify_voice = defaults.notify_voice
+        settings.default_notify_threads = defaults.notify_threads
+        settings.default_notify_commands = defaults.notify_commands
+        settings.default_notify_ai_interactions = defaults.notify_ai_interactions
+    if body.auto_monitor_enabled is not None:
+        settings.auto_monitor_enabled = body.auto_monitor_enabled
+    if body.auto_monitor_recent_account_days is not None:
+        settings.auto_monitor_recent_account_days = body.auto_monitor_recent_account_days
+    if body.auto_monitor_no_avatar is not None:
+        settings.auto_monitor_no_avatar = body.auto_monitor_no_avatar
+    if body.auto_monitor_reason is not None:
+        settings.auto_monitor_reason = body.auto_monitor_reason.strip()
+
+    settings.updated_at = naive_utcnow()
+    session.add(settings)
+    await session.flush()
+    await session.refresh(settings)
+    return to_server_monitoring_settings_read_model(settings)
+
+
+async def get_monitored_user_notification_settings(
+    session: AsyncSession,
+    server_id: int,
+    user_id: int,
+) -> MonitoredUserNotificationSettingsReadModel:
+    monitored_user = await _get_monitored_user_or_none(session, server_id, user_id)
+    if not monitored_user:
+        raise LookupError("Monitored user not found")
+    settings = await get_or_create_server_monitoring_settings(session, server_id)
+    row = await session.get(MonitoredUserNotificationSettings, monitored_user.id)
+    overrides = _overrides_from_row(row)
+    return MonitoredUserNotificationSettingsReadModel(
+        monitored_user_id=str(monitored_user.id),
+        effective=_effective_settings(_defaults_from_settings(settings), overrides),
+        overrides=overrides,
+        updated_at=row.updated_at if row else None,
+    )
+
+
+async def update_monitored_user_notification_settings(
+    session: AsyncSession,
+    server_id: int,
+    user_id: int,
+    body: MonitoredUserNotificationSettingsUpdateModel,
+) -> MonitoredUserNotificationSettingsReadModel:
+    monitored_user = await _get_monitored_user_or_none(session, server_id, user_id)
+    if not monitored_user:
+        raise LookupError("Monitored user not found")
+    row = await session.get(MonitoredUserNotificationSettings, monitored_user.id)
+    if row is None:
+        row = MonitoredUserNotificationSettings(monitored_user_id=monitored_user.id)
+    for key, value in body.model_dump().items():
+        setattr(row, key, value)
+    row.updated_at = naive_utcnow()
+    session.add(row)
+    await session.flush()
+    await session.refresh(row)
+    return await get_monitored_user_notification_settings(session, server_id, user_id)
+
+
+def _to_activity_event_read(
+    item: MonitoredUserActivityEvent,
+    user=None,
+) -> MonitoredUserActivityEventReadModel:
+    return MonitoredUserActivityEventReadModel(
+        id=str(item.id),
+        monitored_user_id=str(item.monitored_user_id),
+        server_id=str(item.server_id),
+        user_id=str(item.user_id),
+        event_type=item.event_type,
+        channel_id=str(item.channel_id) if item.channel_id is not None else None,
+        message_id=str(item.message_id) if item.message_id is not None else None,
+        message_content=item.message_content,
+        metadata=item.metadata_json or {},
+        notification_sent=item.notification_sent,
+        occurred_at=item.occurred_at,
+        user=user,
+    )
+
+
+async def list_monitored_user_activity_events(
+    session: AsyncSession,
+    server_id: int,
+    user_id: int,
+    limit: int = 200,
+) -> list[MonitoredUserActivityEventReadModel]:
+    monitored_user = await _get_monitored_user_or_none(session, server_id, user_id)
+    if not monitored_user:
+        raise LookupError("Monitored user not found")
+    rows = (
+        await session.exec(
+            select(MonitoredUserActivityEvent)
+            .where(MonitoredUserActivityEvent.monitored_user_id == monitored_user.id)
+            .order_by(MonitoredUserActivityEvent.occurred_at.desc())
+            .limit(limit)
+        )
+    ).all()
+    actor = await build_actor(session, server_id, user_id)
+    return [_to_activity_event_read(row, actor) for row in rows]
+
+
+async def get_monitoring_notification_channel_id(
+    session: AsyncSession,
+    server_id: int,
+) -> int | None:
+    settings = await get_or_create_server_monitoring_settings(session, server_id)
+    if not settings.discord_notifications_enabled:
+        return None
+    if settings.notification_channel_id is not None:
+        return settings.notification_channel_id
+    mod_settings = await session.get(ServerModerationSettings, server_id)
+    return mod_settings.mod_log_channel_id if mod_settings else None
+
+
+async def mark_monitoring_activity_notification_sent(
+    session: AsyncSession,
+    event_id: UUID,
+) -> None:
+    event = await session.get(MonitoredUserActivityEvent, event_id)
+    if event is None:
+        return
+    event.notification_sent = True
+    session.add(event)
+    await session.flush()
+
+
+async def record_monitored_user_activity(
+    session: AsyncSession,
+    *,
+    server_id: int,
+    user_id: int,
+    event_type: str,
+    channel_id: int | None = None,
+    message_id: int | None = None,
+    message_content: str | None = None,
+    metadata: dict | None = None,
+) -> tuple[MonitoredUserActivityEvent | None, bool]:
+    monitored_user = await _get_monitored_user_or_none(session, server_id, user_id)
+    if not monitored_user or not monitored_user.is_active:
+        return None, False
+
+    event = MonitoredUserActivityEvent(
+        monitored_user_id=monitored_user.id,
+        server_id=server_id,
+        user_id=user_id,
+        event_type=event_type,
+        channel_id=channel_id,
+        message_id=message_id,
+        message_content=(message_content or None),
+        metadata_json=metadata or {},
+    )
+    session.add(event)
+    monitored_user.updated_at = naive_utcnow()
+    session.add(monitored_user)
+    await session.flush()
+
+    server_settings = await get_or_create_server_monitoring_settings(session, server_id)
+    if not server_settings.discord_notifications_enabled:
+        return event, False
+
+    override_row = await session.get(MonitoredUserNotificationSettings, monitored_user.id)
+    effective = _effective_settings(_defaults_from_settings(server_settings), _overrides_from_row(override_row))
+    notify_field = _EVENT_OVERRIDE_FIELD.get(event_type)
+    if notify_field is None:
+        return event, False
+    if not getattr(effective, notify_field):
+        return event, False
+
+    if event_type == "message":
+        message_count = int(
+            (
+                await session.exec(
+                    select(func.count())
+                    .select_from(MonitoredUserActivityEvent)
+                    .where(
+                        MonitoredUserActivityEvent.monitored_user_id == monitored_user.id,
+                        MonitoredUserActivityEvent.event_type == "message",
+                    )
+                )
+            ).one()
+            or 0
+        )
+        threshold = max(1, effective.message_threshold)
+        if message_count % threshold != 0:
+            return event, False
+        event.metadata_json = {**(event.metadata_json or {}), "message_count": message_count, "threshold": threshold}
+        session.add(event)
+        await session.flush()
+
+    return event, True
+
+
+async def maybe_auto_monitor_new_member(
+    session: AsyncSession,
+    *,
+    member,
+) -> MonitoredUserReadModel | None:
+    if getattr(member, "bot", False) or getattr(member, "guild", None) is None:
+        return None
+    server_id = int(member.guild.id)
+    settings = await get_or_create_server_monitoring_settings(session, server_id)
+    if not settings.auto_monitor_enabled:
+        return None
+
+    signals: list[str] = []
+    account_created_at = getattr(member, "created_at", None)
+    if account_created_at is not None:
+        account_age_days = (datetime.now(account_created_at.tzinfo) - account_created_at).days
+        if account_age_days <= settings.auto_monitor_recent_account_days:
+            signals.append(f"account_age_days={account_age_days}")
+    if settings.auto_monitor_no_avatar and getattr(member, "avatar", None) is None:
+        signals.append("no_avatar")
+    if not signals:
+        return None
+
+    reason = f"{settings.auto_monitor_reason}: {', '.join(signals)}"
+    return await upsert_monitored_user(
+        session=session,
+        server_id=server_id,
+        user_id=int(member.id),
+        reason=reason[:5000],
+        added_by_user_id=int(member.id),
+        source="auto",
+    )
 

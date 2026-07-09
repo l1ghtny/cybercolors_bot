@@ -93,6 +93,13 @@ from src.modules.on_voice_state_processing.create_voice_channel import create_vo
 from src.modules.moderation.ban_worker import process_expired_bans
 from src.modules.moderation.mute_worker import process_expired_mutes
 from src.modules.moderation.newcomer_restrictions import handle_new_member_restriction
+from src.modules.monitoring.activity import (
+    handle_member_join_monitoring,
+    record_bot_command_activity,
+    record_message_activity,
+    record_thread_create_activity,
+    record_voice_join_activity,
+)
 from api.services.moderation_rules_service import sync_rules_from_source_message_edit
 from src.views.replies.delete_multiple_replies import DeleteReplyMultiple, DeleteReplyMultipleSelect
 from src.views.replies.delete_one_reply import DeleteOneReply
@@ -597,6 +604,7 @@ async def on_message(message):
     if not claimed:
         return
 
+    asyncio.create_task(record_message_activity(message))
     message_content_base = message.content.lower()
     link_deleted = await delete_server_links(message, message_content_base)
     if link_deleted is True:
@@ -672,6 +680,18 @@ async def auto_unmute_worker():
 @client.event
 async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
     await create_voice_channel(member, before, after)
+    if before.channel != after.channel and after.channel is not None:
+        asyncio.create_task(record_voice_join_activity(member, after))
+
+
+@client.event
+async def on_thread_create(thread: discord.Thread):
+    asyncio.create_task(record_thread_create_activity(thread))
+
+
+@client.event
+async def on_interaction(interaction: discord.Interaction):
+    asyncio.create_task(record_bot_command_activity(interaction))
 
 
 @client.event
@@ -686,6 +706,7 @@ async def on_member_join(member: discord.Member):
         await check_if_user_exists(member, member.guild, session)
         await session.commit()
     await handle_new_member_restriction(member)
+    await handle_member_join_monitoring(member)
 
 
 @client.event

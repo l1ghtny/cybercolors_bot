@@ -4,6 +4,7 @@ from src.modules.chat_bot.create_response import AIAnswerTimeoutError
 from src.modules.chat_bot.message_processing import check_bot_mention, check_for_channel, decide_on_response
 from src.modules.localization.service import get_server_locale, tr
 from src.modules.logs_setup import logger
+from src.modules.monitoring.activity import record_ai_conversation_activity
 
 logger = logger.logging.getLogger("bot")
 
@@ -18,6 +19,7 @@ async def look_for_bot_reply(message, client):
     if not is_approved:
         return
 
+    await record_ai_conversation_activity(message)
     locale = await _message_locale(message)
     if "jailbreak" in (message.content or "").lower():
         await message.reply(tr(locale, "ai_reply.jailbreak"), allowed_mentions=NO_AI_MENTIONS)

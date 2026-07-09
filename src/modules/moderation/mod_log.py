@@ -143,3 +143,83 @@ def build_action_revert_log_embed(
     embed.add_field(name=tr(locale, "modlog.reverted_label"), value=f"`{reverted}`", inline=True)
     embed.set_footer(text=f"{tr(locale, 'modlog.action_id_label')}: {action_id} | Server ID: {server_id}")
     return embed
+
+
+_MONITORING_EVENT_KEYS = {
+    "auto_monitor": "modlog.monitoring_event_auto_monitor",
+    "rejoin": "modlog.monitoring_event_rejoin",
+    "message": "modlog.monitoring_event_message",
+    "image": "modlog.monitoring_event_image",
+    "voice_join": "modlog.monitoring_event_voice_join",
+    "thread_create": "modlog.monitoring_event_thread_create",
+    "bot_command": "modlog.monitoring_event_bot_command",
+    "ai_interaction": "modlog.monitoring_event_ai_interaction",
+}
+
+
+def _format_monitoring_metadata(metadata: dict | None, locale: str | None = None) -> str:
+    if not metadata:
+        return tr(locale, "modlog.none")
+    lines: list[str] = []
+    if metadata.get("reason"):
+        lines.append(f"{tr(locale, 'modlog.reason_label')}: {_truncate(str(metadata['reason']), 300)}")
+    if metadata.get("message_count"):
+        lines.append(
+            f"{tr(locale, 'modlog.monitoring_message_count')}: {metadata.get('message_count')} / {metadata.get('threshold')}"
+        )
+    if metadata.get("command_name"):
+        lines.append(f"{tr(locale, 'modlog.monitoring_command')}: `/{metadata.get('command_name')}`")
+    if metadata.get("channel_name"):
+        lines.append(f"{tr(locale, 'modlog.channel_label')}: {_truncate(str(metadata.get('channel_name')), 120)}")
+    if metadata.get("thread_name"):
+        lines.append(f"{tr(locale, 'modlog.monitoring_thread')}: {_truncate(str(metadata.get('thread_name')), 120)}")
+    attachments = metadata.get("attachments") or []
+    if attachments:
+        names = [item.get("filename") for item in attachments if item.get("filename")]
+        if names:
+            lines.append(f"{tr(locale, 'modlog.monitoring_attachments')}: {_truncate(', '.join(names), 300)}")
+    if metadata.get("jump_url"):
+        lines.append(f"{tr(locale, 'modlog.source_label')}: [Discord]({metadata.get('jump_url')})")
+    return "\n".join(lines) if lines else tr(locale, "modlog.none")
+
+
+def build_monitoring_activity_log_embed(
+    *,
+    server_id: int,
+    event_type: str,
+    user_id: int,
+    user_display: str | None,
+    channel_id: int | None,
+    message_id: int | None,
+    message_content: str | None,
+    metadata: dict | None,
+    locale: str | None = None,
+) -> discord.Embed:
+    event_label = tr(locale, _MONITORING_EVENT_KEYS.get(event_type, "modlog.monitoring_event_unknown"))
+    embed = discord.Embed(
+        title=f"{tr(locale, 'modlog.monitoring_title')}: {event_label}",
+        color=discord.Color.orange(),
+        timestamp=datetime.now(timezone.utc),
+    )
+    embed.add_field(
+        name=tr(locale, "modlog.target_label"),
+        value=f"<@{user_id}> (`{_truncate(user_display or tr(locale, 'modlog.unknown'), 120)}`, `{user_id}`)",
+        inline=False,
+    )
+    if channel_id is not None:
+        embed.add_field(name=tr(locale, "modlog.channel_label"), value=f"<#{channel_id}> (`{channel_id}`)", inline=True)
+    if message_id is not None:
+        embed.add_field(name=tr(locale, "modlog.message_label"), value=f"`{message_id}`", inline=True)
+    if message_content:
+        embed.add_field(
+            name=tr(locale, "modlog.message_content_label"),
+            value=_truncate(message_content, 1024),
+            inline=False,
+        )
+    embed.add_field(
+        name=tr(locale, "modlog.details_label"),
+        value=_truncate(_format_monitoring_metadata(metadata, locale), 1024),
+        inline=False,
+    )
+    embed.set_footer(text=f"{tr(locale, 'modlog.server_id_label')}: {server_id}")
+    return embed
