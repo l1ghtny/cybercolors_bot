@@ -3,7 +3,10 @@ import json
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-from api.services.moderation_actions_service import browse_deleted_attachments_for_server
+from api.services.moderation_actions_service import (
+    browse_deleted_attachments_for_server,
+    browse_deleted_messages_for_server,
+)
 from src.db.database import engine, get_async_session
 from src.db.models import DeletedMessage, GlobalUser, Server
 
@@ -83,6 +86,13 @@ async def _deleted_attachments_scenario() -> None:
         )
         assert [row.attachment.file_name for row in self_deleted] == ["self.png", "self.txt"]
         assert {row.deletion_type for row in self_deleted} == {"self"}
+
+        recent_messages = await browse_deleted_messages_for_server(
+            session=session,
+            server_id=server_id,
+            since=(now - timedelta(minutes=1)).replace(tzinfo=UTC),
+        )
+        assert [row.content for row in recent_messages] == ["moderator deleted", "self deleted"]
 
     await engine.dispose()
 

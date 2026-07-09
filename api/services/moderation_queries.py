@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy.orm import selectinload
@@ -12,6 +12,12 @@ from src.db.models import (
     ModerationActionRuleCitation,
     ModerationImportSourceItem,
 )
+
+
+def _naive_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 async def query_deleted_messages(
@@ -28,7 +34,7 @@ async def query_deleted_messages(
     if channel_id is not None:
         statement = statement.where(DeletedMessage.channel_id == channel_id)
     if since is not None:
-        statement = statement.where(DeletedMessage.deleted_at >= since)
+        statement = statement.where(DeletedMessage.deleted_at >= _naive_utc(since))
 
     statement = statement.order_by(DeletedMessage.deleted_at.desc()).limit(limit)
     return (await session.exec(statement)).all()
