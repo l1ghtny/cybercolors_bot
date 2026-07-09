@@ -12,6 +12,7 @@ from src.db.models import (
     AttachmentLog,
     DeletedMessage,
     GlobalUser,
+    MessageClaim,
     MessageLog,
     Server,
     TempVoiceLog,
@@ -254,14 +255,64 @@ async def log_message(message: d.Message, session: AsyncSession):
 
 async def claim_message_for_processing(message: d.Message) -> bool:
     """
-    Atomically claims a message for processing by inserting it into message_log.
-    Returns True only for the first worker that sees this message ID.
+    Atomically claims a message for processing using a tiny write-only row.
+    Full archival, user/server refreshes, attachments, temp voice linkage, and
+    monitoring side effects are intentionally handled by background ingestion.
     """
+    if message.guild is None or message.author is None:
+        return False
+    created_at = _as_naive_utc(message.created_at) or datetime.now(timezone.utc).replace(tzinfo=None)
+    insert_stmt = (
+        pg_insert(MessageClaim)
+        .values(
+            message_id=message.id,
+            server_id=message.guild.id,
+            channel_id=message.channel.id,
+            user_id=message.author.id,
+            created_at=created_at,
+        )
+        .on_conflict_do_nothing(index_elements=[MessageClaim.message_id])
+        .returning(MessageClaim.message_id)
+    )
     async with get_async_session() as session:
-        await ensure_message_foreign_keys(message, session)
-        claimed = await log_message(message, session)
+        created_row = (await session.exec(insert_stmt)).first()
         await session.commit()
-    return claimed
+    return created_row is not None
+
+
+async def _record_deleted_message_from_claim(
+    claim: MessageClaim,
+    guild_id: int,
+    session: AsyncSession,
+    *,
+    deleted_at: datetime,
+) -> None:
+    await session.exec(
+        pg_insert(Server)
+        .values(
+            server_id=guild_id,
+            server_name=None,
+            bot_active=True,
+            bot_presence_updated_at=deleted_at,
+        )
+        .on_conflict_do_nothing(index_elements=[Server.server_id])
+    )
+    await session.exec(
+        pg_insert(GlobalUser)
+        .values(discord_id=claim.user_id)
+        .on_conflict_do_nothing(index_elements=[GlobalUser.discord_id])
+    )
+    session.add(
+        DeletedMessage(
+            server_id=guild_id,
+            message_id=claim.message_id,
+            channel_id=claim.channel_id,
+            author_user_id=claim.user_id,
+            content=None,
+            attachments_json=None,
+            deleted_at=deleted_at,
+        )
+    )
 
 
 async def handle_message_deletion(message_id: int, guild_id: int | None, session: AsyncSession):
@@ -272,6 +323,18 @@ async def handle_message_deletion(message_id: int, guild_id: int | None, session
     result = await session.exec(select(MessageLog).where(MessageLog.message_id == message_id))
     logged_msg = result.first()
     if not logged_msg:
+        claim_result = await session.exec(select(MessageClaim).where(MessageClaim.message_id == message_id))
+        claim = claim_result.first()
+        if not claim:
+            return
+        await _record_deleted_message_from_claim(
+            claim,
+            guild_id,
+            session,
+            deleted_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        )
+        await session.delete(claim)
+        await session.commit()
         return
 
     attachments_result = await session.exec(
@@ -319,17 +382,29 @@ async def handle_bulk_message_deletion(message_ids: set[int], guild_id: int | No
     message_ids_list = list(message_ids)
     logs_result = await session.exec(select(MessageLog).where(MessageLog.message_id.in_(message_ids_list)))
     logged_messages = logs_result.all()
+    logged_message_ids = {message.message_id for message in logged_messages}
+    missing_message_ids = set(message_ids_list) - logged_message_ids
+
+    if missing_message_ids:
+        claims_result = await session.exec(select(MessageClaim).where(MessageClaim.message_id.in_(missing_message_ids)))
+        deleted_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        for claim in claims_result.all():
+            await _record_deleted_message_from_claim(claim, guild_id, session, deleted_at=deleted_at)
+            await session.delete(claim)
+
     if not logged_messages:
+        await session.commit()
         return
 
     attachments_result = await session.exec(
-        select(AttachmentLog).where(AttachmentLog.message_id.in_(message_ids_list))
+        select(AttachmentLog).where(AttachmentLog.message_id.in_(logged_message_ids))
     )
     attachment_rows = attachments_result.all()
     attachments_by_message_id: dict[int, list[AttachmentLog]] = {}
     for attachment in attachment_rows:
         attachments_by_message_id.setdefault(attachment.message_id, []).append(attachment)
 
+    deleted_at = datetime.now(timezone.utc).replace(tzinfo=None)
     for logged_msg in logged_messages:
         rows = attachments_by_message_id.get(logged_msg.message_id, [])
         attachments_json = (
@@ -355,7 +430,7 @@ async def handle_bulk_message_deletion(message_ids: set[int], guild_id: int | No
                 author_user_id=logged_msg.user_id,
                 content=logged_msg.content,
                 attachments_json=attachments_json,
-                deleted_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                deleted_at=deleted_at,
             )
         )
 

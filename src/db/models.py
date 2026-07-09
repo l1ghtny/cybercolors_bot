@@ -1186,6 +1186,16 @@ class TempVoiceParticipant(SQLModel, table=True):
 
     server: Server = Relationship(back_populates="temp_voice_participants")
 
+class MessageClaim(SQLModel, table=True):
+    __tablename__ = "message_claims"
+
+    message_id: int = Field(sa_column=Column(BigInteger, primary_key=True))
+    server_id: int = Field(sa_column=Column(BigInteger, nullable=False))
+    channel_id: int = Field(sa_column=Column(BigInteger, nullable=False))
+    user_id: int = Field(sa_column=Column(BigInteger, nullable=False))
+    created_at: datetime = Field(sa_column=Column(TIMESTAMP(timezone=False), nullable=False))
+    claimed_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+
 class MessageLog(SQLModel, table=True):
     __tablename__ = "message_log"
     message_id: int = Field(sa_column=Column(BigInteger, primary_key=True))

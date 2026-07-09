@@ -89,6 +89,10 @@ from src.modules.ai.moderation_review import register_ai_moderation_review_views
 from src.modules.on_message_processing.check_for_links import delete_server_links
 from src.modules.on_message_processing.gpt_bot_reply import look_for_bot_reply
 from src.modules.on_message_processing.replies import check_for_replies
+from src.modules.on_message_processing.message_ingestion import (
+    enqueue_message_ingestion,
+    start_message_ingestion_workers,
+)
 from src.modules.on_voice_state_processing.create_voice_channel import create_voice_channel
 from src.modules.moderation.ban_worker import process_expired_bans
 from src.modules.moderation.mute_worker import process_expired_mutes
@@ -96,7 +100,6 @@ from src.modules.moderation.newcomer_restrictions import handle_new_member_restr
 from src.modules.monitoring.activity import (
     handle_member_join_monitoring,
     record_bot_command_activity,
-    record_message_activity,
     record_thread_create_activity,
     record_voice_join_activity,
 )
@@ -139,6 +142,7 @@ class Aclient(discord.AutoShardedClient):
         await self.load_user_cache()
         await self.load_current_server_rules()
         await register_ai_moderation_review_views(self)
+        start_message_ingestion_workers()
 
     async def load_user_cache(self):
         """
@@ -604,7 +608,7 @@ async def on_message(message):
     if not claimed:
         return
 
-    asyncio.create_task(record_message_activity(message))
+    enqueue_message_ingestion(message)
     message_content_base = message.content.lower()
     link_deleted = await delete_server_links(message, message_content_base)
     if link_deleted is True:

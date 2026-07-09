@@ -1,4 +1,5 @@
 import os
+import logging
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, AsyncIterator
 
@@ -27,6 +28,26 @@ engine = create_async_engine(
     pool_pre_ping=True,
     pool_recycle=DB_POOL_RECYCLE_SECONDS,
 )
+
+
+def get_pool_status() -> dict[str, object]:
+    pool = engine.sync_engine.pool
+    status: dict[str, object] = {"class": pool.__class__.__name__, "status": pool.status()}
+    for attr in ("size", "checkedout", "checkedin", "overflow"):
+        value = getattr(pool, attr, None)
+        if callable(value):
+            try:
+                status[attr] = value()
+            except Exception:
+                continue
+    return status
+
+
+def log_pool_status(logger: logging.Logger, context: str) -> None:
+    try:
+        logger.info("Database pool status %s: %s", context, get_pool_status())
+    except Exception as error:
+        logger.debug("Failed to collect database pool status for %s: %s", context, error)
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
