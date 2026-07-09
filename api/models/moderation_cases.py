@@ -29,6 +29,7 @@ class ModerationActionSummaryModel(BaseModel):
     created_at: datetime
     expires_at: datetime | None = None
     is_active: bool
+    is_reverted: bool = False
     rules: list["ModerationRuleRef"] = Field(default_factory=list)
 
 

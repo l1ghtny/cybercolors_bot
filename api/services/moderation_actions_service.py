@@ -38,6 +38,7 @@ from api.services.moderation_core import (
     build_actor,
     deleted_message_deletion_type,
     ensure_case_writable_for_actions,
+    moderation_action_is_reverted,
     naive_utcnow,
     to_deleted_message_read,
     to_moderation_history,
@@ -523,6 +524,7 @@ def _to_action_summary(
         source_created_at_note=import_metadata.get("source_created_at_note"),
         expires_at=expires_at,
         is_active=is_active,
+        is_reverted=moderation_action_is_reverted(action_type, is_active),
         rules_count=rules_count,
         deleted_messages_count=deleted_messages_count,
     )

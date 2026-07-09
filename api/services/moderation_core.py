@@ -21,6 +21,7 @@ from api.models.moderation_cases import (
 )
 from api.models.user_profiles import NicknameRecordModel
 from api.services.moderation_import_metadata import action_import_metadata
+from src.db.models import ActionType
 from src.db.models import (
     CaseStatus,
     DeletedMessage,
@@ -40,6 +41,13 @@ from src.db.models import (
 
 def naive_utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def moderation_action_is_reverted(action_type: ActionType | str, is_active: bool) -> bool:
+    if is_active:
+        return False
+    normalized = action_type.value if hasattr(action_type, "value") else str(action_type)
+    return normalized in {ActionType.WARN.value, ActionType.MUTE.value, ActionType.BAN.value}
 
 
 SYSTEM_ACTOR = ModerationActorModel(
@@ -303,6 +311,7 @@ async def _to_action_summary(
         created_at=action.created_at,
         expires_at=action.expires_at,
         is_active=action.is_active,
+        is_reverted=moderation_action_is_reverted(action.action_type, action.is_active),
         rules=_rule_refs_from_action(action),
     )
 
@@ -469,6 +478,7 @@ def to_moderation_history(result: Sequence[ModerationAction]) -> list[Moderation
                 source_created_at_note=import_metadata["source_created_at_note"],
                 expires_at=action.expires_at,
                 is_active=action.is_active,
+                is_reverted=moderation_action_is_reverted(action.action_type, action.is_active),
             )
         )
     return payload

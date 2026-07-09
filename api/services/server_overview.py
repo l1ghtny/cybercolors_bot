@@ -12,7 +12,12 @@ from api.models.server_overview import (
     ServerTimelineModel,
 )
 from api.services.ai_moderation import count_pending_ai_suggestions
-from api.services.moderation_core import build_optional_actor, get_system_actor, naive_utcnow
+from api.services.moderation_core import (
+    build_optional_actor,
+    get_system_actor,
+    moderation_action_is_reverted,
+    naive_utcnow,
+)
 from src.db.models import (
     ActionType,
     Birthday,
@@ -196,6 +201,7 @@ async def _action_events(session: AsyncSession, server_id: int, limit: int) -> l
                     "case_id": str(action.case_id) if action.case_id else None,
                     "rule_id": str(action.rule_id) if action.rule_id else None,
                     "is_active": action.is_active,
+                    "is_reverted": moderation_action_is_reverted(action.action_type, action.is_active),
                 },
             )
         )
