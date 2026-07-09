@@ -828,7 +828,7 @@ async def get_user_activity(
 async def get_server_activity_leaderboard(
     server_id: int,
     response: Response,
-    limit: int = Query(default=50, ge=1, le=200),
+    limit: int = Query(default=50, ge=1, le=10000),
     date_from: date | None = Query(default=None, description="Inclusive UTC date (YYYY-MM-DD)."),
     date_to: date | None = Query(default=None, description="Inclusive UTC date (YYYY-MM-DD)."),
     channels_limit: int = Query(default=5, ge=1, le=20, description="Max channels per user in breakdown."),
