@@ -16,9 +16,10 @@ from api.models.server_temp_voice import (
     ServerTempVoiceSettingsReadModel,
     ServerTempVoiceSettingsUpdateModel,
 )
-from api.services.discord_guilds import create_guild_voice_channel, fetch_guild_channels
+from api.services.discord_guilds import create_guild_voice_channel, delete_channel, fetch_guild_channels
 from api.services.moderation_core import naive_utcnow
 from src.db.models import (
+    AIModerationDecision,
     AttachmentLog,
     DeletedMessage,
     GlobalUser,
@@ -28,6 +29,7 @@ from src.db.models import (
     TempVoiceLog,
     TempVoiceParticipant,
     User,
+    VoiceChannel,
 )
 
 
@@ -368,6 +370,68 @@ async def get_temp_voice_archive_detail(
         )
     payload_messages.sort(key=lambda item: (item.created_at, item.message_id))
     return TempVoiceArchiveDetailModel(**summary.model_dump(), participants=participants, messages=payload_messages)
+
+
+async def delete_active_temp_voice_channel(
+    *,
+    session: AsyncSession,
+    server_id: int,
+    log_id: UUID,
+    actor_user_id: int,
+) -> TempVoiceArchiveSummaryModel:
+    temp_log = await session.get(TempVoiceLog, log_id)
+    if temp_log is None or temp_log.server_id != server_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Temporary voice archive not found")
+    if temp_log.deleted_at is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Temporary voice channel is already archived")
+
+    try:
+        await delete_channel(
+            temp_log.channel_id,
+            reason=f"Manual temporary voice cleanup from dashboard by {actor_user_id}",
+        )
+    except HTTPException as error:
+        if error.status_code != status.HTTP_404_NOT_FOUND:
+            raise
+
+    deleted_at = naive_utcnow()
+    temp_log.deleted_at = deleted_at
+    temp_log.archive_channel_id = None
+    temp_log.archive_message_id = None
+    session.add(temp_log)
+
+    active_participants = (
+        await session.exec(
+            select(TempVoiceParticipant).where(
+                TempVoiceParticipant.log_id == temp_log.id,
+                TempVoiceParticipant.left_at.is_(None),
+            )
+        )
+    ).all()
+    for participant in active_participants:
+        participant.left_at = deleted_at
+        session.add(participant)
+
+    active_channel = await session.get(VoiceChannel, (server_id, temp_log.channel_id))
+    if active_channel is not None:
+        await session.delete(active_channel)
+
+    decisions = (
+        await session.exec(
+            select(AIModerationDecision).where(
+                AIModerationDecision.server_id == server_id,
+                AIModerationDecision.channel_id == temp_log.channel_id,
+            )
+        )
+    ).all()
+    for decision in decisions:
+        decision.archive_channel_id = None
+        decision.archive_message_id = None
+        decision.updated_at = deleted_at
+        session.add(decision)
+
+    await session.flush()
+    return await _archive_summary(session, temp_log)
 
 
 def _archive_message_line(message: TempVoiceArchiveMessageModel) -> str:

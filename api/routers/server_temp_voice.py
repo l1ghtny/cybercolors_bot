@@ -16,6 +16,7 @@ from api.services.rbac_service import assert_user_has_permission
 from api.services.server_temp_voice import (
     build_temp_voice_archive_transcript,
     create_temp_voice_trigger_channel_and_attach,
+    delete_active_temp_voice_channel,
     get_temp_voice_archive_detail,
     get_or_create_server_temp_voice_settings,
     list_temp_voice_archives,
@@ -122,6 +123,21 @@ async def get_server_temp_voice_archive(
     _: int = Depends(require_server_permission("temp_voice.settings.view")),
 ):
     return await get_temp_voice_archive_detail(session=session, server_id=server_id, log_id=log_id)
+
+
+@server_temp_voice_router.delete("/archives/{log_id}", response_model=TempVoiceArchiveSummaryModel)
+async def delete_server_temp_voice_archive(
+    server_id: int,
+    log_id: UUID,
+    session: AsyncSession = Depends(get_session),
+    current_user_id: int = Depends(require_server_permission("temp_voice.settings.edit")),
+):
+    return await delete_active_temp_voice_channel(
+        session=session,
+        server_id=server_id,
+        log_id=log_id,
+        actor_user_id=current_user_id,
+    )
 
 
 @server_temp_voice_router.post("/trigger-channel/create", response_model=ServerTempVoiceSettingsReadModel)

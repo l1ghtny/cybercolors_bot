@@ -1,4 +1,5 @@
 import os
+from urllib.parse import quote
 
 import httpx
 from fastapi import HTTPException, status
@@ -68,8 +69,10 @@ async def _discord_put(path: str, payload: dict | None = None) -> list[dict] | d
         return {}
     return response.json()
 
-async def _discord_delete(path: str, payload: dict | None = None) -> list[dict] | dict:
+async def _discord_delete(path: str, payload: dict | None = None, reason: str | None = None) -> list[dict] | dict:
     headers = {"Authorization": f"Bot {_get_bot_token()}"}
+    if reason:
+        headers["X-Audit-Log-Reason"] = quote(reason[:512])
     async with httpx.AsyncClient() as client:
         response = await client.request("DELETE", f"{DISCORD_API_BASE_URL}{path}", headers=headers, json=payload)
     if response.status_code >= 400:
@@ -251,6 +254,10 @@ async def create_channel_message(
 
 async def delete_channel_message(channel_id: int, message_id: int) -> None:
     await _discord_delete(f"/channels/{channel_id}/messages/{message_id}")
+
+
+async def delete_channel(channel_id: int, *, reason: str | None = None) -> None:
+    await _discord_delete(f"/channels/{channel_id}", reason=reason)
 
 
 async def create_user_dm_channel(user_id: int) -> dict:
