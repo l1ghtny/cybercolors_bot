@@ -158,6 +158,36 @@ async def fetch_guild_member(server_id: int, user_id: int) -> dict | None:
     return None
 
 
+async def fetch_all_guild_members(server_id: int) -> list[dict]:
+    members: list[dict] = []
+    after: int | None = None
+
+    while True:
+        params: dict[str, str | int] = {"limit": 1000}
+        if after is not None:
+            params["after"] = str(after)
+
+        payload = await _discord_get(f"/guilds/{server_id}/members", params=params)
+        if not isinstance(payload, list):
+            break
+
+        page = [item for item in payload if isinstance(item, dict)]
+        members.extend(page)
+        if len(page) < 1000:
+            break
+
+        last_user = page[-1].get("user") or {}
+        last_user_id = last_user.get("id")
+        if last_user_id is None:
+            break
+        next_after = int(last_user_id)
+        if next_after == after:
+            break
+        after = next_after
+
+    return members
+
+
 async def search_guild_members(server_id: int, query: str, limit: int = 10) -> list[dict]:
     payload = await _discord_get(
         f"/guilds/{server_id}/members/search",

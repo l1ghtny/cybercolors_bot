@@ -1,0 +1,97 @@
+import asyncio
+
+from api.services import discord_guilds, server_directory
+
+
+def _member(
+    user_id: int,
+    *,
+    username: str,
+    nick: str | None = None,
+    roles: list[int] | None = None,
+    bot: bool = False,
+) -> dict:
+    return {
+        "user": {
+            "id": str(user_id),
+            "username": username,
+            "global_name": username.title(),
+            "avatar": f"avatar-{user_id}",
+            "bot": bot,
+        },
+        "nick": nick,
+        "roles": [str(role_id) for role_id in (roles or [])],
+        "joined_at": "2026-07-09T12:00:00+00:00",
+    }
+
+
+def test_fetch_all_guild_members_paginates(monkeypatch):
+    calls: list[dict] = []
+    first_page = [_member(index, username=f"user-{index}") for index in range(1, 1001)]
+    second_page = [_member(1001, username="last-user")]
+
+    async def fake_discord_get(path: str, params: dict | None = None):
+        calls.append({"path": path, "params": params})
+        return first_page if len(calls) == 1 else second_page
+
+    monkeypatch.setattr(discord_guilds, "_discord_get", fake_discord_get)
+
+    result = asyncio.run(discord_guilds.fetch_all_guild_members(123))
+
+    assert len(result) == 1001
+    assert calls == [
+        {"path": "/guilds/123/members", "params": {"limit": 1000}},
+        {
+            "path": "/guilds/123/members",
+            "params": {"limit": 1000, "after": "1000"},
+        },
+    ]
+
+
+def test_query_server_members_filters_roles_and_paginates(monkeypatch):
+    members = [
+        _member(1, username="charlie", roles=[10]),
+        _member(2, username="alpha", nick="Moderator Alpha", roles=[20, 30]),
+        _member(3, username="bravo", roles=[20]),
+    ]
+
+    async def fake_cached_members(server_id: int):
+        assert server_id == 123
+        return members
+
+    monkeypatch.setattr(server_directory, "_cached_guild_members", fake_cached_members)
+
+    page = asyncio.run(
+        server_directory.query_server_members(
+            123,
+            role_ids=[20],
+            offset=1,
+            limit=1,
+        )
+    )
+
+    assert page.total == 2
+    assert page.offset == 1
+    assert page.limit == 1
+    assert [item.user_id for item in page.items] == ["2"]
+    assert page.items[0].role_ids == ["20", "30"]
+
+
+def test_query_server_members_searches_nickname_username_and_id(monkeypatch):
+    members = [
+        _member(101, username="first-user", nick="Visible Nick", roles=[10]),
+        _member(202, username="second-user", roles=[20]),
+    ]
+
+    async def fake_cached_members(server_id: int):
+        return members
+
+    monkeypatch.setattr(server_directory, "_cached_guild_members", fake_cached_members)
+
+    nickname_page = asyncio.run(server_directory.query_server_members(123, search="visible"))
+    username_page = asyncio.run(server_directory.query_server_members(123, search="SECOND"))
+    id_page = asyncio.run(server_directory.query_server_members(123, search="101"))
+
+    assert [item.user_id for item in nickname_page.items] == ["101"]
+    assert [item.user_id for item in username_page.items] == ["202"]
+    assert [item.user_id for item in id_page.items] == ["101"]

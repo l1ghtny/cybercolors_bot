@@ -21,6 +21,7 @@ from api.models.server_directory import (
     ServerChannelModel,
     ServerMetadataModel,
     ServerRoleModel,
+    ServerMemberPageModel,
     ServerUserModel,
     ServerUsersLookupRequest,
 )
@@ -32,6 +33,7 @@ from api.services.server_directory import (
     list_server_channels,
     list_server_roles,
     lookup_server_users_by_ids,
+    query_server_members,
     query_server_users,
 )
 from api.services.moderation_users_service import build_user_profile_card
@@ -108,6 +110,27 @@ async def get_server_users(
     session: AsyncSession = Depends(get_session),
 ):
     return await query_server_users(session=session, server_id=server_id, search=search, limit=limit)
+
+
+@servers.get(
+    "/{server_id}/members",
+    response_model=ServerMemberPageModel,
+    dependencies=[Depends(require_server_dashboard_access)],
+)
+async def get_server_members(
+    server_id: int,
+    search: str | None = Query(default=None, max_length=100),
+    role_id: list[int] | None = Query(default=None),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+):
+    return await query_server_members(
+        server_id,
+        search=search,
+        role_ids=role_id,
+        offset=offset,
+        limit=limit,
+    )
 
 
 @servers.post("/{server_id}/users/lookup", response_model=list[ServerUserModel], dependencies=[Depends(require_server_dashboard_access)])

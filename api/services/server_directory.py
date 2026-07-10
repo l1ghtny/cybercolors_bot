@@ -1,14 +1,26 @@
+import asyncio
+import os
+import time
+from dataclasses import dataclass
+
 from sqlalchemy import String, cast, func, or_
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from api.models.server_directory import ServerChannelModel, ServerMetadataModel, ServerRoleModel, ServerUserModel
+from api.models.server_directory import (
+    ServerChannelModel,
+    ServerMemberPageModel,
+    ServerMetadataModel,
+    ServerRoleModel,
+    ServerUserModel,
+)
 from api.services.discord_guilds import (
     TEXT_CHANNEL_TYPES,
     fetch_channel,
     fetch_guild_channels,
     fetch_guild_metadata,
     fetch_guild_roles,
+    fetch_all_guild_members,
 )
 from src.db.models import GlobalUser, Server, User
 
@@ -20,14 +32,116 @@ def _display_name(user: User, global_user: GlobalUser) -> str:
         return global_user.username
     return str(user.user_id)
 
-
 def _to_server_user(user: User, global_user: GlobalUser) -> ServerUserModel:
     return ServerUserModel(
         user_id=str(user.user_id),
         display_name=_display_name(user, global_user),
         username=global_user.username,
+        server_nickname=user.server_nickname,
         avatar_hash=global_user.avatar_hash,
         is_member=user.is_member,
+    )
+
+
+@dataclass
+class _GuildMembersCacheEntry:
+    expires_at: float
+    members: list[dict]
+
+
+_MEMBER_DIRECTORY_CACHE_SECONDS = max(
+    15.0,
+    float(os.getenv("SERVER_MEMBER_DIRECTORY_CACHE_SECONDS", "60")),
+)
+_member_directory_cache: dict[int, _GuildMembersCacheEntry] = {}
+_member_directory_locks: dict[int, asyncio.Lock] = {}
+
+
+async def _cached_guild_members(server_id: int) -> list[dict]:
+    now = time.monotonic()
+    cached = _member_directory_cache.get(server_id)
+    if cached and cached.expires_at > now:
+        return cached.members
+
+    lock = _member_directory_locks.setdefault(server_id, asyncio.Lock())
+    async with lock:
+        now = time.monotonic()
+        cached = _member_directory_cache.get(server_id)
+        if cached and cached.expires_at > now:
+            return cached.members
+
+        members = await fetch_all_guild_members(server_id)
+        _member_directory_cache[server_id] = _GuildMembersCacheEntry(
+            expires_at=now + _MEMBER_DIRECTORY_CACHE_SECONDS,
+            members=members,
+        )
+        return members
+
+
+def _to_discord_server_user(member: dict) -> ServerUserModel | None:
+    raw_user = member.get("user")
+    if not isinstance(raw_user, dict) or raw_user.get("id") is None:
+        return None
+
+    user_id = str(raw_user["id"])
+    username = raw_user.get("username")
+    server_nickname = member.get("nick")
+    global_name = raw_user.get("global_name")
+    display_name = server_nickname or global_name or username or user_id
+
+    return ServerUserModel(
+        user_id=user_id,
+        display_name=str(display_name),
+        username=str(username) if username is not None else None,
+        server_nickname=str(server_nickname) if server_nickname is not None else None,
+        avatar_hash=str(raw_user["avatar"]) if raw_user.get("avatar") else None,
+        is_member=True,
+        role_ids=[str(role_id) for role_id in member.get("roles", [])],
+        joined_at=str(member["joined_at"]) if member.get("joined_at") else None,
+        is_bot=bool(raw_user.get("bot", False)),
+    )
+
+
+async def query_server_members(
+    server_id: int,
+    *,
+    search: str | None = None,
+    role_ids: list[int] | None = None,
+    offset: int = 0,
+    limit: int = 50,
+) -> ServerMemberPageModel:
+    raw_members = await _cached_guild_members(server_id)
+    members = [
+        payload
+        for member in raw_members
+        if (payload := _to_discord_server_user(member)) is not None
+    ]
+
+    normalized_search = (search or "").strip().casefold()
+    selected_role_ids = {str(role_id) for role_id in (role_ids or [])}
+    if normalized_search:
+        members = [
+            member
+            for member in members
+            if normalized_search in member.user_id.casefold()
+            or normalized_search in (member.username or "").casefold()
+            or normalized_search in (member.server_nickname or "").casefold()
+            or normalized_search in member.display_name.casefold()
+        ]
+    if selected_role_ids:
+        members = [
+            member
+            for member in members
+            if selected_role_ids.intersection(member.role_ids)
+        ]
+
+    members.sort(key=lambda member: (member.display_name.casefold(), member.user_id))
+    total = len(members)
+    return ServerMemberPageModel(
+        items=members[offset : offset + limit],
+        total=total,
+        offset=offset,
+        limit=limit,
     )
 
 
