@@ -107,6 +107,7 @@ async def query_server_members(
     *,
     search: str | None = None,
     role_ids: list[int] | None = None,
+    sort: str = "name_asc",
     offset: int = 0,
     limit: int = 50,
 ) -> ServerMemberPageModel:
@@ -135,7 +136,25 @@ async def query_server_members(
             if selected_role_ids.intersection(member.role_ids)
         ]
 
-    members.sort(key=lambda member: (member.display_name.casefold(), member.user_id))
+    if sort == "name_desc":
+        members.sort(
+            key=lambda member: (member.display_name.casefold(), member.user_id),
+            reverse=True,
+        )
+    elif sort == "joined_newest":
+        members.sort(key=lambda member: (member.display_name.casefold(), member.user_id))
+        members.sort(key=lambda member: member.joined_at or "", reverse=True)
+    elif sort == "joined_oldest":
+        members.sort(
+            key=lambda member: (
+                member.joined_at is None,
+                member.joined_at or "",
+                member.display_name.casefold(),
+                member.user_id,
+            )
+        )
+    else:
+        members.sort(key=lambda member: (member.display_name.casefold(), member.user_id))
     total = len(members)
     return ServerMemberPageModel(
         items=members[offset : offset + limit],

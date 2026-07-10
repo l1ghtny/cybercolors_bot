@@ -10,6 +10,7 @@ def _member(
     nick: str | None = None,
     roles: list[int] | None = None,
     bot: bool = False,
+    joined_at: str | None = "2026-07-09T12:00:00+00:00",
 ) -> dict:
     return {
         "user": {
@@ -21,7 +22,7 @@ def _member(
         },
         "nick": nick,
         "roles": [str(role_id) for role_id in (roles or [])],
-        "joined_at": "2026-07-09T12:00:00+00:00",
+        "joined_at": joined_at,
     }
 
 
@@ -95,3 +96,38 @@ def test_query_server_members_searches_nickname_username_and_id(monkeypatch):
     assert [item.user_id for item in nickname_page.items] == ["101"]
     assert [item.user_id for item in username_page.items] == ["202"]
     assert [item.user_id for item in id_page.items] == ["101"]
+
+
+def test_query_server_members_sorts_by_name_and_join_date(monkeypatch):
+    members = [
+        _member(
+            1,
+            username="charlie",
+            joined_at="2025-01-01T12:00:00+00:00",
+        ),
+        _member(
+            2,
+            username="alpha",
+            joined_at="2026-01-01T12:00:00+00:00",
+        ),
+        _member(3, username="bravo", joined_at=None),
+    ]
+
+    async def fake_cached_members(server_id: int):
+        return members
+
+    monkeypatch.setattr(server_directory, "_cached_guild_members", fake_cached_members)
+
+    name_desc = asyncio.run(
+        server_directory.query_server_members(123, sort="name_desc")
+    )
+    joined_newest = asyncio.run(
+        server_directory.query_server_members(123, sort="joined_newest")
+    )
+    joined_oldest = asyncio.run(
+        server_directory.query_server_members(123, sort="joined_oldest")
+    )
+
+    assert [item.user_id for item in name_desc.items] == ["1", "3", "2"]
+    assert [item.user_id for item in joined_newest.items] == ["2", "1", "3"]
+    assert [item.user_id for item in joined_oldest.items] == ["1", "2", "3"]

@@ -1,3 +1,5 @@
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -121,6 +123,7 @@ async def get_server_members(
     server_id: int,
     search: str | None = Query(default=None, max_length=100),
     role_id: list[int] | None = Query(default=None),
+    sort: Literal["name_asc", "name_desc", "joined_newest", "joined_oldest"] = Query(default="name_asc"),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=200),
 ):
@@ -128,6 +131,7 @@ async def get_server_members(
         server_id,
         search=search,
         role_ids=role_id,
+        sort=sort,
         offset=offset,
         limit=limit,
     )
