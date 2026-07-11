@@ -73,7 +73,7 @@ from src.modules.moderation.moderation_helpers import (
     handle_bulk_message_deletion,
     handle_message_deletion,
 )
-from src.db.models import Server, Replies, Triggers, GlobalUser, ModerationRule
+from src.db.models import Server, Replies, Triggers, GlobalUser, ModerationRule, ServerSecuritySettings
 from src.modules.birthdays_module.user_validation.user_validate_time import users_time
 from src.commands.birthdays.add_new_birthday import add_birthday, change_birthday
 from src.commands.birthdays.show_birthday_list import send_birthday_list
@@ -131,6 +131,7 @@ class Aclient(discord.AutoShardedClient):
         self.known_global_users = set()
         self.current_server_rules: dict[int, list[dict]] = {}
         self.guild_presence_synced = False
+        self.security_pause_cache: dict[int, tuple[bool, float]] = {}
 
     async def setup_hook(self):
         """
@@ -200,6 +201,17 @@ class Aclient(discord.AutoShardedClient):
 
 
 
+    async def public_responses_paused(self, server_id: int) -> bool:
+        now = asyncio.get_running_loop().time()
+        cached = self.security_pause_cache.get(server_id)
+        if cached is not None and cached[1] > now:
+            return cached[0]
+        async with get_async_session() as session:
+            settings = await session.get(ServerSecuritySettings, server_id)
+        paused = bool(settings and settings.public_bot_responses_paused)
+        self.security_pause_cache[server_id] = (paused, now + 5.0)
+        return paused
+
     # commands local sync
     async def on_ready(self):
         await self.wait_until_ready()
@@ -228,7 +240,40 @@ class Aclient(discord.AutoShardedClient):
 
 
 client = Aclient()
-tree = app_commands.CommandTree(client)
+class CyberColorsCommandTree(app_commands.CommandTree):
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.guild_id is None or not isinstance(interaction.user, discord.Member):
+            return True
+        command_name = interaction.command.qualified_name if interaction.command else ""
+        if command_name == "mod" or command_name.startswith("mod "):
+            return True
+        if interaction.user.guild_permissions.manage_guild:
+            return True
+
+        async with get_async_session() as session:
+            settings = await session.get(ServerSecuritySettings, interaction.guild_id)
+        if (
+            settings is None
+            or not settings.newcomer_restriction_enabled
+            or settings.newcomer_role_id is None
+        ):
+            return True
+        if settings.newcomer_role_id not in {role.id for role in interaction.user.roles}:
+            return True
+
+        message = (
+            "Команды бота недоступны, пока действует ограничение для новичков. "
+            "Обратитесь к модератору, если это ошибка.\n"
+            "Bot commands are unavailable while the newcomer restriction is active."
+        )
+        if interaction.response.is_done():
+            await interaction.followup.send(message, ephemeral=True)
+        else:
+            await interaction.response.send_message(message, ephemeral=True)
+        return False
+
+
+tree = CyberColorsCommandTree(client)
 
 moderation_group = app_commands.Group(
     name="mod",
@@ -613,9 +658,10 @@ async def on_message(message):
     link_deleted = await delete_server_links(message, message_content_base)
     if link_deleted is True:
         return
-    database_found, server_id = await check_for_replies(message)
-    if database_found is False:
-        await look_for_bot_reply(message, client)
+    if not await client.public_responses_paused(server.id):
+        database_found, server_id = await check_for_replies(message)
+        if database_found is False:
+            await look_for_bot_reply(message, client)
     asyncio.create_task(process_background_tasks(message, client.known_global_users))
 
 

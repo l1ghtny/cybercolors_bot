@@ -427,7 +427,14 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         category="security",
         summary="Enable or disable lockdown permissions for the verified role.",
         required_permissions=["manage_guild"],
-        parameters=[_param("enabled", "boolean", "Enable lockdown when true; restore normal permissions when false.")],
+        parameters=[
+            _param("enabled", "boolean", "Enable lockdown when true; restore saved values when false."),
+            _param("slowmode_seconds", "integer", "Slowmode interval from 0 to 21600 seconds.", required=False),
+            _param("channel_ids", "string", "Comma-separated text channel IDs affected by slowmode.", required=False),
+            _param("pause_public_responses", "boolean", "Pause public bot and AI replies.", required=False),
+            _param("pause_role_mutations", "boolean", "Pause ordinary role assignments and removals.", required=False),
+            _param("reason", "string", "Incident reason.", required=False),
+        ],
         workflow=["Requires a verified role and saved permission template, edits the role permissions, stores state, and confirms ephemerally."],
     ),
     BotCommandDocModel(

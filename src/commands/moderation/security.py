@@ -7,6 +7,7 @@ from api.models.server_security import (
     ServerSecurityCreateNewcomerRoleModel,
     ServerSecurityNewcomerRoleUpdateModel,
     ServerSecurityPermissionsUpdateModel,
+    ServerSecurityLockdownUpdateModel,
 )
 from api.services.server_security import (
     build_newcomer_role_suggestion,
@@ -14,6 +15,7 @@ from api.services.server_security import (
     get_or_create_server_security_settings,
     update_newcomer_role,
     update_permission_templates,
+    apply_lockdown_state,
 )
 from src.db.database import get_async_session
 from src.db.models import ServerSecuritySettings
@@ -249,9 +251,17 @@ async def security_capture_permissions(interaction: discord.Interaction, mode: a
 @app_commands.checks.has_permissions(manage_guild=True)
 @app_commands.command(
     name="security_lockdown",
-    description="Enable or disable lockdown permissions for the verified role.",
+    description="Enable or disable lockdown, slowmode, and emergency controls.",
 )
-async def security_lockdown(interaction: discord.Interaction, enabled: bool):
+async def security_lockdown(
+    interaction: discord.Interaction,
+    enabled: bool,
+    slowmode_seconds: app_commands.Range[int, 0, 21600] = 0,
+    channel_ids: str | None = None,
+    pause_public_responses: bool = True,
+    pause_role_mutations: bool = True,
+    reason: str | None = None,
+):
     if interaction.guild is None:
         await interaction.response.send_message(tr(None, "common.server_only"), ephemeral=True)
         return
@@ -259,38 +269,42 @@ async def security_lockdown(interaction: discord.Interaction, enabled: bool):
     locale = await get_server_locale(interaction.guild.id)
     if not await ensure_bot_permission(interaction, "security.lockdown.manage", locale=locale):
         return
-    settings = await _get_or_create_security_settings(interaction.guild.id, interaction.guild.name)
-    role = interaction.guild.get_role(settings.verified_role_id) if settings.verified_role_id else None
-    if not role:
-        await interaction.followup.send(tr(locale, "security.verified_role_missing"), ephemeral=True)
-        return
 
-    target_permissions = settings.lockdown_permissions if enabled else settings.normal_permissions
-    template_name = "lockdown" if enabled else "normal"
-    if target_permissions is None:
-        await interaction.followup.send(
-            tr(locale, "security.template_missing", template_name=template_name),
-            ephemeral=True,
+    channels = [
+        value.strip()
+        for value in (channel_ids or "").replace(";", ",").split(",")
+        if value.strip()
+    ]
+    try:
+        body = ServerSecurityLockdownUpdateModel(
+            enabled=enabled,
+            slowmode_seconds=slowmode_seconds if enabled else None,
+            channel_ids=channels if enabled else [],
+            pause_public_responses=enabled and pause_public_responses,
+            pause_role_mutations=enabled and pause_role_mutations,
+            reason=reason,
         )
+        async with get_async_session() as session:
+            settings = await apply_lockdown_state(
+                session=session,
+                server_id=interaction.guild.id,
+                body=body,
+                server_name=interaction.guild.name,
+            )
+            await session.commit()
+    except Exception as error:
+        await interaction.followup.send(str(error), ephemeral=True)
         return
 
-    await role.edit(permissions=discord.Permissions(target_permissions))
-
-    async with get_async_session() as session:
-        settings = await get_or_create_server_security_settings(session=session, server_id=interaction.guild.id, server_name=interaction.guild.name)
-        settings.lockdown_enabled = enabled
-        settings.updated_at = _utcnow_naive()
-        session.add(settings)
-        await session.commit()
-
-    state = tr(locale, "security.state_enabled" if enabled else "security.state_disabled")
+    state = tr(locale, "security.state_enabled" if settings.lockdown_enabled else "security.state_disabled")
+    role = interaction.guild.get_role(settings.verified_role_id) if settings.verified_role_id else None
     await interaction.followup.send(
         tr(
             locale,
             "security.lockdown_updated",
             state=state,
-            role_name=role.name,
-            template_name=template_name,
+            role_name=role.name if role else str(settings.verified_role_id),
+            template_name="lockdown" if settings.lockdown_enabled else "normal",
         ),
         ephemeral=True,
     )

@@ -314,6 +314,13 @@ async def update_monitored_user(
         item.reason = reason
     if is_active is not None:
         item.is_active = is_active
+        if item.source == "newcomer":
+            if is_active:
+                item.released_at = None
+            else:
+                item.released_at = naive_utcnow()
+                item.release_due_at = None
+                item.release_error = None
     if is_active is not None and is_active != previous_active:
         _append_status_event(
             session=session,

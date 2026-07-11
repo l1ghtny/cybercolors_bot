@@ -7,6 +7,8 @@ Create Date: 2026-07-09 19:15:00.000000
 
 from collections.abc import Sequence
 
+import sqlalchemy as sa
+
 from alembic import op
 
 # revision identifiers, used by Alembic.
@@ -18,10 +20,19 @@ depends_on: str | Sequence[str] | None = None
 PARTITION_COUNT = 16
 
 
-def upgrade() -> None:
+def _message_claims_relation_kind() -> str | None:
+    return op.get_bind().execute(
+        sa.text(
+            "SELECT relkind::text FROM pg_class "
+            "WHERE oid = to_regclass('message_claims')"
+        )
+    ).scalar_one_or_none()
+
+
+def _create_partitioned_message_claims_table() -> None:
     op.execute(
         """
-        CREATE TABLE IF NOT EXISTS message_claims (
+        CREATE TABLE message_claims (
             message_id BIGINT NOT NULL,
             server_id BIGINT NOT NULL,
             channel_id BIGINT NOT NULL,
@@ -32,6 +43,22 @@ def upgrade() -> None:
         ) PARTITION BY HASH (message_id)
         """
     )
+
+
+def upgrade() -> None:
+    relation_kind = _message_claims_relation_kind()
+    needs_legacy_copy = relation_kind == "r"
+
+    if needs_legacy_copy:
+        op.execute("ALTER TABLE message_claims RENAME TO message_claims_legacy")
+        _create_partitioned_message_claims_table()
+    elif relation_kind is None:
+        _create_partitioned_message_claims_table()
+    elif relation_kind != "p":
+        raise RuntimeError(
+            "message_claims exists but is neither a regular nor partitioned table"
+        )
+
     for partition in range(PARTITION_COUNT):
         op.execute(
             f"""
@@ -40,6 +67,19 @@ def upgrade() -> None:
             FOR VALUES WITH (MODULUS {PARTITION_COUNT}, REMAINDER {partition})
             """
         )
+
+    if needs_legacy_copy:
+        op.execute(
+            """
+            INSERT INTO message_claims (
+                message_id, server_id, channel_id, user_id, created_at, claimed_at
+            )
+            SELECT message_id, server_id, channel_id, user_id, created_at, claimed_at
+            FROM message_claims_legacy
+            ON CONFLICT (message_id) DO NOTHING
+            """
+        )
+        op.execute("DROP TABLE message_claims_legacy")
 
     op.execute(
         "CREATE INDEX IF NOT EXISTS ix_message_claims_server_created_at "

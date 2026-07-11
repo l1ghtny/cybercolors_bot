@@ -205,7 +205,36 @@ async def fetch_channel_message(channel_id: int, message_id: int) -> dict:
     return {}
 
 
-async def update_guild_role_permissions(server_id: int, role_id: int, permissions: int) -> dict:
+async def _assert_role_mutations_allowed(server_id: int) -> None:
+    from src.db.database import get_async_session
+    from src.db.models import ServerSecuritySettings
+
+    async with get_async_session() as session:
+        settings = await session.get(ServerSecuritySettings, server_id)
+    if settings is not None and settings.role_mutations_paused:
+        raise HTTPException(
+            status_code=status.HTTP_423_LOCKED,
+            detail="Role mutations are paused by server security settings",
+        )
+
+
+async def update_channel_slowmode(channel_id: int, seconds: int) -> dict:
+    payload = await _discord_patch(
+        f"/channels/{channel_id}",
+        {"rate_limit_per_user": max(0, min(seconds, 21600))},
+    )
+    return payload if isinstance(payload, dict) else {}
+
+
+async def update_guild_role_permissions(
+    server_id: int,
+    role_id: int,
+    permissions: int,
+    *,
+    bypass_security_pause: bool = False,
+) -> dict:
+    if not bypass_security_pause:
+        await _assert_role_mutations_allowed(server_id)
     payload = await _discord_patch(
         f"/guilds/{server_id}/roles/{role_id}",
         {"permissions": str(permissions)},
@@ -346,10 +375,12 @@ async def create_direct_message(user_id: int, content: str) -> dict:
 
 
 async def add_guild_member_role(server_id: int, user_id: int, role_id: int) -> None:
+    await _assert_role_mutations_allowed(server_id)
     await _discord_put(f"/guilds/{server_id}/members/{user_id}/roles/{role_id}")
 
 
 async def remove_guild_member_role(server_id: int, user_id: int, role_id: int) -> None:
+    await _assert_role_mutations_allowed(server_id)
     await _discord_delete(f"/guilds/{server_id}/members/{user_id}/roles/{role_id}")
 
 

@@ -2,9 +2,12 @@ from fastapi import APIRouter, Depends
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.dependencies.server_access import require_server_dashboard_access, require_server_permission
+from api.dependencies.current_user import get_current_discord_user_id
+from api.models.monitoring import MonitoredUserReadModel
 from api.models.server_security import (
     ServerSecurityCreateNewcomerRoleModel,
     ServerSecurityLockdownUpdateModel,
+    ServerSecurityNewcomerActionModel,
     ServerSecurityNewcomerRoleUpdateModel,
     ServerSecurityPermissionsUpdateModel,
     ServerSecurityRoleSuggestionModel,
@@ -14,6 +17,7 @@ from api.models.server_security import (
 from api.services.server_security import (
     apply_lockdown_state,
     build_newcomer_role_suggestion,
+    apply_newcomer_member_action,
     create_newcomer_role_and_attach,
     get_or_create_server_security_settings,
     to_server_security_read_model,
@@ -77,6 +81,27 @@ async def create_server_newcomer_role(
 ):
     settings = await create_newcomer_role_and_attach(session=session, server_id=server_id, body=body)
     return await to_server_security_read_model(server_id, settings)
+
+
+@server_security_router.post(
+    "/newcomers/{user_id}/action",
+    response_model=MonitoredUserReadModel,
+)
+async def act_on_server_newcomer(
+    server_id: int,
+    user_id: int,
+    body: ServerSecurityNewcomerActionModel,
+    session: AsyncSession = Depends(get_session),
+    actor_user_id: int = Depends(get_current_discord_user_id),
+    _: int = Depends(require_server_permission("security.settings.edit")),
+):
+    return await apply_newcomer_member_action(
+        session=session,
+        server_id=server_id,
+        user_id=user_id,
+        body=body,
+        actor_user_id=actor_user_id,
+    )
 
 
 @server_security_router.put("/permissions", response_model=ServerSecuritySettingsReadModel)

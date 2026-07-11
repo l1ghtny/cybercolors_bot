@@ -289,6 +289,11 @@ class ServerSecuritySettings(SQLModel, table=True):
     normal_permissions: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
     lockdown_permissions: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
     lockdown_enabled: bool = Field(default=False, nullable=False)
+    public_bot_responses_paused: bool = Field(default=False, nullable=False)
+    role_mutations_paused: bool = Field(default=False, nullable=False)
+    lockdown_slowmode_seconds: Optional[int] = Field(default=None, nullable=True)
+    lockdown_slowmode_channel_ids: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    lockdown_slowmode_previous: dict[str, int] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
     updated_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
 
     server: Server = Relationship(back_populates="security_settings")
@@ -339,6 +344,7 @@ class ServerAISettings(SQLModel, table=True):
     __tablename__ = "server_ai_settings"
 
     server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), primary_key=True))
+    answer_enabled: bool = Field(default=True, nullable=False)
     answer_channel_mode: str = Field(default="none", nullable=False, max_length=20)
     answer_allowed_channel_ids: list[str] = Field(default_factory=list, sa_column=Column(sa.JSON, nullable=False))
     answer_allowed_role_ids: list[str] = Field(default_factory=list, sa_column=Column(sa.JSON, nullable=False))

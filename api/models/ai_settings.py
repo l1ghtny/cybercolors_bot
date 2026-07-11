@@ -34,6 +34,7 @@ class ServerAISettingsPermissionsModel(BaseModel):
 
 class ServerAISettingsReadModel(BaseModel):
     server_id: str
+    answer_enabled: bool
     answer_channel_mode: AIChannelMode
     answer_allowed_channel_ids: list[str] = Field(default_factory=list)
     answer_allowed_role_ids: list[str] = Field(default_factory=list)
@@ -57,6 +58,7 @@ class ServerAISettingsReadModel(BaseModel):
 
 
 class ServerAISettingsUpdateModel(BaseModel):
+    answer_enabled: bool | None = None
     answer_channel_mode: AIChannelMode | None = None
     answer_allowed_channel_ids: list[str] | None = None
     answer_allowed_role_ids: list[str] | None = None

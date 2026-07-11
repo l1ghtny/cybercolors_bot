@@ -53,6 +53,7 @@ async def get_or_create_server_ai_settings(
 def to_server_ai_settings_read_model(settings: ServerAISettings) -> ServerAISettingsReadModel:
     return ServerAISettingsReadModel(
         server_id=str(settings.server_id),
+        answer_enabled=settings.answer_enabled,
         answer_channel_mode=settings.answer_channel_mode,
         answer_allowed_channel_ids=list(settings.answer_allowed_channel_ids or []),
         answer_allowed_role_ids=list(settings.answer_allowed_role_ids or []),
@@ -87,6 +88,8 @@ async def update_server_ai_settings(
 ) -> ServerAISettings:
     settings = await get_or_create_server_ai_settings(session, server_id, server_name=server_name)
 
+    if body.answer_enabled is not None:
+        settings.answer_enabled = body.answer_enabled
     if body.answer_channel_mode is not None:
         settings.answer_channel_mode = body.answer_channel_mode
     if body.answer_allowed_channel_ids is not None:
@@ -158,6 +161,8 @@ def can_invoke_answer_flow(
     channel_id: int,
     role_ids: list[int] | list[str],
 ) -> bool:
+    if not settings.answer_enabled:
+        return False
     if settings.answer_channel_mode == "none":
         return False
     if settings.answer_channel_mode == "selected" and str(channel_id) not in set(settings.answer_allowed_channel_ids or []):
