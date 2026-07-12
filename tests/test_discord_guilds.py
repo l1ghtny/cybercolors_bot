@@ -1,5 +1,7 @@
 import asyncio
 
+from fastapi import HTTPException, status
+
 from api.services import discord_guilds
 
 
@@ -34,3 +36,40 @@ def test_create_channel_message_sends_embed_payload_without_content():
             },
         }
     ]
+
+
+async def _overwrite_rate_limit_scenario(monkeypatch) -> None:
+    calls: list[tuple[str, dict]] = []
+    sleeps: list[float] = []
+
+    async def fake_put(path: str, payload: dict) -> dict:
+        calls.append((path, payload))
+        if len(calls) == 1:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail='Discord API error: {"retry_after": 0}',
+            )
+        return {}
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(discord_guilds, "_discord_put", fake_put)
+    monkeypatch.setattr(discord_guilds.asyncio, "sleep", fake_sleep)
+
+    await discord_guilds.update_channel_role_overwrite(
+        channel_id=123,
+        role_id=456,
+        allow=7,
+        deny=8,
+    )
+
+    assert calls == [
+        ("/channels/123/permissions/456", {"allow": "7", "deny": "8", "type": 0}),
+        ("/channels/123/permissions/456", {"allow": "7", "deny": "8", "type": 0}),
+    ]
+    assert sleeps == [0.1]
+
+
+def test_channel_role_overwrite_retries_rate_limits(monkeypatch):
+    asyncio.run(_overwrite_rate_limit_scenario(monkeypatch))

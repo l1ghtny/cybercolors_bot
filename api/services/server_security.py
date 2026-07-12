@@ -9,6 +9,7 @@ from api.models.server_security import (
     ServerSecurityCreateNewcomerRoleModel,
     ServerSecurityLockdownUpdateModel,
     ServerSecurityNewcomerActionModel,
+    ServerSecurityNewcomerRestrictionApplyResult,
     ServerSecurityNewcomerRoleUpdateModel,
     ServerSecurityPermissionsUpdateModel,
     ServerSecurityRoleSuggestionModel,
@@ -17,15 +18,18 @@ from api.models.server_security import (
 )
 from api.services.discord_guilds import (
     TEXT_CHANNEL_TYPES,
-    add_guild_member_role,
     create_guild_role,
     fetch_guild_roles,
     fetch_guild_channels,
-    remove_guild_member_role,
     update_guild_role_permissions,
     update_channel_slowmode,
 )
 from api.services.moderation_core import naive_utcnow
+from api.services.newcomer_probation import (
+    apply_newcomer_restriction_template,
+    promote_newcomer_member,
+    reapply_newcomer_member,
+)
 from api.services.monitoring_service import update_monitored_user, upsert_monitored_user
 from src.db.models import MonitoredUser, Server, ServerSecuritySettings
 
@@ -51,7 +55,10 @@ async def get_or_create_server_security_settings(
     return settings
 
 
-async def _resolve_role_name_and_permissions(server_id: int, role_id: int | None) -> tuple[str | None, int | None]:
+async def _resolve_role_name_and_permissions(
+    server_id: int,
+    role_id: int | None,
+) -> tuple[str | None, int | None]:
     if role_id is None:
         return None, None
     try:
@@ -73,14 +80,29 @@ async def to_server_security_read_model(
 ) -> ServerSecuritySettingsReadModel:
     role_name, _ = await _resolve_role_name_and_permissions(server_id, settings.verified_role_id)
     newcomer_role_name, _ = await _resolve_role_name_and_permissions(server_id, settings.newcomer_role_id)
+    newcomer_member_role_name, _ = await _resolve_role_name_and_permissions(
+        server_id,
+        settings.newcomer_member_role_id,
+    )
     return ServerSecuritySettingsReadModel(
         server_id=str(server_id),
         verified_role_id=str(settings.verified_role_id) if settings.verified_role_id is not None else None,
         verified_role_name=role_name,
         newcomer_role_id=str(settings.newcomer_role_id) if settings.newcomer_role_id is not None else None,
         newcomer_role_name=newcomer_role_name,
+        newcomer_member_role_id=(
+            str(settings.newcomer_member_role_id)
+            if settings.newcomer_member_role_id is not None
+            else None
+        ),
+        newcomer_member_role_name=newcomer_member_role_name,
         newcomer_restriction_enabled=settings.newcomer_restriction_enabled,
         newcomer_auto_release_minutes=settings.newcomer_auto_release_minutes,
+        newcomer_block_bot_commands=settings.newcomer_block_bot_commands,
+        newcomer_block_attachments=settings.newcomer_block_attachments,
+        newcomer_block_embeds=settings.newcomer_block_embeds,
+        newcomer_block_streaming=settings.newcomer_block_streaming,
+        newcomer_block_threads=settings.newcomer_block_threads,
         normal_permissions=(
             str(settings.normal_permissions) if settings.normal_permissions is not None else None
         ),
@@ -149,12 +171,41 @@ async def update_newcomer_role(
 
     if body.role_id is not None:
         settings.newcomer_role_id = int(body.role_id) if body.role_id else None
+    if body.member_role_id is not None:
+        settings.newcomer_member_role_id = int(body.member_role_id) if body.member_role_id else None
     if body.enabled is not None:
         settings.newcomer_restriction_enabled = body.enabled
     if body.auto_release_minutes is not None:
         settings.newcomer_auto_release_minutes = (
             body.auto_release_minutes if body.auto_release_minutes > 0 else None
         )
+    for field, value in (
+        ("newcomer_block_bot_commands", body.block_bot_commands),
+        ("newcomer_block_attachments", body.block_attachments),
+        ("newcomer_block_embeds", body.block_embeds),
+        ("newcomer_block_streaming", body.block_streaming),
+        ("newcomer_block_threads", body.block_threads),
+    ):
+        if value is not None:
+            setattr(settings, field, value)
+
+    if (
+        settings.newcomer_role_id is not None
+        and settings.newcomer_role_id == settings.newcomer_member_role_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="The newcomer and member roles must be different",
+        )
+
+    if settings.newcomer_restriction_enabled and (
+        settings.newcomer_role_id is None or settings.newcomer_member_role_id is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Configure both the newcomer and member roles before enabling probation",
+        )
+
     settings.updated_at = naive_utcnow()
     session.add(settings)
     await session.flush()
@@ -185,7 +236,7 @@ async def create_newcomer_role_and_attach(
 
     settings = await get_or_create_server_security_settings(session, server_id, server_name=server_name)
     settings.newcomer_role_id = int(role_id)
-    settings.newcomer_restriction_enabled = body.enabled
+    settings.newcomer_restriction_enabled = body.enabled and settings.newcomer_member_role_id is not None
     settings.newcomer_auto_release_minutes = (
         body.auto_release_minutes if body.auto_release_minutes and body.auto_release_minutes > 0 else None
     )
@@ -196,6 +247,25 @@ async def create_newcomer_role_and_attach(
     return settings
 
 
+async def apply_newcomer_restrictions(
+    session: AsyncSession,
+    *,
+    server_id: int,
+) -> ServerSecurityNewcomerRestrictionApplyResult:
+    settings = await get_or_create_server_security_settings(session, server_id)
+    updated_channels, skipped_channels = await apply_newcomer_restriction_template(
+        server_id=server_id,
+        settings=settings,
+    )
+    settings.updated_at = naive_utcnow()
+    session.add(settings)
+    await session.flush()
+    return ServerSecurityNewcomerRestrictionApplyResult(
+        updated_channels=updated_channels,
+        skipped_channels=skipped_channels,
+    )
+
+
 async def apply_newcomer_member_action(
     session: AsyncSession,
     server_id: int,
@@ -204,12 +274,6 @@ async def apply_newcomer_member_action(
     actor_user_id: int,
 ) -> MonitoredUserReadModel:
     settings = await get_or_create_server_security_settings(session, server_id)
-    if settings.newcomer_role_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="newcomer_role_id is not configured",
-        )
-
     item = (
         await session.exec(
             select(MonitoredUser).where(
@@ -223,13 +287,17 @@ async def apply_newcomer_member_action(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="newcomer restriction not found")
 
     reason = body.reason or {
-        "release": "Released manually from newcomer restrictions",
-        "reapply": "Newcomer restrictions reapplied manually",
-        "extend": "Newcomer restriction extended manually",
+        "release": "Released manually from newcomer probation",
+        "reapply": "Newcomer probation reapplied manually",
+        "extend": "Newcomer probation extended manually",
     }[body.action]
 
     if body.action == "release":
-        await remove_guild_member_role(server_id, user_id, settings.newcomer_role_id)
+        await promote_newcomer_member(
+            server_id=server_id,
+            user_id=user_id,
+            settings=settings,
+        )
         return await update_monitored_user(
             session=session,
             server_id=server_id,
@@ -237,6 +305,12 @@ async def apply_newcomer_member_action(
             reason=reason,
             is_active=False,
             updated_by_user_id=actor_user_id,
+        )
+
+    if body.action == "extend" and not item.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Cannot extend an inactive newcomer probation",
         )
 
     duration_minutes = body.duration_minutes or settings.newcomer_auto_release_minutes
@@ -250,7 +324,12 @@ async def apply_newcomer_member_action(
         if duration_minutes
         else None
     )
-    await add_guild_member_role(server_id, user_id, settings.newcomer_role_id)
+    if body.action == "reapply":
+        await reapply_newcomer_member(
+            server_id=server_id,
+            user_id=user_id,
+            settings=settings,
+        )
     return await upsert_monitored_user(
         session=session,
         server_id=server_id,

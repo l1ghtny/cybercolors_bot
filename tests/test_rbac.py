@@ -80,6 +80,7 @@ def test_settings_write_routes_use_feature_permissions():
         ("GET", "/servers/{server_id}/security/newcomer-role/suggestion"): {"security.settings.edit"},
         ("PUT", "/servers/{server_id}/security/newcomer-role"): {"security.settings.edit"},
         ("POST", "/servers/{server_id}/security/newcomer-role/create"): {"security.settings.edit"},
+        ("POST", "/servers/{server_id}/security/newcomer-role/apply-restrictions"): {"security.settings.edit"},
         ("PUT", "/servers/{server_id}/security/permissions"): {"security.settings.edit"},
         ("PUT", "/servers/{server_id}/security/lockdown"): {"security.lockdown.manage"},
         ("GET", "/servers/{server_id}/temp-voice"): {"temp_voice.settings.view"},

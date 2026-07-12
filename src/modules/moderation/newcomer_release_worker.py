@@ -4,8 +4,9 @@ from fastapi import HTTPException, status
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from api.services.discord_guilds import fetch_guild_member, remove_guild_member_role
+from api.services.discord_guilds import fetch_guild_member
 from api.services.moderation_core import naive_utcnow
+from api.services.newcomer_probation import promote_newcomer_member
 from src.db.models import MonitoredUser, MonitoredUserStatusEvent, ServerSecuritySettings
 from src.modules.logs_setup import logger
 
@@ -33,6 +34,7 @@ async def list_due_newcomer_releases(
                 MonitoredUser.release_due_at <= release_time,
                 MonitoredUser.released_at.is_(None),
                 ServerSecuritySettings.newcomer_role_id.is_not(None),
+                ServerSecuritySettings.newcomer_member_role_id.is_not(None),
                 ServerSecuritySettings.lockdown_enabled.is_(False),
             )
             .order_by(MonitoredUser.release_due_at.asc(), MonitoredUser.created_at.asc())
@@ -78,10 +80,6 @@ async def process_due_newcomer_releases(
     failed = 0
     rows = await list_due_newcomer_releases(session, now=release_time, limit=limit)
     for item, settings in rows:
-        role_id = settings.newcomer_role_id
-        if role_id is None:
-            continue
-
         try:
             member_payload = await fetch_guild_member(item.server_id, item.user_id)
             if member_payload is None:
@@ -89,10 +87,16 @@ async def process_due_newcomer_releases(
                 processed += 1
                 continue
 
-            current_role_ids = {int(role_id_raw) for role_id_raw in member_payload.get("roles", [])}
-            if role_id in current_role_ids:
-                await remove_guild_member_role(item.server_id, item.user_id, role_id)
+            current_role_ids = {
+                int(role_id_raw) for role_id_raw in member_payload.get("roles", [])
+            }
 
+            await promote_newcomer_member(
+                server_id=item.server_id,
+                user_id=item.user_id,
+                settings=settings,
+                current_role_ids=current_role_ids,
+            )
             _mark_released(session, item, now=release_time)
             processed += 1
         except HTTPException as error:
@@ -101,7 +105,12 @@ async def process_due_newcomer_releases(
                 processed += 1
                 continue
             failed += 1
-            _record_release_error(session, item, f"Discord API error {error.status_code}: {error.detail}", now=release_time)
+            _record_release_error(
+                session,
+                item,
+                f"Discord API error {error.status_code}: {error.detail}",
+                now=release_time,
+            )
             log.warning(
                 "Failed to auto-release newcomer role for user %s in guild %s: %s",
                 item.user_id,

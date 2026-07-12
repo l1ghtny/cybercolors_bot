@@ -1,3 +1,5 @@
+import asyncio
+import json
 import os
 from urllib.parse import quote
 
@@ -224,6 +226,38 @@ async def update_channel_slowmode(channel_id: int, seconds: int) -> dict:
         {"rate_limit_per_user": max(0, min(seconds, 21600))},
     )
     return payload if isinstance(payload, dict) else {}
+
+
+def _discord_retry_after(error: HTTPException) -> float:
+    try:
+        payload = json.loads(
+            str(error.detail).removeprefix("Discord API error: "),
+        )
+        return max(float(payload.get("retry_after", 1)), 0.1)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return 1
+
+
+async def update_channel_role_overwrite(
+    channel_id: int,
+    role_id: int,
+    *,
+    allow: int,
+    deny: int,
+) -> None:
+    payload = {
+        "allow": str(allow),
+        "deny": str(deny),
+        "type": 0,
+    }
+    for attempt in range(3):
+        try:
+            await _discord_put(f"/channels/{channel_id}/permissions/{role_id}", payload)
+            return
+        except HTTPException as error:
+            if error.status_code != status.HTTP_429_TOO_MANY_REQUESTS or attempt == 2:
+                raise
+            await asyncio.sleep(_discord_retry_after(error))
 
 
 async def update_guild_role_permissions(

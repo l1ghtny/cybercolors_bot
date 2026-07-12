@@ -8,6 +8,7 @@ from api.models.server_security import (
     ServerSecurityCreateNewcomerRoleModel,
     ServerSecurityLockdownUpdateModel,
     ServerSecurityNewcomerActionModel,
+    ServerSecurityNewcomerRestrictionApplyResult,
     ServerSecurityNewcomerRoleUpdateModel,
     ServerSecurityPermissionsUpdateModel,
     ServerSecurityRoleSuggestionModel,
@@ -16,6 +17,7 @@ from api.models.server_security import (
 )
 from api.services.server_security import (
     apply_lockdown_state,
+    apply_newcomer_restrictions,
     build_newcomer_role_suggestion,
     apply_newcomer_member_action,
     create_newcomer_role_and_attach,
@@ -81,6 +83,18 @@ async def create_server_newcomer_role(
 ):
     settings = await create_newcomer_role_and_attach(session=session, server_id=server_id, body=body)
     return await to_server_security_read_model(server_id, settings)
+
+
+@server_security_router.post(
+    "/newcomer-role/apply-restrictions",
+    response_model=ServerSecurityNewcomerRestrictionApplyResult,
+)
+async def apply_server_newcomer_restrictions(
+    server_id: int,
+    session: AsyncSession = Depends(get_session),
+    _: int = Depends(require_server_permission("security.settings.edit")),
+):
+    return await apply_newcomer_restrictions(session=session, server_id=server_id)
 
 
 @server_security_router.post(

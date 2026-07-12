@@ -10,8 +10,15 @@ class ServerSecuritySettingsReadModel(BaseModel):
     verified_role_name: str | None = None
     newcomer_role_id: str | None = None
     newcomer_role_name: str | None = None
+    newcomer_member_role_id: str | None = None
+    newcomer_member_role_name: str | None = None
     newcomer_restriction_enabled: bool = False
     newcomer_auto_release_minutes: int | None = None
+    newcomer_block_bot_commands: bool = True
+    newcomer_block_attachments: bool = True
+    newcomer_block_embeds: bool = True
+    newcomer_block_streaming: bool = True
+    newcomer_block_threads: bool = True
     normal_permissions: str | None = None
     lockdown_permissions: str | None = None
     lockdown_enabled: bool
@@ -33,9 +40,19 @@ class ServerSecurityPermissionsUpdateModel(BaseModel):
 
 class ServerSecurityNewcomerRoleUpdateModel(BaseModel):
     role_id: str | None = Field(default=None, pattern=r"^\d*$")
+    member_role_id: str | None = Field(default=None, pattern=r"^\d*$")
     enabled: bool | None = None
     auto_release_minutes: int | None = Field(default=None, ge=0, le=43200)
+    block_bot_commands: bool | None = None
+    block_attachments: bool | None = None
+    block_embeds: bool | None = None
+    block_streaming: bool | None = None
+    block_threads: bool | None = None
 
+
+class ServerSecurityNewcomerRestrictionApplyResult(BaseModel):
+    updated_channels: int
+    skipped_channels: int
 
 class ServerSecurityRoleSuggestionModel(BaseModel):
     purpose: str
@@ -53,7 +70,7 @@ class ServerSecurityCreateNewcomerRoleModel(BaseModel):
     mentionable: bool = False
     hoist: bool = False
     color: int | None = Field(default=None, ge=0, le=0xFFFFFF)
-    enabled: bool = True
+    enabled: bool = False
     auto_release_minutes: int | None = Field(default=None, ge=0, le=43200)
 
     @field_validator("role_name")

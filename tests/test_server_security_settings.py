@@ -34,6 +34,7 @@ async def _newcomer_role_settings_scenario(monkeypatch) -> None:
 
     server_id = _make_discord_id()
     role_id = _make_discord_id()
+    member_role_id = _make_discord_id()
     created_payloads: list[dict] = []
 
     async def fake_create_guild_role(
@@ -58,7 +59,10 @@ async def _newcomer_role_settings_scenario(monkeypatch) -> None:
         return {"id": str(role_id), "name": name, "permissions": str(permissions)}
 
     async def fake_fetch_guild_roles(server_id: int) -> list[dict]:
-        return [{"id": str(role_id), "name": "Fresh Paint", "permissions": "0"}]
+        return [
+            {"id": str(role_id), "name": "Fresh Paint", "permissions": "0"},
+            {"id": str(member_role_id), "name": "Member", "permissions": "0"},
+        ]
 
     monkeypatch.setattr(security_service, "create_guild_role", fake_create_guild_role)
     monkeypatch.setattr(security_service, "fetch_guild_roles", fake_fetch_guild_roles)
@@ -83,7 +87,7 @@ async def _newcomer_role_settings_scenario(monkeypatch) -> None:
         await session.commit()
 
         assert settings.newcomer_role_id == role_id
-        assert settings.newcomer_restriction_enabled is True
+        assert settings.newcomer_restriction_enabled is False
         assert settings.newcomer_auto_release_minutes == 1440
         assert created_payloads == [
             {
@@ -101,19 +105,26 @@ async def _newcomer_role_settings_scenario(monkeypatch) -> None:
             server_id=server_id,
             body=ServerSecurityNewcomerRoleUpdateModel(
                 role_id=str(role_id),
-                enabled=False,
+                member_role_id=str(member_role_id),
+                enabled=True,
                 auto_release_minutes=60,
+                block_bot_commands=False,
+                block_streaming=False,
             ),
         )
         await session.commit()
 
-        assert updated.newcomer_restriction_enabled is False
+        assert updated.newcomer_restriction_enabled is True
         assert updated.newcomer_auto_release_minutes == 60
 
         read_model = await to_server_security_read_model(server_id, updated)
         assert read_model.newcomer_role_id == str(role_id)
         assert read_model.newcomer_role_name == "Fresh Paint"
-        assert read_model.newcomer_restriction_enabled is False
+        assert read_model.newcomer_member_role_id == str(member_role_id)
+        assert read_model.newcomer_member_role_name == "Member"
+        assert read_model.newcomer_restriction_enabled is True
+        assert read_model.newcomer_block_bot_commands is False
+        assert read_model.newcomer_block_streaming is False
         assert read_model.newcomer_auto_release_minutes == 60
 
         manual_release = await update_newcomer_role(
