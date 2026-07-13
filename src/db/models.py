@@ -13,6 +13,14 @@ def utcnow_utc_tz():
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def uuid7_primary_key_field():
+    return Field(
+        default_factory=uuid7,
+        primary_key=True,
+        sa_column_kwargs={"server_default": sa.text("uuidv7()")},
+    )
+
+
 # --- Main Models ---
 
 class Server(SQLModel, table=True):
@@ -378,7 +386,7 @@ class AIModerationDecision(SQLModel, table=True):
     __tablename__ = "ai_moderation_decisions"
     __table_args__ = (UniqueConstraint("server_id", "message_id", name="uq_ai_moderation_decisions_server_message"),)
 
-    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    id: UUID = uuid7_primary_key_field()
     server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False, index=True))
     channel_id: int = Field(sa_column=Column(BigInteger, nullable=False, index=True))
     message_id: int = Field(sa_column=Column(BigInteger, nullable=False, index=True))
@@ -416,7 +424,7 @@ class AIModerationDecision(SQLModel, table=True):
 class AIAnswerLog(SQLModel, table=True):
     __tablename__ = "ai_answer_logs"
 
-    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    id: UUID = uuid7_primary_key_field()
     server_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True, index=True))
     channel_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True, index=True))
     message_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True, index=True))
@@ -482,7 +490,7 @@ class AIKnowledgeChunk(SQLModel, table=True):
     __tablename__ = "ai_knowledge_chunks"
     __table_args__ = (UniqueConstraint("source_id", "chunk_ordinal", name="uq_ai_knowledge_chunks_source_ordinal"),)
 
-    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    id: Optional[UUID] = uuid7_primary_key_field()
     source_id: UUID = Field(foreign_key="ai_knowledge_sources.id", nullable=False, index=True)
     server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False, index=True))
     chunk_ordinal: int = Field(nullable=False)
@@ -502,7 +510,7 @@ class AIKnowledgeChunk(SQLModel, table=True):
 class AIKnowledgeIndexJob(SQLModel, table=True):
     __tablename__ = "ai_knowledge_index_jobs"
 
-    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    id: Optional[UUID] = uuid7_primary_key_field()
     server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False, index=True))
     source_id: Optional[UUID] = Field(default=None, foreign_key="ai_knowledge_sources.id", nullable=True, index=True)
     job_type: str = Field(default="index_source", sa_column=Column(String(length=40), nullable=False, index=True))
@@ -600,7 +608,7 @@ class ModerationRule(SQLModel, table=True):
 
 class ModerationAction(SQLModel, table=True):
     __tablename__ = "moderation_actions"
-    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    id: Optional[UUID] = uuid7_primary_key_field()
     action_type: ActionType
 
     server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id")))
@@ -648,7 +656,7 @@ class ModerationAction(SQLModel, table=True):
 class ModerationImportRun(SQLModel, table=True):
     __tablename__ = "moderation_import_runs"
 
-    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    id: Optional[UUID] = uuid7_primary_key_field()
     server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False, index=True))
     source: ModerationImportSource = Field(sa_column=Column(sa.String(length=50), nullable=False, index=True))
     status: ModerationImportRunStatus = Field(
@@ -672,7 +680,7 @@ class ModerationImportSourceItem(SQLModel, table=True):
         UniqueConstraint("server_id", "source", "source_hash", name="uq_moderation_import_source_item"),
     )
 
-    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    id: Optional[UUID] = uuid7_primary_key_field()
     import_run_id: UUID = Field(foreign_key="moderation_import_runs.id", nullable=False, index=True)
     server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False, index=True))
     source: ModerationImportSource = Field(sa_column=Column(sa.String(length=50), nullable=False, index=True))
@@ -756,7 +764,7 @@ class MonitoredUser(SQLModel, table=True):
 class MonitoredUserComment(SQLModel, table=True):
     __tablename__ = "monitored_user_comments"
 
-    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    id: Optional[UUID] = uuid7_primary_key_field()
     monitored_user_id: UUID = Field(foreign_key="monitored_users.id", nullable=False, index=True)
     author_user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False))
     comment: str = Field(sa_column=Column(Text, nullable=False))
@@ -772,7 +780,7 @@ class MonitoredUserComment(SQLModel, table=True):
 class MonitoredUserStatusEvent(SQLModel, table=True):
     __tablename__ = "monitored_user_status_events"
 
-    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    id: Optional[UUID] = uuid7_primary_key_field()
     monitored_user_id: UUID = Field(foreign_key="monitored_users.id", nullable=False, index=True)
     changed_by_user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False))
     from_is_active: Optional[bool] = Field(default=None, nullable=True)
@@ -806,7 +814,7 @@ class MonitoredUserNotificationSettings(SQLModel, table=True):
 class MonitoredUserActivityEvent(SQLModel, table=True):
     __tablename__ = "monitored_user_activity_events"
 
-    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    id: Optional[UUID] = uuid7_primary_key_field()
     monitored_user_id: UUID = Field(foreign_key="monitored_users.id", nullable=False, index=True)
     server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False, index=True))
     user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False, index=True))
@@ -895,7 +903,7 @@ class ServerRbacAssignment(SQLModel, table=True):
 class ServerRbacAuditEvent(SQLModel, table=True):
     __tablename__ = "server_rbac_audit_events"
 
-    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    id: Optional[UUID] = uuid7_primary_key_field()
     server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False, index=True))
     actor_user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False, index=True))
     subject_type: str = Field(sa_column=Column(String(length=20), nullable=False, index=True))
@@ -914,7 +922,7 @@ class ServerRbacAuditEvent(SQLModel, table=True):
 class ModerationCase(SQLModel, table=True):
     __tablename__ = "moderation_cases"
 
-    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    id: Optional[UUID] = uuid7_primary_key_field()
     server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False, index=True))
     target_user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False, index=True))
     opened_by_user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False))
@@ -952,7 +960,7 @@ class ModerationCaseUser(SQLModel, table=True):
     __tablename__ = "moderation_case_users"
     __table_args__ = (UniqueConstraint("case_id", "user_id", name="uq_case_user_link"),)
 
-    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    id: Optional[UUID] = uuid7_primary_key_field()
     case_id: UUID = Field(foreign_key="moderation_cases.id", nullable=False, index=True)
     user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False, index=True))
     role: CaseUserRole = Field(default=CaseUserRole.RELATED, nullable=False)
@@ -972,7 +980,7 @@ class ModerationCaseActionLink(SQLModel, table=True):
     __tablename__ = "moderation_case_action_links"
     __table_args__ = (UniqueConstraint("case_id", "moderation_action_id", name="uq_case_action_link"),)
 
-    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    id: Optional[UUID] = uuid7_primary_key_field()
     case_id: UUID = Field(foreign_key="moderation_cases.id", nullable=False, index=True)
     moderation_action_id: UUID = Field(foreign_key="moderation_actions.id", nullable=False, index=True)
     linked_by_user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False))
@@ -987,7 +995,7 @@ class ModerationActionRuleCitation(SQLModel, table=True):
     __tablename__ = "moderation_action_rules"
     __table_args__ = (UniqueConstraint("action_id", "rule_id", name="uq_action_rule_citation"),)
 
-    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    id: Optional[UUID] = uuid7_primary_key_field()
     action_id: UUID = Field(
         sa_column=Column(
             sa.Uuid(),
@@ -1019,7 +1027,7 @@ class ModerationCaseRuleCitation(SQLModel, table=True):
     __tablename__ = "moderation_case_rules"
     __table_args__ = (UniqueConstraint("case_id", "rule_id", name="uq_case_rule_citation"),)
 
-    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    id: Optional[UUID] = uuid7_primary_key_field()
     case_id: UUID = Field(
         sa_column=Column(
             sa.Uuid(),
@@ -1050,7 +1058,7 @@ class ModerationCaseRuleCitation(SQLModel, table=True):
 class ModerationCaseNote(SQLModel, table=True):
     __tablename__ = "moderation_case_notes"
 
-    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    id: Optional[UUID] = uuid7_primary_key_field()
     case_id: UUID = Field(foreign_key="moderation_cases.id", nullable=False, index=True)
     author_user_id: Optional[int] = Field(
         default=None,
@@ -1067,7 +1075,7 @@ class ModerationCaseNote(SQLModel, table=True):
 class ModerationCaseEvidence(SQLModel, table=True):
     __tablename__ = "moderation_case_evidence"
 
-    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    id: Optional[UUID] = uuid7_primary_key_field()
     case_id: UUID = Field(foreign_key="moderation_cases.id", nullable=False, index=True)
     added_by_user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False))
     evidence_type: EvidenceType = Field(nullable=False)
@@ -1083,7 +1091,7 @@ class ModerationCaseEvidence(SQLModel, table=True):
 class DeletedMessage(SQLModel, table=True):
     __tablename__ = "deleted_messages"
 
-    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    id: Optional[UUID] = uuid7_primary_key_field()
     server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False, index=True))
     message_id: int = Field(sa_column=Column(BigInteger, nullable=False, index=True))
     channel_id: int = Field(sa_column=Column(BigInteger, nullable=False))
@@ -1109,7 +1117,7 @@ class ModerationActionDeletedMessageLink(SQLModel, table=True):
     __tablename__ = "moderation_action_deleted_message_links"
     __table_args__ = (UniqueConstraint("moderation_action_id", "deleted_message_id", name="uq_action_deleted_message_link"),)
 
-    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    id: Optional[UUID] = uuid7_primary_key_field()
     moderation_action_id: UUID = Field(foreign_key="moderation_actions.id", nullable=False, index=True)
     deleted_message_id: UUID = Field(foreign_key="deleted_messages.id", nullable=False, index=True)
     linked_by_user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False))
@@ -1171,7 +1179,7 @@ class HistoricalActivityImportCursor(SQLModel, table=True):
 
 class TempVoiceLog(SQLModel, table=True):
     __tablename__ = "temp_voice_log"
-    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    id: Optional[UUID] = uuid7_primary_key_field()
     server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False))
     channel_id: int = Field(sa_column=Column(BigInteger))
     trigger_channel_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
@@ -1188,7 +1196,7 @@ class TempVoiceLog(SQLModel, table=True):
 class TempVoiceParticipant(SQLModel, table=True):
     __tablename__ = "temp_voice_participants"
 
-    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    id: Optional[UUID] = uuid7_primary_key_field()
     log_id: UUID = Field(foreign_key="temp_voice_log.id", nullable=False, index=True)
     server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False, index=True))
     channel_id: int = Field(sa_column=Column(BigInteger, nullable=False, index=True))
@@ -1225,7 +1233,7 @@ class MessageLog(SQLModel, table=True):
 
 class AttachmentLog(SQLModel, table=True):
     __tablename__ = "attachment_log"
-    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    id: Optional[UUID] = uuid7_primary_key_field()
     message_id: int = Field(sa_column=Column(BigInteger, ForeignKey("message_log.message_id")))
 
     # This would store the key or path to the file in your S3-like storage
@@ -1241,7 +1249,7 @@ class AttachmentLog(SQLModel, table=True):
 class Triggers(SQLModel, table=True):
     __tablename__ = "triggers"
 
-    id: UUID = Field(default_factory=uuid7, primary_key=True)
+    id: UUID = uuid7_primary_key_field()
     message: str = Field(nullable=False, index=True)
     reply_id: UUID = Field(nullable=False, foreign_key="replies.id")
 
