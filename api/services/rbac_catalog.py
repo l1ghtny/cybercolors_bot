@@ -56,6 +56,12 @@ PERMISSIONS: tuple[PermissionDefinition, ...] = (
     PermissionDefinition("localization.settings.edit", "settings", "Edit localization", "Edit server localization settings."),
     PermissionDefinition("dashboard.access.manage", "admin", "Manage dashboard access", "Manage coarse dashboard access users and roles."),
     PermissionDefinition("rbac.manage", "admin", "Manage RBAC", "Manage feature permissions and presets."),
+    PermissionDefinition(
+        "commands.visibility.manage",
+        "admin",
+        "Manage Discord command visibility",
+        "Manage which Discord roles, members, and channels can see and use bot commands.",
+    ),
     PermissionDefinition("birthdays.settings.edit", "settings", "Edit birthday settings", "Edit birthday settings and messages."),
     PermissionDefinition("replies.manage", "settings", "Manage replies", "Create, update, delete, and duplicate bot replies."),
     PermissionDefinition("ai.settings.edit", "settings", "Edit AI settings", "Edit AI settings."),

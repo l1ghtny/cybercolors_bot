@@ -37,6 +37,7 @@ def test_rbac_catalog_contains_presets_and_permission_keys():
     preset_keys = {preset.key for preset in catalog.presets}
 
     assert "rbac.manage" in permission_keys
+    assert "commands.visibility.manage" in permission_keys
     assert "localization.settings.edit" in permission_keys
     assert "temp_voice.settings.edit" in permission_keys
     assert "temp_voice.settings.view" in permission_keys
@@ -50,6 +51,8 @@ def test_rbac_catalog_contains_presets_and_permission_keys():
     assert birthday_records.group == "birthdays"
     moderator = next(preset for preset in catalog.presets if preset.key == "moderator")
     assert "birthdays.records.manage" in moderator.permission_keys
+    admin = next(preset for preset in catalog.presets if preset.key == "admin")
+    assert "commands.visibility.manage" in admin.permission_keys
 
 
 def _route_permission_keys(path: str, method: str) -> set[str]:
@@ -94,6 +97,8 @@ def test_settings_write_routes_use_feature_permissions():
         ("PUT", "/servers/{server_id}/moderation-settings"): {"moderation.settings.edit"},
         ("POST", "/servers/{server_id}/moderation-settings/create-mute-role"): {"moderation.settings.edit"},
         ("PUT", "/servers/{server_id}/ai-settings"): {"ai.settings.edit"},
+        ("GET", "/servers/{server_id}/discord-command-visibility"): {"commands.visibility.manage"},
+        ("PUT", "/servers/{server_id}/discord-command-visibility"): {"commands.visibility.manage"},
         ("GET", "/servers/{server_id}/ai/suggestions"): {"ai.suggestions.view"},
         ("POST", "/servers/{server_id}/ai/suggestions/{suggestion_id}/approve"): {"ai.suggestions.review"},
         ("POST", "/servers/{server_id}/ai/suggestions/{suggestion_id}/tweak"): {"ai.suggestions.review"},
