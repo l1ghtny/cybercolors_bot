@@ -83,6 +83,10 @@ class Server(SQLModel, table=True):
         back_populates="server",
         sa_relationship_kwargs={"uselist": False},
     )
+    overview_settings: Optional["ServerOverviewSettings"] = Relationship(
+        back_populates="server",
+        sa_relationship_kwargs={"uselist": False},
+    )
 
 
 class GlobalUser(SQLModel, table=True):
@@ -535,6 +539,16 @@ class ServerLocalizationSettings(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
 
     server: Server = Relationship(back_populates="localization_settings")
+
+
+class ServerOverviewSettings(SQLModel, table=True):
+    __tablename__ = "server_overview_settings"
+
+    server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), primary_key=True))
+    role_ids: list[str] = Field(default_factory=list, sa_column=Column(sa.JSON, nullable=False))
+    updated_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+
+    server: Server = Relationship(back_populates="overview_settings")
 
 
 # --- New Models for Moderation ---

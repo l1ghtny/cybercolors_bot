@@ -39,6 +39,7 @@ def test_rbac_catalog_contains_presets_and_permission_keys():
     assert "rbac.manage" in permission_keys
     assert "commands.visibility.manage" in permission_keys
     assert "localization.settings.edit" in permission_keys
+    assert "overview.settings.edit" in permission_keys
     assert "temp_voice.settings.edit" in permission_keys
     assert "temp_voice.settings.view" in permission_keys
     assert "ai.suggestions.view" in permission_keys
@@ -78,6 +79,7 @@ def test_permission_dependency_exposes_permission_key_for_route_inspection():
 
 def test_settings_write_routes_use_feature_permissions():
     expected = {
+        ("PUT", "/servers/{server_id}/overview-settings"): {"overview.settings.edit"},
         ("PUT", "/servers/{server_id}/localization"): {"localization.settings.edit"},
         ("PUT", "/servers/{server_id}/security/verified-role"): {"security.settings.edit"},
         ("GET", "/servers/{server_id}/security/newcomer-role/suggestion"): {"security.settings.edit"},

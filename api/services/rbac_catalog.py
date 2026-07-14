@@ -54,6 +54,7 @@ PERMISSIONS: tuple[PermissionDefinition, ...] = (
     PermissionDefinition("temp_voice.settings.edit", "settings", "Edit temp voice settings", "Configure temporary voice trigger channels and owner controls."),
     PermissionDefinition("security.lockdown.manage", "settings", "Manage lockdown", "Enable or disable server lockdown."),
     PermissionDefinition("localization.settings.edit", "settings", "Edit localization", "Edit server localization settings."),
+    PermissionDefinition("overview.settings.edit", "settings", "Edit overview settings", "Choose roles shown in the server overview."),
     PermissionDefinition("dashboard.access.manage", "admin", "Manage dashboard access", "Manage coarse dashboard access users and roles."),
     PermissionDefinition("rbac.manage", "admin", "Manage RBAC", "Manage feature permissions and presets."),
     PermissionDefinition(
