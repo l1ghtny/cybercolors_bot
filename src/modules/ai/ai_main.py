@@ -680,6 +680,8 @@ class AIMain:
                 "same_author_message_count": len(message.recent_author_messages),
             },
             "visual_input_count": len(message.images),
+            "attachment_metadata": message.attachment_metadata,
+            "media_unavailable": message.media_unavailable,
         }
 
     @staticmethod

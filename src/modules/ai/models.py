@@ -20,6 +20,7 @@ class AIImageInput:
     content_type: str | None = None
     size: int | None = None
     detail: Literal["low", "high", "auto"] = "low"
+    source_url: str | None = None
 
 
 @dataclass(slots=True)
@@ -120,6 +121,8 @@ class MessageModerationInput:
     recent_channel_messages: list[dict[str, Any]] = field(default_factory=list)
     recent_author_messages: list[dict[str, Any]] = field(default_factory=list)
     images: list[AIImageInput] = field(default_factory=list)
+    attachment_metadata: list[dict[str, Any]] = field(default_factory=list)
+    media_unavailable: bool = False
 
 
 @dataclass(slots=True)

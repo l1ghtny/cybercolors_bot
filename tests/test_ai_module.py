@@ -574,6 +574,40 @@ def test_check_message_includes_visual_inputs_and_metadata_count():
     assert '"visual_input_count": 1' in prompt_message.content
 
 
+def test_check_message_includes_unavailable_media_metadata():
+    provider = FakeProvider(
+        '{"flagged": false, "severity": "none", "categories": [], '
+        '"reason": "Text is harmless.", "suggested_action": "none", "rule_ids": []}'
+    )
+    ai = AIMain(provider=provider, model="test-model")
+    attachment_metadata = [
+        {
+            "id": "7",
+            "filename": "expired.png",
+            "media_status": "download_failed",
+            "media_unavailable": True,
+        }
+    ]
+
+    verdict = asyncio.run(
+        ai.check_message(
+            MessageModerationInput(
+                content="caption survives",
+                attachment_metadata=attachment_metadata,
+                media_unavailable=True,
+            ),
+            include_member_profile=False,
+        )
+    )
+
+    assert verdict.flagged is False
+    assert provider.last_request is not None
+    prompt = provider.last_request.messages[-1].content
+    assert '"media_unavailable": true' in prompt
+    assert '"media_status": "download_failed"' in prompt
+    assert "caption survives" in prompt
+
+
 def test_check_message_low_strictness_suppresses_ambiguous_visual_nsfw():
     provider = FakeProvider(
         '{"flagged": true, "severity": "medium", "categories": ["nsfw"], '

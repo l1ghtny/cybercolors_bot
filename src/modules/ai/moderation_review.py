@@ -24,7 +24,7 @@ from src.db.models import (
     ServerModerationSettings,
 )
 from src.modules.ai.ai_main import ai_main_class
-from src.modules.ai.discord_media import ai_images_from_discord_message
+from src.modules.ai.discord_media import prepare_ai_images_from_discord_message
 from src.modules.ai.models import MessageModerationInput, ModerationVerdict
 from src.modules.localization.service import normalize_locale_code, tr
 from src.modules.logs_setup import logger
@@ -133,18 +133,24 @@ def _is_action_override(decision: AIModerationDecision, selected_action: str) ->
     return (decision.suggested_action or "none") != selected_action
 
 
-def _attachment_payload(message: discord.Message) -> list[dict]:
+def _attachment_payload(
+    message: discord.Message,
+    *,
+    media_statuses: dict[str, dict] | None = None,
+) -> list[dict]:
     payload: list[dict] = []
     for attachment in message.attachments:
-        payload.append(
-            {
-                "id": str(attachment.id),
-                "filename": attachment.filename,
-                "content_type": attachment.content_type,
-                "size": attachment.size,
-                "url": attachment.url,
-            }
-        )
+        attachment_id = str(attachment.id)
+        item = {
+            "id": attachment_id,
+            "filename": attachment.filename,
+            "content_type": attachment.content_type,
+            "size": attachment.size,
+            "url": attachment.url,
+        }
+        if media_statuses and attachment_id in media_statuses:
+            item.update(media_statuses[attachment_id])
+        payload.append(item)
     return payload
 
 
@@ -1628,10 +1634,14 @@ async def screen_message_with_ai(message: discord.Message) -> None:
             bot_user_id = _current_bot_user_id(message)
             author_roles = _message_author_roles(message)
             author_is_admin, author_is_moderator = _message_author_trust_flags(message, author_roles)
-            images = ai_images_from_discord_message(
+            prepared_media = await prepare_ai_images_from_discord_message(
                 message,
                 include_attachments=settings.moderation_monitor_attachments,
                 include_custom_emojis=True,
+            )
+            attachments = _attachment_payload(
+                message,
+                media_statuses=prepared_media.attachment_statuses,
             )
             reply_context = await _reply_context_payload(message)
             recent_context = await _recent_message_context_payload(session, message)
@@ -1656,7 +1666,9 @@ async def screen_message_with_ai(message: discord.Message) -> None:
                             answer_flow_invocation=answer_flow_invocation,
                             **reply_context,
                             **recent_context,
-                            images=images,
+                            images=prepared_media.images,
+                            attachment_metadata=attachments,
+                            media_unavailable=prepared_media.media_unavailable,
                         ),
                         session=session,
                         include_member_profile=True,
@@ -1673,6 +1685,8 @@ async def screen_message_with_ai(message: discord.Message) -> None:
             except Exception:
                 logger.exception("AI moderation provider failed in guild %s for message %s", message.guild.id, message.id)
                 return
+            finally:
+                prepared_media.images.clear()
 
             if verdict.flagged or settings.log_ai_decisions or settings.moderation_daily_token_limit is not None:
                 try:

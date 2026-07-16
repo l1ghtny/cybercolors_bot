@@ -672,3 +672,77 @@ def test_screen_message_with_ai_persists_unflagged_decision_when_cap_is_configur
     assert session.added.flagged is False
     assert session.added.status == "no_action_needed"
     assert session.added.total_tokens == 42
+
+
+def test_screen_message_with_ai_continues_with_media_unavailable_metadata(monkeypatch):
+    session = FakeSession()
+    settings = ServerAISettings(
+        server_id=123,
+        moderation_enabled=True,
+        moderation_monitor_attachments=True,
+        log_ai_decisions=True,
+        moderation_provider_timeout_seconds=1,
+    )
+
+    class ExpiredAttachment:
+        id = 991
+        filename = "expired.png"
+        content_type = "image/png"
+        size = 1024
+        url = "https://cdn.discordapp.com/attachments/1/expired.png"
+
+        async def read(self, *, use_cached: bool = False) -> bytes:
+            assert use_cached is True
+            raise RuntimeError("Discord CDN URL expired")
+
+    message = _fake_message()
+    message.guild.name = "Guild"
+    message.author.bot = False
+    message.attachments = [ExpiredAttachment()]
+
+    async def fake_get_settings(_session, server_id, server_name=None):
+        return settings
+
+    async def fake_existing(*_args, **_kwargs):
+        return None
+
+    async def fake_usage_cap(*_args, **_kwargs):
+        return False
+
+    class QuietAI:
+        async def check_message(self, message_input: MessageModerationInput, **_kwargs):
+            assert message_input.images == []
+            assert message_input.media_unavailable is True
+            assert message_input.attachment_metadata == [
+                {
+                    "id": "991",
+                    "filename": "expired.png",
+                    "content_type": "image/png",
+                    "size": 1024,
+                    "url": "https://cdn.discordapp.com/attachments/1/expired.png",
+                    "media_status": "download_failed",
+                    "media_unavailable": True,
+                }
+            ]
+            return ModerationVerdict(
+                flagged=False,
+                severity="none",
+                reason="Text context is safe",
+                raw_response=AIResponse(content="{}", model="test-model", provider="fake", total_tokens=7),
+            )
+
+    import src.modules.ai.moderation_review as moderation_review
+
+    monkeypatch.setattr(moderation_review, "get_async_session", lambda: FakeSessionContext(session))
+    monkeypatch.setattr(moderation_review, "get_or_create_server_ai_settings", fake_get_settings)
+    monkeypatch.setattr(moderation_review, "_find_existing_decision", fake_existing)
+    monkeypatch.setattr(moderation_review, "_usage_cap_reached", fake_usage_cap)
+    monkeypatch.setattr(moderation_review, "ai_main_class", QuietAI())
+
+    asyncio.run(screen_message_with_ai(message))
+
+    assert session.committed is True
+    assert session.added is not None
+    assert session.added.flagged is False
+    assert session.added.attachments_json[0]["media_unavailable"] is True
+    assert session.added.attachments_json[0]["media_status"] == "download_failed"
