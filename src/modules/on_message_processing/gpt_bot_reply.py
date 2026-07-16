@@ -19,7 +19,15 @@ async def look_for_bot_reply(message, client):
     if not is_approved:
         return
 
-    await record_ai_conversation_activity(message)
+    try:
+        await record_ai_conversation_activity(message)
+    except Exception:
+        logger.exception(
+            "Failed to record AI conversation activity in guild %s channel %s message %s",
+            getattr(getattr(message, "guild", None), "id", None),
+            getattr(getattr(message, "channel", None), "id", None),
+            getattr(message, "id", None),
+        )
     locale = await _message_locale(message)
     if "jailbreak" in (message.content or "").lower():
         await message.reply(tr(locale, "ai_reply.jailbreak"), allowed_mentions=NO_AI_MENTIONS)

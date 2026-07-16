@@ -3,7 +3,6 @@ from datetime import datetime, timezone
 
 import discord as d
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.orm import selectinload
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -90,7 +89,7 @@ async def ensure_message_foreign_keys(message: d.Message, session: AsyncSession)
 
 async def check_if_user_exists(user: d.Member | d.User, server: d.Guild, session: AsyncSession):
     """Checks if a user and their server membership exist, creating or updating them if needed."""
-    query = select(GlobalUser).where(GlobalUser.discord_id == user.id).options(selectinload(GlobalUser.memberships))
+    query = select(GlobalUser).where(GlobalUser.discord_id == user.id)
     result = await session.exec(query)
     user_in_db = result.first()
 
@@ -120,11 +119,17 @@ async def check_if_user_exists(user: d.Member | d.User, server: d.Guild, session
             session.add(user_in_db)
 
     if isinstance(user, d.Member):
-        is_member_of_server = any(m.server_id == server.id for m in user_in_db.memberships)
-        if not is_member_of_server:
+        membership = (
+            await session.exec(
+                select(User).where(
+                    User.user_id == user.id,
+                    User.server_id == server.id,
+                )
+            )
+        ).first()
+        if membership is None:
             await add_user_to_current_server(user_in_db, server, user.nick, joined_server_at, session)
         else:
-            membership = next(m for m in user_in_db.memberships if m.server_id == server.id)
             changed = False
             if membership.server_nickname != user.nick:
                 membership.server_nickname = user.nick

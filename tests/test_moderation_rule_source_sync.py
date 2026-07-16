@@ -19,6 +19,7 @@ def _make_discord_id() -> int:
 
 
 async def _source_sync_preserves_manual_rule() -> None:
+    await engine.dispose()
     server_id = _make_discord_id()
     channel_id = _make_discord_id()
     message_id = _make_discord_id()
