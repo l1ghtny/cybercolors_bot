@@ -11,6 +11,9 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.models.ai_moderation import (
     AIApproveSuggestionModel,
+    AIBulkDismissFailureModel,
+    AIBulkDismissSuggestionsModel,
+    AIBulkDismissSuggestionsResponseModel,
     AIChannelRefModel,
     AIDismissSuggestionModel,
     AIModerationDecisionListModel,
@@ -611,6 +614,22 @@ async def tweak_ai_suggestion(
     )
 
 
+def _mark_ai_suggestion_dismissed(
+    *,
+    decision: AIModerationDecision,
+    moderator_user_id: int,
+    reason: str | None,
+) -> None:
+    now = naive_utcnow()
+    decision.status = "dismissed"
+    decision.reviewed_by_user_id = moderator_user_id
+    decision.reviewed_at = now
+    decision.updated_at = now
+    decision.selected_action = "none"
+    decision.action_reason = reason
+    decision.action_override = (decision.suggested_action or "none") != "none"
+
+
 async def dismiss_ai_suggestion(
     *,
     session: AsyncSession,
@@ -621,17 +640,74 @@ async def dismiss_ai_suggestion(
 ) -> AIResolveSuggestionResponseModel:
     decision = await get_ai_decision_or_404(session, server_id, suggestion_id)
     _ensure_decision_reviewable(decision)
-    decision.status = "dismissed"
-    decision.reviewed_by_user_id = moderator_user_id
-    decision.reviewed_at = naive_utcnow()
-    decision.updated_at = naive_utcnow()
-    decision.selected_action = "none"
-    decision.action_reason = body.reason
-    decision.action_override = (decision.suggested_action or "none") != "none"
+    _mark_ai_suggestion_dismissed(
+        decision=decision,
+        moderator_user_id=moderator_user_id,
+        reason=body.reason,
+    )
     session.add(decision)
     await session.flush()
     await _publish_ai_review_resolution(decision=decision, action_id=None, session=session)
     return AIResolveSuggestionResponseModel(
         suggestion=await to_ai_decision_model(session, decision),
         action_id=None,
+    )
+
+
+async def bulk_dismiss_ai_suggestions(
+    *,
+    session: AsyncSession,
+    server_id: int,
+    moderator_user_id: int,
+    body: AIBulkDismissSuggestionsModel,
+) -> AIBulkDismissSuggestionsResponseModel:
+    decisions = (
+        await session.exec(
+            select(AIModerationDecision).where(
+                AIModerationDecision.server_id == server_id,
+                AIModerationDecision.id.in_(body.suggestion_ids),
+            )
+        )
+    ).all()
+    decisions_by_id = {decision.id: decision for decision in decisions}
+    dismissed: list[AIModerationDecision] = []
+    failed: list[AIBulkDismissFailureModel] = []
+
+    for suggestion_id in body.suggestion_ids:
+        decision = decisions_by_id.get(suggestion_id)
+        if decision is None:
+            failed.append(
+                AIBulkDismissFailureModel(
+                    suggestion_id=str(suggestion_id),
+                    code="not_found",
+                )
+            )
+            continue
+        if decision.linked_action_id or decision.status not in PENDING_SUGGESTION_STATUSES:
+            failed.append(
+                AIBulkDismissFailureModel(
+                    suggestion_id=str(suggestion_id),
+                    code="already_resolved",
+                )
+            )
+            continue
+        _mark_ai_suggestion_dismissed(
+            decision=decision,
+            moderator_user_id=moderator_user_id,
+            reason=body.reason,
+        )
+        session.add(decision)
+        dismissed.append(decision)
+
+    if dismissed:
+        await session.flush()
+
+    dismissed_models: list[AIModerationDecisionModel] = []
+    for decision in dismissed:
+        await _publish_ai_review_resolution(decision=decision, action_id=None, session=session)
+        dismissed_models.append(await to_ai_decision_model(session, decision))
+
+    return AIBulkDismissSuggestionsResponseModel(
+        dismissed=dismissed_models,
+        failed=failed,
     )

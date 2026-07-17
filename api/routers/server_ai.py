@@ -19,6 +19,8 @@ from api.models.ai_knowledge import (
 )
 from api.models.ai_moderation import (
     AIApproveSuggestionModel,
+    AIBulkDismissSuggestionsModel,
+    AIBulkDismissSuggestionsResponseModel,
     AIDismissSuggestionModel,
     AIModerationDecisionListModel,
     AIResolveSuggestionResponseModel,
@@ -39,6 +41,7 @@ from api.services.ai_knowledge import (
 )
 from api.services.ai_moderation import (
     approve_ai_suggestion,
+    bulk_dismiss_ai_suggestions,
     dismiss_ai_suggestion,
     list_ai_decisions,
     list_ai_suggestions,
@@ -102,6 +105,24 @@ async def tweak_suggestion(
         session=session,
         server_id=server_id,
         suggestion_id=suggestion_id,
+        moderator_user_id=current_user_id,
+        body=body,
+    )
+
+
+@server_ai_router.post(
+    "/suggestions/bulk-dismiss",
+    response_model=AIBulkDismissSuggestionsResponseModel,
+)
+async def bulk_dismiss_suggestions(
+    server_id: int,
+    body: AIBulkDismissSuggestionsModel,
+    session: AsyncSession = Depends(get_session),
+    current_user_id: int = Depends(require_server_permission("ai.suggestions.review")),
+):
+    return await bulk_dismiss_ai_suggestions(
+        session=session,
+        server_id=server_id,
         moderator_user_id=current_user_id,
         body=body,
     )

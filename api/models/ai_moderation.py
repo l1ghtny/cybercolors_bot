@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -114,6 +115,34 @@ class AIDismissSuggestionModel(BaseModel):
             return None
         cleaned = value.strip()
         return cleaned or None
+
+
+class AIBulkDismissSuggestionsModel(BaseModel):
+    suggestion_ids: list[UUID] = Field(min_length=1, max_length=200)
+    reason: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("suggestion_ids")
+    @classmethod
+    def deduplicate_suggestion_ids(cls, value: list[UUID]) -> list[UUID]:
+        return list(dict.fromkeys(value))
+
+    @field_validator("reason")
+    @classmethod
+    def normalize_reason(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+
+class AIBulkDismissFailureModel(BaseModel):
+    suggestion_id: str
+    code: Literal["not_found", "already_resolved"]
+
+
+class AIBulkDismissSuggestionsResponseModel(BaseModel):
+    dismissed: list[AIModerationDecisionModel] = Field(default_factory=list)
+    failed: list[AIBulkDismissFailureModel] = Field(default_factory=list)
 
 
 class AIResolveSuggestionResponseModel(BaseModel):

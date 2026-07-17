@@ -6,9 +6,9 @@ from sqlmodel import SQLModel, select
 from starlette.routing import Match
 
 from api.api_main import app
-from api.models.ai_moderation import AIApproveSuggestionModel, AIDismissSuggestionModel
+from api.models.ai_moderation import AIApproveSuggestionModel, AIBulkDismissSuggestionsModel, AIDismissSuggestionModel
 from api.services import ai_moderation
-from api.services.ai_moderation import approve_ai_suggestion, dismiss_ai_suggestion, get_ai_suggestion_stream_state, list_ai_decisions, list_ai_suggestions
+from api.services.ai_moderation import approve_ai_suggestion, bulk_dismiss_ai_suggestions, dismiss_ai_suggestion, get_ai_suggestion_stream_state, list_ai_decisions, list_ai_suggestions
 from api.services.server_overview import build_server_overview
 from src.db.database import engine, get_async_session
 from src.db.models import AIModerationDecision, GlobalUser, MonitoredUser, Server, User
@@ -50,6 +50,11 @@ def test_ai_moderation_routes_are_registered():
         "/servers/123/ai/suggestions/11111111-1111-1111-1111-111111111111/dismiss",
         "POST",
         "/servers/{server_id}/ai/suggestions/{suggestion_id}/dismiss",
+    )
+    _assert_route(
+        "/servers/123/ai/suggestions/bulk-dismiss",
+        "POST",
+        "/servers/{server_id}/ai/suggestions/bulk-dismiss",
     )
     _assert_route("/servers/123/ai/decisions", "GET", "/servers/{server_id}/ai/decisions")
 
@@ -193,6 +198,49 @@ async def _ai_moderation_api_scenario() -> None:
         decisions = await list_ai_decisions(session=session, server_id=server_id, status_filter="all")
         assert decisions.unread_count == 0
         assert decisions.items[0].status == "dismissed"
+
+        bulk_decision_id = uuid4()
+        missing_decision_id = uuid4()
+        session.add(
+            AIModerationDecision(
+                id=bulk_decision_id,
+                server_id=server_id,
+                channel_id=channel_id,
+                message_id=_make_discord_id(),
+                author_user_id=target_id,
+                message_content="another false positive",
+                attachments_json=[],
+                provider="fake",
+                model="test-model",
+                strictness="low",
+                flagged=True,
+                severity="low",
+                categories=["spam"],
+                reason="False positive",
+                suggested_action="manual_review",
+                rule_ids=[],
+                status="pending_review",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        await session.flush()
+
+        bulk_result = await bulk_dismiss_ai_suggestions(
+            session=session,
+            server_id=server_id,
+            moderator_user_id=moderator_id,
+            body=AIBulkDismissSuggestionsModel(
+                suggestion_ids=[decision_id, bulk_decision_id, missing_decision_id],
+                reason="bulk false positives",
+            ),
+        )
+        assert [item.id for item in bulk_result.dismissed] == [str(bulk_decision_id)]
+        assert bulk_result.dismissed[0].action_reason == "bulk false positives"
+        assert {(item.suggestion_id, item.code) for item in bulk_result.failed} == {
+            (str(decision_id), "already_resolved"),
+            (str(missing_decision_id), "not_found"),
+        }
 
         watch_decision_id = uuid4()
         session.add(
