@@ -43,6 +43,28 @@ spec:
         limits:
           cpu: "1"
           memory: 1Gi
+  backups:
+    pgbackrest:
+      configuration:
+        - secret:
+            name: cybercolors-db-pgbackrest-secrets
+      global:
+        repo1-path: /pgbackrest/cybercolors/cybercolors-db/repo1
+        repo1-retention-diff: "14"
+        repo1-retention-full: "4"
+      repos:
+        - name: repo1
+          s3:
+            bucket: modral-db-backup
+            endpoint: 3976b304dd7e75b248d867d320740478.eu.r2.cloudflarestorage.com
+            region: auto
+          schedules:
+            differential: "0 3 * * 1-6"
+            full: "0 3 * * 0"
+      manual:
+        repoName: repo1
+        options:
+          - --type=full
   users:
     - name: backend
       databases:

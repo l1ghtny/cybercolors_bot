@@ -1,4 +1,5 @@
 /.env
+/API_key.txt
 /regular_bot.bat
 /.idea/
 /logs/
