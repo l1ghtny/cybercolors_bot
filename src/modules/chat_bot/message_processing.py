@@ -25,7 +25,7 @@ async def decide_on_response(message, client, *, locale: str | None = None):
                 {
                     "role": "user",
                     "content": await remove_bot_mention(message, client),
-                    "images": ai_images_from_discord_message(message),
+                    "images": ai_images_from_discord_message(message, detail="high"),
                 }
             )
             bot_response, token_total = await create_response_to_dialog(messages_processed, message=message)
@@ -91,7 +91,7 @@ async def count_replies(message):
             {
                 "author": message.author.id,
                 "content": message.content,
-                "images": ai_images_from_discord_message(message),
+                "images": ai_images_from_discord_message(message, detail="high"),
             }
         )
     return n, messages_raw

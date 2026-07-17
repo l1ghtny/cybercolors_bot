@@ -147,7 +147,13 @@ def test_prepare_ai_images_downloads_discord_attachment_into_data_url():
         attachments=[attachment],
     )
 
-    result = asyncio.run(prepare_ai_images_from_discord_message(message, include_custom_emojis=False))
+    result = asyncio.run(
+        prepare_ai_images_from_discord_message(
+            message,
+            include_custom_emojis=False,
+            detail="high",
+        )
+    )
 
     assert attachment.read_calls == 1
     assert len(result.images) == 2
@@ -155,9 +161,11 @@ def test_prepare_ai_images_downloads_discord_attachment_into_data_url():
     assert inline_image.source == "attachment"
     assert inline_image.source_url == attachment_url
     assert inline_image.url.startswith("data:image/png;base64,")
+    assert inline_image.detail == "high"
     assert base64.b64decode(inline_image.url.split(",", 1)[1]) == PNG_BYTES
     assert remote_image.source == "image_url"
     assert remote_image.url == external_url
+    assert remote_image.detail == "high"
     assert result.attachment_statuses["1"] == {
         "media_status": "available_inline",
         "media_unavailable": False,

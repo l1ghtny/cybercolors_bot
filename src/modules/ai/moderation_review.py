@@ -1627,9 +1627,7 @@ async def screen_message_with_ai(message: discord.Message) -> None:
             attachments = _attachment_payload(message)
             if attachments and not settings.moderation_monitor_attachments and not (message.content or "").strip():
                 return
-            content = _content_for_moderation(message, include_attachments=settings.moderation_monitor_attachments)
-            if not content.strip():
-                return
+            content = message.content or ""
             locale = await _server_locale(session, message.guild.id)
             bot_user_id = _current_bot_user_id(message)
             author_roles = _message_author_roles(message)
@@ -1638,7 +1636,12 @@ async def screen_message_with_ai(message: discord.Message) -> None:
                 message,
                 include_attachments=settings.moderation_monitor_attachments,
                 include_custom_emojis=True,
+                detail="high",
             )
+            if not content.strip():
+                if not prepared_media.images:
+                    return
+                content = "[No text content. Inspect the attached visual input(s).]"
             attachments = _attachment_payload(
                 message,
                 media_statuses=prepared_media.attachment_statuses,

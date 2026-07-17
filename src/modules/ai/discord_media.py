@@ -3,7 +3,7 @@ import base64
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 from src.modules.ai.models import AIImageInput
@@ -22,6 +22,7 @@ SUPPORTED_IMAGE_TYPES = {
     "image/png",
     "image/webp",
 }
+AIImageDetail = Literal["low", "high", "auto"]
 IMAGE_TYPES_BY_EXTENSION = {
     ".gif": "image/gif",
     ".jpg": "image/jpeg",
@@ -47,13 +48,14 @@ def ai_images_from_discord_message(
     include_attachments: bool = True,
     include_custom_emojis: bool = True,
     limit: int = MAX_AI_IMAGES_PER_MESSAGE,
+    detail: AIImageDetail = "low",
 ) -> list[AIImageInput]:
     images: list[AIImageInput] = []
     if include_attachments:
-        images.extend(_attachment_images(getattr(message, "attachments", []) or []))
+        images.extend(_attachment_images(getattr(message, "attachments", []) or [], detail=detail))
     if include_custom_emojis:
         images.extend(custom_emoji_images_from_text(getattr(message, "content", "") or ""))
-    images.extend(image_urls_from_text(getattr(message, "content", "") or ""))
+    images.extend(image_urls_from_text(getattr(message, "content", "") or "", detail=detail))
     return _dedupe_images(images)[: max(int(limit), 0)]
 
 
@@ -67,6 +69,7 @@ async def prepare_ai_images_from_discord_message(
     total_max_bytes: int = MAX_AI_TOTAL_IMAGE_BYTES,
     read_timeout_seconds: float = AI_ATTACHMENT_READ_TIMEOUT_SECONDS,
     total_timeout_seconds: float = AI_ATTACHMENT_TOTAL_TIMEOUT_SECONDS,
+    detail: AIImageDetail = "low",
 ) -> PreparedDiscordImages:
     """Read trusted Discord attachments into memory while leaving arbitrary URLs remote."""
     images: list[AIImageInput] = []
@@ -98,6 +101,7 @@ async def prepare_ai_images_from_discord_message(
                 per_image_max_bytes=max(int(per_image_max_bytes), 0),
                 remaining_total_bytes=max(int(total_max_bytes) - total_bytes, 0),
                 timeout_seconds=remaining_seconds,
+                detail=detail,
             )
             statuses[key] = status
             if image is not None:
@@ -107,7 +111,7 @@ async def prepare_ai_images_from_discord_message(
     content = getattr(message, "content", "") or ""
     if include_custom_emojis:
         images.extend(custom_emoji_images_from_text(content))
-    images.extend(image_urls_from_text(content))
+    images.extend(image_urls_from_text(content, detail=detail))
     return PreparedDiscordImages(
         images=_dedupe_images(images)[:max_images],
         attachment_statuses=statuses,
@@ -122,6 +126,7 @@ async def _prepare_attachment_image(
     per_image_max_bytes: int,
     remaining_total_bytes: int,
     timeout_seconds: float,
+    detail: AIImageDetail,
 ) -> tuple[AIImageInput | None, dict[str, Any], int]:
     declared_size = _attachment_size(attachment)
     if declared_size is not None and declared_size > per_image_max_bytes:
@@ -161,7 +166,7 @@ async def _prepare_attachment_image(
         label=getattr(attachment, "filename", None),
         content_type=content_type,
         size=actual_size,
-        detail="low",
+        detail=detail,
     )
     status = _attachment_status(
         attachment,
@@ -238,7 +243,7 @@ def custom_emoji_images_from_text(content: str) -> list[AIImageInput]:
     return images
 
 
-def image_urls_from_text(content: str) -> list[AIImageInput]:
+def image_urls_from_text(content: str, *, detail: AIImageDetail = "low") -> list[AIImageInput]:
     images: list[AIImageInput] = []
     seen_urls: set[str] = set()
     for match in IMAGE_URL_PATTERN.finditer(content or ""):
@@ -255,39 +260,54 @@ def image_urls_from_text(content: str) -> list[AIImageInput]:
                 source="image_url",
                 label=_image_label_from_url(url),
                 content_type=content_type,
-                detail="low",
+                detail=detail,
             )
         )
     return images
 
 
-def image_context_lines(images: Iterable[AIImageInput]) -> list[str]:
+def image_context_lines(
+    images: Iterable[AIImageInput],
+    *,
+    include_labels: bool = True,
+    include_urls: bool = True,
+) -> list[str]:
     lines: list[str] = []
     for index, image in enumerate(images, start=1):
         parts = [f"{index}. {image.source}"]
-        if image.label:
+        if include_labels and image.label:
             parts.append(f"label={image.label}")
         if image.content_type:
             parts.append(f"type={image.content_type}")
         if image.size is not None:
             parts.append(f"size={image.size} bytes")
         context_url = image.source_url or (None if image.url.startswith("data:") else image.url)
-        if context_url:
+        if include_urls and context_url:
             parts.append(f"url={context_url}")
-        else:
+        elif image.url.startswith("data:"):
             parts.append("transport=inline")
         lines.append(" | ".join(parts))
     return lines
 
 
-def append_image_context(content: str, images: list[AIImageInput]) -> str:
+def append_image_context(
+    content: str,
+    images: list[AIImageInput],
+    *,
+    include_labels: bool = True,
+    include_urls: bool = True,
+) -> str:
     if not images:
         return content
-    lines = image_context_lines(images)
+    lines = image_context_lines(
+        images,
+        include_labels=include_labels,
+        include_urls=include_urls,
+    )
     return f"{content}\n\nVisual inputs:\n" + "\n".join(lines)
 
 
-def _attachment_images(attachments) -> list[AIImageInput]:
+def _attachment_images(attachments, *, detail: AIImageDetail = "low") -> list[AIImageInput]:
     images: list[AIImageInput] = []
     for attachment in attachments:
         url = getattr(attachment, "url", None) or getattr(attachment, "proxy_url", None)
@@ -307,7 +327,7 @@ def _attachment_images(attachments) -> list[AIImageInput]:
                 label=getattr(attachment, "filename", None),
                 content_type=content_type,
                 size=int(size) if size is not None else None,
-                detail="low",
+                detail=detail,
             )
         )
     return images

@@ -151,6 +151,7 @@ def test_create_ai_response_passes_current_message_images(monkeypatch):
     assert ai.assistant_input is not None
     assert len(ai.assistant_input.images) == 1
     assert ai.assistant_input.images[0].url == FakeImageAttachment.url
+    assert ai.assistant_input.images[0].detail == "high"
 
 
 def test_create_response_to_dialog_preserves_conversation_and_current_images(monkeypatch):

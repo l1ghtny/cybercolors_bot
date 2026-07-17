@@ -57,6 +57,17 @@ class OpenAIProvider:
             create_kwargs["temperature"] = request.temperature
         if request.previous_response_id is not None:
             create_kwargs["previous_response_id"] = request.previous_response_id
+        if request.response_format is not None:
+            response_format = request.response_format
+            format_payload: dict[str, Any] = {
+                "type": "json_schema",
+                "name": response_format.name,
+                "schema": response_format.schema,
+                "strict": response_format.strict,
+            }
+            if response_format.description:
+                format_payload["description"] = response_format.description
+            create_kwargs["text"] = {"format": format_payload}
         response_tools: list[dict[str, Any]] = []
         if request.enable_web_search:
             response_tools.append({"type": "web_search"})

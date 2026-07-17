@@ -75,7 +75,11 @@ async def _create_ai_response(
         author_user_id=getattr(author, "id", None),
         channel_id=getattr(channel, "id", None),
         conversation=conversation,
-        images=images if images is not None else (ai_images_from_discord_message(message) if message is not None else []),
+        images=(
+            images
+            if images is not None
+            else (ai_images_from_discord_message(message, detail="high") if message is not None else [])
+        ),
         metadata={"message_id": getattr(message, "id", None)},
     )
     started_at = answer_log_started_at()

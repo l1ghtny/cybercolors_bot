@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 import src.modules.ai.ai_main as ai_main_module
 from src.modules.ai.ai_main import AIMain, moderation_system_prompt
@@ -23,6 +24,30 @@ class FakeProvider:
             provider=self.provider_name,
             total_tokens=12,
         )
+
+
+def _moderation_json(**overrides) -> str:
+    payload = {
+        "flagged": False,
+        "severity": "none",
+        "categories": [],
+        "confidence": 1.0,
+        "reason": "",
+        "suggested_action": "none",
+        "rule_ids": [],
+        "targeted": False,
+        "credible_threat": False,
+        "credible_self_harm": False,
+        "link_content_inspected": False,
+        "is_banter_or_hyperbole": False,
+        "requires_context": False,
+        "repeated_behavior_evidence": False,
+        "evidence_source": "none",
+        "context_type": "none",
+        "visual_sexual_level": "none",
+    }
+    payload.update(overrides)
+    return json.dumps(payload)
 
 
 class SequenceProvider:
@@ -125,8 +150,17 @@ def test_moderation_member_profile_keeps_full_profile():
 
 def test_check_message_builds_moderation_request_and_parses_verdict():
     provider = FakeProvider(
-        '{"flagged": true, "severity": "medium", "categories": ["spam"], '
-        '"reason": "Repeated invite spam.", "suggested_action": "warn", "rule_ids": ["rule-1"]}'
+        _moderation_json(
+            flagged=True,
+            severity="medium",
+            categories=["spam"],
+            confidence=0.98,
+            reason="Repeated invite spam.",
+            suggested_action="warn",
+            rule_ids=["rule-1"],
+            repeated_behavior_evidence=True,
+            evidence_source="text",
+        )
     )
     ai = AIMain(provider=provider, model="test-model", channel_fetcher=fake_channel_fetcher)
 
@@ -169,7 +203,10 @@ def test_check_message_builds_moderation_request_and_parses_verdict():
     assert provider.last_request is not None
     assert provider.last_request.task == "moderation"
     assert provider.last_request.model == "test-model"
-    assert "Return JSON only" in provider.last_request.system_prompt
+    assert "Return one verdict matching the supplied JSON schema" in provider.last_request.system_prompt
+    assert provider.last_request.response_format is not None
+    assert provider.last_request.response_format.strict is True
+    assert provider.last_request.response_format.schema["additionalProperties"] is False
     prompt = provider.last_request.messages[0].content
     assert "join this server now" in prompt
     assert '"server_id": "123"' in prompt
@@ -186,10 +223,17 @@ def test_check_message_builds_moderation_request_and_parses_verdict():
     assert "permission_overwrites" not in prompt
 
 
-def test_check_message_low_strictness_suppresses_watch_only_verdict():
+def test_check_message_converts_unsupported_watch_to_manual_review():
     provider = FakeProvider(
-        '{"flagged": true, "severity": "low", "categories": ["rude"], '
-        '"reason": "Maybe watch for tone.", "suggested_action": "watch", "rule_ids": []}'
+        _moderation_json(
+            flagged=True,
+            severity="low",
+            categories=["other"],
+            confidence=0.95,
+            reason="Maybe watch for tone.",
+            suggested_action="watch",
+            evidence_source="text",
+        )
     )
     ai = AIMain(provider=provider, model="test-model")
 
@@ -201,10 +245,10 @@ def test_check_message_low_strictness_suppresses_watch_only_verdict():
         )
     )
 
-    assert verdict.flagged is False
-    assert verdict.severity == "none"
-    assert verdict.suggested_action == "none"
-    assert "Watch suggestions require" in verdict.reason
+    assert verdict.flagged is True
+    assert verdict.severity == "low"
+    assert verdict.suggested_action == "manual_review"
+    assert "Watch requires structured evidence" in verdict.reason
     assert provider.last_request is not None
     assert "Do not suggest watch at low strictness" in provider.last_request.system_prompt
     assert "Do not flag ordinary casual profanity" in provider.last_request.system_prompt
@@ -229,10 +273,16 @@ def test_check_message_normalizes_unflagged_action_leak():
 
 def test_check_message_suppresses_trusted_staff_url_distribution_guess():
     provider = FakeProvider(
-        '{"flagged": true, "severity": "high", '
-        '"categories": ["spam", "malicious_or_unwanted_link_sharing", "attempted_distribution_of_private_content"], '
-        '"reason": "The URL update may distribute restricted content.", '
-        '"suggested_action": "warn", "rule_ids": ["rule-1"], "link_content_inspected": false}'
+        _moderation_json(
+            flagged=True,
+            severity="high",
+            categories=["spam"],
+            confidence=0.92,
+            reason="The staff resource link looks promotional.",
+            suggested_action="warn",
+            rule_ids=["rule-1"],
+            evidence_source="text",
+        )
     )
     ai = AIMain(provider=provider, model="test-model")
 
@@ -252,7 +302,7 @@ def test_check_message_suppresses_trusted_staff_url_distribution_guess():
     assert verdict.flagged is False
     assert verdict.severity == "none"
     assert verdict.suggested_action == "none"
-    assert "Trusted staff URL/resource announcements" in verdict.reason
+    assert "Trusted staff resource links are not spam" in verdict.reason
     prompt = provider.last_request.messages[-1].content
     assert '"author_is_admin": true' in prompt
     assert '"author_is_moderator": true' in prompt
@@ -261,10 +311,17 @@ def test_check_message_suppresses_trusted_staff_url_distribution_guess():
 
 def test_check_message_keeps_trusted_staff_explicit_link_violation():
     provider = FakeProvider(
-        '{"flagged": true, "severity": "high", '
-        '"categories": ["phishing", "credential_theft"], '
-        '"reason": "The link is a phishing page for credentials.", '
-        '"suggested_action": "manual_review", "rule_ids": ["rule-1"], "link_content_inspected": true}'
+        _moderation_json(
+            flagged=True,
+            severity="high",
+            categories=["scam_or_phishing"],
+            confidence=0.99,
+            reason="The inspected link is a phishing page for credentials.",
+            suggested_action="manual_review",
+            rule_ids=["rule-1"],
+            link_content_inspected=True,
+            evidence_source="link",
+        )
     )
     ai = AIMain(provider=provider, model="test-model")
 
@@ -287,10 +344,16 @@ def test_check_message_keeps_trusted_staff_explicit_link_violation():
 
 def test_check_message_suppresses_uninspected_link_only_guess():
     provider = FakeProvider(
-        '{"flagged": true, "severity": "medium", "categories": ["external_link", "nsfw_risk"], '
-        '"reason": "The link might be unsafe but content was not inspected.", '
-        '"suggested_action": "manual_review", "rule_ids": ["rule-1"], '
-        '"link_content_inspected": false}'
+        _moderation_json(
+            flagged=True,
+            severity="medium",
+            categories=["sexual_explicit"],
+            confidence=0.88,
+            reason="The link might contain explicit content, but it was not inspected.",
+            suggested_action="manual_review",
+            rule_ids=["rule-1"],
+            evidence_source="link",
+        )
     )
     ai = AIMain(provider=provider, model="test-model")
 
@@ -305,14 +368,23 @@ def test_check_message_suppresses_uninspected_link_only_guess():
     assert verdict.flagged is False
     assert verdict.severity == "none"
     assert verdict.suggested_action == "none"
-    assert "Uninspected link-only" in verdict.reason
+    assert "uninspected link-only message" in verdict.reason.lower()
 
 
 def test_check_message_low_strictness_suppresses_noncredible_profanity():
     provider = FakeProvider(
-        '{"flagged": true, "severity": "medium", "categories": ["profanity", "harassment"], '
-        '"reason": "Profanity could be rude.", "suggested_action": "warn", "rule_ids": ["rule-2"], '
-        '"targeted": false, "is_banter_or_hyperbole": true}'
+        _moderation_json(
+            flagged=True,
+            severity="medium",
+            categories=["harassment"],
+            confidence=0.96,
+            reason="Profanity could be rude.",
+            suggested_action="warn",
+            rule_ids=["rule-2"],
+            is_banter_or_hyperbole=True,
+            evidence_source="text",
+            context_type="banter",
+        )
     )
     ai = AIMain(provider=provider, model="test-model")
 
@@ -327,15 +399,23 @@ def test_check_message_low_strictness_suppresses_noncredible_profanity():
     assert verdict.flagged is False
     assert verdict.severity == "none"
     assert verdict.suggested_action == "none"
-    assert "Low strictness suppresses" in verdict.reason
+    assert "Harassment requires a clear target" in verdict.reason
 
 
 def test_check_message_keeps_credible_low_strictness_threat_and_structured_fields():
     provider = FakeProvider(
-        '{"flagged": true, "severity": "high", "categories": ["threats"], '
-        '"reason": "Concrete threat.", "suggested_action": "manual_review", "rule_ids": ["rule-2"], '
-        '"targeted": true, "credible_threat": true, "link_content_inspected": null, '
-        '"is_banter_or_hyperbole": false, "requires_context": false}'
+        _moderation_json(
+            flagged=True,
+            severity="high",
+            categories=["credible_threat"],
+            confidence=0.99,
+            reason="Concrete threat.",
+            suggested_action="manual_review",
+            rule_ids=["rule-2"],
+            targeted=True,
+            credible_threat=True,
+            evidence_source="text",
+        )
     )
     ai = AIMain(provider=provider, model="test-model")
 
@@ -352,15 +432,23 @@ def test_check_message_keeps_credible_low_strictness_threat_and_structured_field
     assert verdict.suggested_action == "manual_review"
     assert verdict.targeted is True
     assert verdict.credible_threat is True
-    assert verdict.link_content_inspected is None
+    assert verdict.link_content_inspected is False
     assert verdict.is_banter_or_hyperbole is False
     assert verdict.requires_context is False
 
 def test_check_message_uses_recent_context_to_suppress_game_threat_false_positive():
     provider = FakeProvider(
-        '{"flagged": true, "severity": "medium", "categories": ["threats"], '
-        '"reason": "Threat-like wording.", "suggested_action": "warn", "rule_ids": ["rule-2"], '
-        '"targeted": false, "credible_threat": false, "requires_context": false}'
+        _moderation_json(
+            flagged=True,
+            severity="medium",
+            categories=["credible_threat"],
+            confidence=0.91,
+            reason="Threat-like wording in a game discussion.",
+            suggested_action="warn",
+            rule_ids=["rule-2"],
+            evidence_source="context",
+            context_type="game",
+        )
     )
     ai = AIMain(provider=provider, model="test-model")
 
@@ -406,7 +494,7 @@ def test_check_message_uses_recent_context_to_suppress_game_threat_false_positiv
 
     assert verdict.flagged is False
     assert verdict.suggested_action == "none"
-    assert "game/story/roleplay" in verdict.reason
+    assert "Threat moderation requires the model to affirm credible intent" in verdict.reason
     prompt = provider.last_request.messages[0].content
     assert "Recent same-channel context" in prompt
     assert "Target message content" in prompt
@@ -415,10 +503,17 @@ def test_check_message_uses_recent_context_to_suppress_game_threat_false_positiv
 
 def test_check_message_suppresses_quoted_roleplay_attack_false_positive():
     provider = FakeProvider(
-        '{"flagged": true, "severity": "medium", "categories": ["harassment", "threats"], '
-        '"reason": "The quoted phrase sounds like a violent threat toward a character.", '
-        '"suggested_action": "warn", "rule_ids": ["rule-2"], '
-        '"targeted": true, "credible_threat": false, "requires_context": false}'
+        _moderation_json(
+            flagged=True,
+            severity="medium",
+            categories=["harassment", "credible_threat"],
+            confidence=0.91,
+            reason="The quoted phrase sounds like a violent threat toward a character.",
+            suggested_action="warn",
+            rule_ids=["rule-2"],
+            evidence_source="context",
+            context_type="roleplay",
+        )
     )
     ai = AIMain(provider=provider, model="test-model")
 
@@ -450,15 +545,24 @@ def test_check_message_suppresses_quoted_roleplay_attack_false_positive():
 
     assert verdict.flagged is False
     assert verdict.suggested_action == "none"
-    assert "quoted, theoretical, or roleplayed speech" in verdict.reason
+    assert "Harassment requires a clear target" in verdict.reason
 
 
 def test_check_message_keeps_direct_member_threat_despite_roleplay_context():
     provider = FakeProvider(
-        '{"flagged": true, "severity": "medium", "categories": ["harassment", "threats"], '
-        '"reason": "The user directly threatens another member.", '
-        '"suggested_action": "warn", "rule_ids": ["rule-2"], '
-        '"targeted": true, "credible_threat": true, "requires_context": false}'
+        _moderation_json(
+            flagged=True,
+            severity="medium",
+            categories=["harassment", "credible_threat"],
+            confidence=0.97,
+            reason="The user directly threatens another member.",
+            suggested_action="warn",
+            rule_ids=["rule-2"],
+            targeted=True,
+            credible_threat=True,
+            evidence_source="mixed",
+            context_type="roleplay",
+        )
     )
     ai = AIMain(provider=provider, model="test-model")
 
@@ -561,7 +665,20 @@ def test_check_message_includes_visual_inputs_and_metadata_count():
 
     verdict = asyncio.run(
         ai.check_message(
-            MessageModerationInput(content="look at this", images=[image]),
+            MessageModerationInput(
+                content="look at this",
+                images=[image],
+                attachment_metadata=[
+                    {
+                        "filename": "proof.png",
+                        "content_type": "image/png",
+                        "size": 1024,
+                        "url": "https://cdn.discordapp.com/attachments/1/2/proof.png",
+                        "media_status": "available_inline",
+                        "media_unavailable": False,
+                    }
+                ],
+            ),
             include_member_profile=False,
         )
     )
@@ -572,6 +689,28 @@ def test_check_message_includes_visual_inputs_and_metadata_count():
     assert prompt_message.images == [image]
     assert "Visual inputs:" in prompt_message.content
     assert '"visual_input_count": 1' in prompt_message.content
+    assert "type=image/png" in prompt_message.content
+    assert '"media_status": "available_inline"' in prompt_message.content
+    assert "proof.png" not in prompt_message.content
+    assert "https://cdn.discordapp.com/attachments/1/2/proof.png" not in prompt_message.content
+
+
+def test_answer_prompt_uses_explicit_event_date_and_time_before_follow_up():
+    provider = FakeProvider("The proposed time is Sunday at 16:00.")
+    ai = AIMain(provider=provider, model="test-model")
+    content = (
+        'Сбор на тему "Ревью нынешнего состояния"\n\n'
+        "Sunday, 19 July 2026 16:00\n\n"
+        "👍 - удобно\n"
+        "👎 - я хочу предложить другое время"
+    )
+
+    response = asyncio.run(ai.answer(AssistantInput(content=content)))
+
+    assert response.content == "The proposed time is Sunday at 16:00."
+    assert provider.last_request is not None
+    assert content in provider.last_request.messages[-1].content
+    assert "If a date or time is already present, use or confirm it" in provider.last_request.system_prompt
 
 
 def test_check_message_includes_unavailable_media_metadata():
@@ -610,10 +749,17 @@ def test_check_message_includes_unavailable_media_metadata():
 
 def test_check_message_low_strictness_suppresses_ambiguous_visual_nsfw():
     provider = FakeProvider(
-        '{"flagged": true, "severity": "medium", "categories": ["nsfw"], '
-        '"reason": "The image may resemble explicit content, but it is ambiguous.", '
-        '"suggested_action": "manual_review", "rule_ids": ["rule-18"], '
-        '"link_content_inspected": true, "explicit_visual_sexual_content": false}'
+        _moderation_json(
+            flagged=True,
+            severity="medium",
+            categories=["sexual_explicit"],
+            confidence=0.96,
+            reason="The image may resemble explicit content, but it is ambiguous.",
+            suggested_action="manual_review",
+            rule_ids=["rule-18"],
+            evidence_source="visual",
+            visual_sexual_level="uncertain",
+        )
     )
     ai = AIMain(provider=provider, model="test-model")
     image = AIImageInput(
@@ -635,16 +781,135 @@ def test_check_message_low_strictness_suppresses_ambiguous_visual_nsfw():
     assert verdict.flagged is False
     assert verdict.severity == "none"
     assert verdict.suggested_action == "none"
-    assert "Low strictness suppresses" in verdict.reason
-    assert "explicit_visual_sexual_content" in provider.last_request.system_prompt
+    assert "structured visual level to be explicit" in verdict.reason
+    assert "visual_sexual_level" in provider.last_request.system_prompt
+
+
+def test_check_message_standard_suppresses_ambiguous_visual_sexual_content():
+    provider = FakeProvider(
+        _moderation_json(
+            flagged=True,
+            severity="medium",
+            categories=["sexual_explicit"],
+            confidence=0.91,
+            reason="The stylized image may be sexualised, but the visual evidence is ambiguous.",
+            suggested_action="manual_review",
+            rule_ids=["rule-18"],
+            evidence_source="visual",
+            visual_sexual_level="suggestive",
+        )
+    )
+    ai = AIMain(provider=provider, model="test-model")
+    image = AIImageInput(
+        url="https://cdn.discordapp.com/attachments/1/2/stylized.png",
+        source="attachment",
+        label="stylized.png",
+        content_type="image/png",
+        size=1024,
+    )
+
+    verdict = asyncio.run(
+        ai.check_message(
+            MessageModerationInput(content="look", images=[image]),
+            include_member_profile=False,
+            moderation_strictness="standard",
+        )
+    )
+
+    assert verdict.flagged is False
+    assert verdict.severity == "none"
+    assert verdict.categories == []
+    assert verdict.suggested_action == "none"
+    assert "structured visual level to be explicit" in verdict.reason
+
+
+def test_check_message_standard_suppresses_low_confidence_visual_explicit_flag():
+    provider = FakeProvider(
+        _moderation_json(
+            flagged=True,
+            severity="high",
+            categories=["sexual_explicit"],
+            confidence=0.70,
+            reason="The visual may be explicit.",
+            suggested_action="manual_review",
+            rule_ids=["rule-18"],
+            evidence_source="visual",
+            visual_sexual_level="explicit",
+        )
+    )
+    ai = AIMain(provider=provider, model="test-model")
+    image = AIImageInput(
+        url="https://cdn.discordapp.com/attachments/1/2/uncertain.png",
+        source="attachment",
+        content_type="image/png",
+    )
+
+    verdict = asyncio.run(
+        ai.check_message(
+            MessageModerationInput(content="look", images=[image]),
+            include_member_profile=False,
+            moderation_strictness="standard",
+        )
+    )
+
+    assert verdict.flagged is False
+    assert verdict.categories == []
+    assert "below the standard threshold 0.75" in verdict.reason
+
+
+def test_check_message_preserves_nonsexual_violation_when_visual_sexual_evidence_is_ambiguous():
+    provider = FakeProvider(
+        _moderation_json(
+            flagged=True,
+            severity="medium",
+            categories=["harassment", "sexual_explicit"],
+            confidence=0.96,
+            reason="The text directly harasses a member; the image may also be suggestive.",
+            suggested_action="warn",
+            rule_ids=["rule-harassment"],
+            targeted=True,
+            evidence_source="mixed",
+            visual_sexual_level="suggestive",
+        )
+    )
+    ai = AIMain(provider=provider, model="test-model")
+    image = AIImageInput(
+        url="https://cdn.discordapp.com/attachments/1/2/reaction.png",
+        source="attachment",
+        content_type="image/png",
+    )
+
+    verdict = asyncio.run(
+        ai.check_message(
+            MessageModerationInput(
+                content="@member you are disgusting",
+                mentioned_users=[{"user_id": "123"}],
+                images=[image],
+            ),
+            include_member_profile=False,
+            moderation_strictness="standard",
+        )
+    )
+
+    assert verdict.flagged is True
+    assert verdict.categories == ["harassment"]
+    assert verdict.suggested_action == "warn"
+    assert verdict.rule_ids == []
 
 
 def test_check_message_low_strictness_keeps_explicit_visual_nsfw():
     provider = FakeProvider(
-        '{"flagged": true, "severity": "high", "categories": ["nsfw"], '
-        '"reason": "The image unmistakably contains explicit nudity.", '
-        '"suggested_action": "manual_review", "rule_ids": ["rule-18"], '
-        '"link_content_inspected": true, "explicit_visual_sexual_content": true}'
+        _moderation_json(
+            flagged=True,
+            severity="high",
+            categories=["sexual_explicit"],
+            confidence=0.99,
+            reason="The image unmistakably contains explicit nudity.",
+            suggested_action="manual_review",
+            rule_ids=["rule-18"],
+            evidence_source="visual",
+            visual_sexual_level="explicit",
+        )
     )
     ai = AIMain(provider=provider, model="test-model")
     image = AIImageInput(
@@ -666,7 +931,7 @@ def test_check_message_low_strictness_keeps_explicit_visual_nsfw():
     assert verdict.flagged is True
     assert verdict.severity == "high"
     assert verdict.suggested_action == "manual_review"
-    assert verdict.explicit_visual_sexual_content is True
+    assert verdict.visual_sexual_level == "explicit"
 
 
 def test_answer_preloads_relevant_indexed_knowledge(monkeypatch):

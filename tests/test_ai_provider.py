@@ -1,6 +1,7 @@
 import asyncio
 from types import SimpleNamespace
 
+from src.modules.ai.moderation_contract import MODERATION_RESPONSE_FORMAT
 from src.modules.ai.models import AIImageInput, AIMessage, AIRequest, AIToolSpec
 from src.modules.ai.providers import OpenAIProvider
 
@@ -127,3 +128,29 @@ def test_openai_provider_does_not_add_web_search_by_default():
 
     assert client.responses.kwargs is not None
     assert "tools" not in client.responses.kwargs
+
+
+def test_openai_provider_sends_strict_json_schema_response_format():
+    client = FakeClient()
+    provider = OpenAIProvider(client=client)
+
+    asyncio.run(
+        provider.complete(
+            AIRequest(
+                task="moderation",
+                model="test-model",
+                system_prompt="Review.",
+                messages=[AIMessage(role="user", content="message")],
+                response_format=MODERATION_RESPONSE_FORMAT,
+            )
+        )
+    )
+
+    assert client.responses.kwargs is not None
+    assert client.responses.kwargs["text"]["format"] == {
+        "type": "json_schema",
+        "name": "cybercolors_moderation_verdict",
+        "schema": MODERATION_RESPONSE_FORMAT.schema,
+        "strict": True,
+        "description": "A schema-constrained Discord moderation assessment.",
+    }

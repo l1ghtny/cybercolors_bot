@@ -7,6 +7,33 @@ AIMessageRole = Literal["system", "user", "assistant", "tool"]
 AIImageSource = Literal["attachment", "custom_emoji", "image_url"]
 ModerationSeverity = Literal["none", "low", "medium", "high"]
 ModerationAction = Literal["none", "watch", "warn", "mute", "kick", "ban", "manual_review"]
+ModerationCategory = Literal[
+    "harassment",
+    "hate_or_slur",
+    "credible_threat",
+    "self_harm",
+    "sexual_explicit",
+    "spam",
+    "scam_or_phishing",
+    "malware",
+    "privacy_or_doxxing",
+    "moderation_evasion",
+    "other",
+    "parse_error",
+]
+ModerationEvidenceSource = Literal["none", "text", "visual", "link", "context", "mixed"]
+ModerationContextType = Literal[
+    "none",
+    "banter",
+    "sarcasm",
+    "quote",
+    "fiction",
+    "roleplay",
+    "game",
+    "moderation_meta",
+    "uncertain",
+]
+VisualSexualLevel = Literal["none", "suggestive", "explicit", "uncertain"]
 
 
 DEFAULT_AI_MODEL = "gpt-5.4-nano"
@@ -52,6 +79,14 @@ class AIToolResult:
 
 
 @dataclass(slots=True)
+class AIResponseFormat:
+    name: str
+    schema: dict[str, Any]
+    description: str | None = None
+    strict: bool = True
+
+
+@dataclass(slots=True)
 class AIRequest:
     task: AITask
     system_prompt: str
@@ -65,6 +100,7 @@ class AIRequest:
     enable_web_search: bool = False
     max_tool_calls: int | None = None
     previous_response_id: str | None = None
+    response_format: AIResponseFormat | None = None
 
 
 @dataclass(slots=True)
@@ -83,16 +119,21 @@ class AIResponse:
 class ModerationVerdict:
     flagged: bool
     severity: ModerationSeverity = "none"
-    categories: list[str] = field(default_factory=list)
+    categories: list[ModerationCategory] = field(default_factory=list)
+    confidence: float = 1.0
     reason: str = ""
     suggested_action: ModerationAction = "none"
     rule_ids: list[str] = field(default_factory=list)
-    targeted: bool | None = None
-    credible_threat: bool | None = None
-    link_content_inspected: bool | None = None
-    is_banter_or_hyperbole: bool | None = None
-    requires_context: bool | None = None
-    explicit_visual_sexual_content: bool | None = None
+    targeted: bool = False
+    credible_threat: bool = False
+    credible_self_harm: bool = False
+    link_content_inspected: bool = False
+    is_banter_or_hyperbole: bool = False
+    requires_context: bool = False
+    repeated_behavior_evidence: bool = False
+    evidence_source: ModerationEvidenceSource = "none"
+    context_type: ModerationContextType = "none"
+    visual_sexual_level: VisualSexualLevel = "none"
     raw_response: AIResponse | None = None
 
 
