@@ -1,12 +1,15 @@
 import asyncio
+import importlib
 from http.cookies import SimpleCookie
 
 import pytest
 from cryptography.fernet import Fernet
 from fastapi import HTTPException, Request, Response
 
-from api.models.auth import AuthLoginResponseModel, AuthUserModel
+from api.models.auth import AuthLoginRequestModel, AuthLoginResponseModel, AuthUserModel
 from api.services import dashboard_sessions
+
+auth_router = importlib.import_module("api.routers.auth")
 
 
 class FakeSession:
@@ -119,6 +122,82 @@ def test_login_response_cannot_serialize_discord_tokens():
     }
     assert "access_token" not in payload
     assert "refresh_token" not in payload
+
+
+def test_login_commits_dashboard_session_before_returning(monkeypatch):
+    events: list[str] = []
+
+    class StubHttpResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    class StubHttpClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, *_args, **_kwargs):
+            return StubHttpResponse(
+                {
+                    "access_token": "discord-access-token",
+                    "refresh_token": "discord-refresh-token",
+                    "expires_in": 3600,
+                }
+            )
+
+        async def get(self, *_args, **_kwargs):
+            return StubHttpResponse({"id": "123", "username": "tester", "avatar": None})
+
+    class LoginSession:
+        async def get(self, _model, _key):
+            return None
+
+        def add(self, _value):
+            return None
+
+        async def flush(self):
+            events.append("flush")
+
+        async def commit(self):
+            events.append("commit")
+
+    async def create_session(*_args, **_kwargs):
+        events.append("create_session")
+
+    monkeypatch.setattr(auth_router, "DISCORD_CLIENT_ID", "client-id")
+    monkeypatch.setattr(auth_router, "DISCORD_CLIENT_SECRET", "client-secret")
+    monkeypatch.setattr(auth_router, "validate_oauth_state", lambda *_args: None)
+    monkeypatch.setattr(
+        auth_router,
+        "validate_redirect_uri",
+        lambda _redirect_uri: "https://cybercolors.modral.app/callback",
+    )
+    monkeypatch.setattr(auth_router.httpx, "AsyncClient", lambda **_kwargs: StubHttpClient())
+    monkeypatch.setattr(auth_router, "create_dashboard_session", create_session)
+
+    result = asyncio.run(
+        auth_router.login(
+            AuthLoginRequestModel(
+                code="oauth-code",
+                state="oauth-state",
+                redirect_uri="https://cybercolors.modral.app/callback",
+            ),
+            _request_with_cookie(dashboard_sessions.OAUTH_STATE_COOKIE_NAME, "oauth-state"),
+            Response(),
+            LoginSession(),
+        )
+    )
+
+    assert result.message == "Login successful"
+    assert events == ["flush", "create_session", "commit"]
 
 
 def test_local_redirects_are_disabled_unless_explicitly_enabled(monkeypatch):

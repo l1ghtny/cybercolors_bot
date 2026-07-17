@@ -372,6 +372,10 @@ async def login(
         discord_user_id=discord_id,
         token_payload=token_json,
     )
+    # The session cookie becomes usable as soon as this response reaches the
+    # browser. Commit the matching database row first so an immediate /auth/me
+    # request cannot race the dependency's post-response commit.
+    await session.commit()
     return AuthLoginResponseModel(
         message="Login successful",
         user=AuthUserModel(
