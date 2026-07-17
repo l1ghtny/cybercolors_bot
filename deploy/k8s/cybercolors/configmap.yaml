@@ -12,6 +12,12 @@ data:
   BOT_API_URL: https://cybercolors-api.modral.app
   DASHBOARD_BASE_URL: https://cybercolors.modral.app
   CORS_ALLOWED_ORIGINS: https://cybercolors.lightny.pro,https://cybercolors.modral.app
+  DASHBOARD_OAUTH_REDIRECT_URIS: https://cybercolors.modral.app/callback
+  DASHBOARD_ALLOW_LOCAL_OAUTH_REDIRECTS: "false"
+  DASHBOARD_SESSION_COOKIE_SECURE: "true"
+  DASHBOARD_SESSION_COOKIE_SAMESITE: lax
+  DASHBOARD_SESSION_TTL_SECONDS: "604800"
+  DASHBOARD_ALLOW_LEGACY_BEARER_AUTH: "false"
   AI_MODEL: gpt-5.4-nano
   AI_KNOWLEDGE_EMBEDDING_PROVIDER: local
   AI_KNOWLEDGE_LOCAL_EMBEDDING_MODEL: BAAI/bge-m3

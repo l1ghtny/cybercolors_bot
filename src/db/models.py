@@ -186,6 +186,32 @@ class GlobalUser(SQLModel, table=True):
     moderation_rules_created: List["ModerationRule"] = Relationship(back_populates="created_by")
 
 
+class DashboardSession(SQLModel, table=True):
+    __tablename__ = "dashboard_sessions"
+
+    session_token_hash: str = Field(
+        sa_column=Column(String(length=64), primary_key=True)
+    )
+    discord_user_id: int = Field(
+        sa_column=Column(
+            BigInteger,
+            ForeignKey("global_users.discord_id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        )
+    )
+    discord_access_token: str = Field(sa_column=Column(Text, nullable=False))
+    discord_refresh_token: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    discord_token_expires_at: datetime = Field(
+        sa_column=Column(TIMESTAMP(timezone=False), nullable=False)
+    )
+    expires_at: datetime = Field(
+        sa_column=Column(TIMESTAMP(timezone=False), nullable=False, index=True)
+    )
+    created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+    last_seen_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+
+
 
 class User(SQLModel, table=True):
     __tablename__ = "users"

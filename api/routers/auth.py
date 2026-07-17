@@ -6,8 +6,7 @@ from time import monotonic
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import APIRouter, HTTPException, Query
-from fastapi import Depends
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -15,11 +14,20 @@ from api.dependencies.auth import get_bearer_access_token
 from api.dependencies.current_user import get_current_discord_user_id
 from api.models.auth import (
     AuthGuildModel,
+    AuthAuthorizeResponseModel,
     AuthLoginRequestModel,
     AuthLoginResponseModel,
     AuthUserModel,
 )
 from api.services.dashboard_access_service import load_dashboard_access_maps
+from api.services.dashboard_sessions import (
+    build_discord_authorize_url,
+    create_dashboard_session,
+    get_dashboard_session,
+    revoke_dashboard_session,
+    validate_oauth_state,
+    validate_redirect_uri,
+)
 from src.db.database import get_session
 from src.db.models import GlobalUser, Server
 
@@ -284,79 +292,122 @@ def _to_auth_guild_payload(guild: dict) -> dict:
     return payload
 
 
+@auth.get("/authorize", response_model=AuthAuthorizeResponseModel)
+async def authorize(
+    response: Response,
+    redirect_uri: str | None = Query(default=None),
+    command_management: bool = Query(default=False),
+):
+    resolved_redirect_uri = validate_redirect_uri(redirect_uri)
+    authorize_url, state_token = build_discord_authorize_url(
+        response,
+        redirect_uri=resolved_redirect_uri,
+        command_management=command_management,
+    )
+    return AuthAuthorizeResponseModel(authorize_url=authorize_url, state=state_token)
+
+
 @auth.post("/login", response_model=AuthLoginResponseModel)
-async def login(body: AuthLoginRequestModel, session: AsyncSession = Depends(get_session)):
+async def login(
+    body: AuthLoginRequestModel,
+    request: Request,
+    response: Response,
+    session: AsyncSession = Depends(get_session),
+):
+    validate_oauth_state(request, response, body.state)
+    redirect_uri = validate_redirect_uri(body.redirect_uri)
+    if not DISCORD_CLIENT_ID or not DISCORD_CLIENT_SECRET:
+        raise HTTPException(status_code=500, detail="Discord OAuth credentials are not configured")
+
+    token_data = {
+        "client_id": DISCORD_CLIENT_ID,
+        "client_secret": DISCORD_CLIENT_SECRET,
+        "grant_type": "authorization_code",
+        "code": body.code,
+        "redirect_uri": redirect_uri,
+    }
     try:
-        code = body.code
-        # Get the redirect URI from the frontend request
-        client_redirect_uri = body.redirect_uri
-
-        if not code:
-            raise HTTPException(status_code=400, detail="Authorization code is required.")
-
-        # Determine which redirect URI to use
-        # If the frontend sent one, use it. Otherwise, use the env variable.
-        redirect_uri = client_redirect_uri or DISCORD_REDIRECT_URI
-
-        # --- 1. Exchange code for access token ---
-        token_data = {
-            "client_id": DISCORD_CLIENT_ID,
-            "client_secret": DISCORD_CLIENT_SECRET,
-            "grant_type": "authorization_code",
-            "code": code,
-            "redirect_uri": redirect_uri, # Use the dynamic URI here
-        }
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
-
-        async with httpx.AsyncClient() as client:
-            token_res = await client.post(f"{DISCORD_API_BASE_URL}/oauth2/token", data=token_data, headers=headers)
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            token_res = await client.post(
+                f"{DISCORD_API_BASE_URL}/oauth2/token",
+                data=token_data,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
             token_res.raise_for_status()
             token_json = token_res.json()
-            access_token = token_json["access_token"]
-
-            # --- 2. Fetch user data from Discord ---
-            user_headers = {"Authorization": f"Bearer {access_token}"}
-            user_res = await client.get(f"{DISCORD_API_BASE_URL}/users/@me", headers=user_headers)
+            access_token = str(token_json["access_token"])
+            user_res = await client.get(
+                f"{DISCORD_API_BASE_URL}/users/@me",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
             user_res.raise_for_status()
             user_json = user_res.json()
+    except httpx.HTTPStatusError as exc:
+        logger.warning("Discord OAuth exchange failed status=%s", exc.response.status_code)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Discord sign-in failed",
+        ) from exc
+    except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
+        logger.exception("Discord OAuth exchange failed")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Discord sign-in failed",
+        ) from exc
 
-            discord_id = int(user_json["id"])
-            username = user_json["username"]
-            avatar = user_json.get("avatar")
+    discord_id = int(user_json["id"])
+    username = user_json.get("username")
+    avatar = user_json.get("avatar")
+    db_user = await session.get(GlobalUser, discord_id)
+    if db_user is None:
+        db_user = GlobalUser(discord_id=discord_id, username=username, avatar_hash=avatar)
+    else:
+        db_user.username = username
+        db_user.avatar_hash = avatar
+    session.add(db_user)
+    await session.flush()
+    await create_dashboard_session(
+        session,
+        response,
+        discord_user_id=discord_id,
+        token_payload=token_json,
+    )
+    return AuthLoginResponseModel(
+        message="Login successful",
+        user=AuthUserModel(
+            discord_id=str(discord_id),
+            username=username,
+            avatar_hash=avatar,
+        ),
+    )
 
-            # --- 3. Create or update user in our database ---
-            db_user = await session.get(GlobalUser, discord_id)
-            if not db_user:
-                db_user = GlobalUser(discord_id=discord_id, username=username, avatar_hash=avatar)
-                session.add(db_user)
-            else:
-                db_user.username = username
-                db_user.avatar_hash = avatar
 
-            # The session will be committed automatically by the dependency
+@auth.get("/me", response_model=AuthUserModel)
+async def get_current_user(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    dashboard_session = await get_dashboard_session(request, session)
+    assert dashboard_session is not None
+    db_user = await session.get(GlobalUser, dashboard_session.discord_user_id)
+    if db_user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Dashboard user not found")
+    return AuthUserModel(
+        discord_id=str(db_user.discord_id),
+        username=db_user.username,
+        avatar_hash=db_user.avatar_hash,
+    )
 
-        # --- 4. Return the access token and user info to the frontend ---
-        user_payload = AuthUserModel(
-            discord_id=str(db_user.discord_id),
-            username=db_user.username,
-            avatar_hash=db_user.avatar_hash,
-        )
-        return {
-            "message": "Login successful",
-            "user": user_payload,
-            "access_token": access_token,
-            "token_type": "Bearer"
-        }
 
-    except httpx.HTTPStatusError as e:
-        # This will now correctly log errors from Discord
-        print(f"HTTPX Error: {e.response.text}")
-        raise HTTPException(status_code=e.response.status_code,
-                            detail=f"Error communicating with Discord: {e.response.text}")
-    except Exception as e:
-        # This will now correctly log any other unexpected errors
-        print(f"An unexpected error occurred: {e}")
-        raise HTTPException(status_code=500, detail=f"An internal server error occurred: {str(e)}")
+@auth.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(
+    request: Request,
+    response: Response,
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    await revoke_dashboard_session(request, response, session)
+    response.status_code = status.HTTP_204_NO_CONTENT
+    return response
 
 
 @auth.get("/guilds", response_model=list[AuthGuildModel])

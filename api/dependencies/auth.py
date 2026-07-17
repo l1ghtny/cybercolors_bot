@@ -1,6 +1,13 @@
+import os
 from typing import Annotated
 
-from fastapi import Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+from api.services.dashboard_sessions import get_dashboard_discord_access_token
+from src.db.database import get_session
+
+ALLOW_LEGACY_BEARER_AUTH = os.getenv("DASHBOARD_ALLOW_LEGACY_BEARER_AUTH", "false").lower() == "true"
 
 
 def _extract_bearer_access_token(authorization: str | None) -> str | None:
@@ -13,23 +20,28 @@ def _extract_bearer_access_token(authorization: str | None) -> str | None:
 
 
 async def get_bearer_access_token(
+    request: Request,
     authorization: Annotated[str | None, Header()] = None,
+    session: AsyncSession = Depends(get_session),
 ) -> str:
-    access_token = _extract_bearer_access_token(authorization)
-    if access_token is None:
-        if authorization is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Authorization header missing",
-            )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authorization header",
-        )
-    return access_token
+    legacy_token = _extract_bearer_access_token(authorization)
+    if legacy_token and ALLOW_LEGACY_BEARER_AUTH:
+        return legacy_token
+    if authorization and legacy_token is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authorization header")
+    token = await get_dashboard_discord_access_token(request, session, required=True)
+    assert token is not None
+    return token
 
 
 async def get_optional_bearer_access_token(
+    request: Request,
     authorization: Annotated[str | None, Header()] = None,
+    session: AsyncSession = Depends(get_session),
 ) -> str | None:
-    return _extract_bearer_access_token(authorization)
+    legacy_token = _extract_bearer_access_token(authorization)
+    if legacy_token and ALLOW_LEGACY_BEARER_AUTH:
+        return legacy_token
+    if authorization and legacy_token is None:
+        return None
+    return await get_dashboard_discord_access_token(request, session, required=False)

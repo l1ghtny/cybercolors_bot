@@ -7,6 +7,7 @@ class AuthLoginRequestModel(BaseModel):
         default=None,
         description="Optional redirect URI override sent by frontend.",
     )
+    state: str = Field(min_length=1, description="OAuth state returned by Discord.")
 
 
 class AuthUserModel(BaseModel):
@@ -18,8 +19,11 @@ class AuthUserModel(BaseModel):
 class AuthLoginResponseModel(BaseModel):
     message: str
     user: AuthUserModel
-    access_token: str
-    token_type: str
+
+
+class AuthAuthorizeResponseModel(BaseModel):
+    authorize_url: str
+    state: str
 
 
 class AuthGuildModel(BaseModel):

@@ -30,11 +30,12 @@ origins = [
     "https://preview--bot-pal-dash.lovable.app",
     *_csv_env("CORS_ALLOWED_ORIGINS"),
 ]
+allowed_origin_regex = os.getenv("CORS_ALLOWED_ORIGIN_REGEX") or None
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
-    allow_origin_regex=r"^https://([a-z0-9-]+\.)?(lovable\.app|lovableproject\.com)$",
+    allow_origin_regex=allowed_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

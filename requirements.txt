@@ -19,3 +19,4 @@ asyncpg>=0.30.0
 fastapi[standard]>=0.119.0
 alembic>=1.13.1
 pydantic
+cryptography>=44.0.0
