@@ -1,12 +1,17 @@
 import asyncio
 from uuid import uuid4
 
+import pytest
+from fastapi import HTTPException, status
+
 from fastapi.routing import APIRoute
 from starlette.routing import Match
 from sqlmodel import SQLModel
 
 from api.api_main import app
 from api.dependencies.server_access import require_server_permission
+from api.models.moderation_cases import ModerationCaseActionCreateFromCaseModel
+from api.routers.moderation_cases import require_case_action_apply_permission
 from api.models.rbac import RbacAssignmentWriteModel
 from api.services.rbac_catalog import get_rbac_catalog
 from api.services.rbac_service import (
@@ -16,7 +21,7 @@ from api.services.rbac_service import (
     upsert_rbac_assignment,
 )
 from src.db.database import engine, get_async_session
-from src.db.models import GlobalUser, Server
+from src.db.models import ActionType, GlobalUser, Server
 from tests.db_helpers import ensure_pgvector_or_skip
 
 
@@ -46,6 +51,10 @@ def test_rbac_catalog_contains_presets_and_permission_keys():
     assert "ai.decisions.view" in permission_keys
     assert "ai.suggestions.review" in permission_keys
     assert "birthdays.records.manage" in permission_keys
+    assert "moderation.cases.view" in permission_keys
+    assert "moderation.cases.manage" in permission_keys
+    for action_type in ActionType:
+        assert f"moderation.actions.apply.{action_type.value}" in permission_keys
     assert "admin" in preset_keys
     assert "moderator" in preset_keys
     birthday_records = next(permission for permission in catalog.permissions if permission.key == "birthdays.records.manage")
@@ -68,6 +77,93 @@ def _route_permission_keys(path: str, method: str) -> set[str]:
             if hasattr(dependency.call, "permission_key")
         }
     raise AssertionError(f"Route not found: {method} {path}")
+
+
+CASE_ENDPOINT_PERMISSION_MATRIX = (
+    ("GET", "/moderation/cases/{server_id}", "moderation.cases.view"),
+    ("GET", "/moderation/cases/{server_id}/{case_id}", "moderation.cases.view"),
+    ("GET", "/moderation/cases/{server_id}/{case_id}/users", "moderation.cases.view"),
+    (
+        "GET",
+        "/moderation/cases/{server_id}/{case_id}/evidence/{evidence_id}/download-url",
+        "moderation.cases.view",
+    ),
+    ("POST", "/moderation/cases/{server_id}", "moderation.cases.manage"),
+    ("PATCH", "/moderation/cases/{server_id}/{case_id}/status", "moderation.cases.manage"),
+    ("POST", "/moderation/cases/{server_id}/{case_id}/users", "moderation.cases.manage"),
+    ("DELETE", "/moderation/cases/{server_id}/{case_id}/users/{user_id}", "moderation.cases.manage"),
+    ("POST", "/moderation/cases/{server_id}/{case_id}/notes", "moderation.cases.manage"),
+    ("POST", "/moderation/cases/{server_id}/{case_id}/evidence", "moderation.cases.manage"),
+    ("POST", "/moderation/cases/{server_id}/{case_id}/evidence/upload-url", "moderation.cases.manage"),
+    ("POST", "/moderation/cases/{server_id}/{case_id}/actions", "moderation.cases.manage"),
+    ("DELETE", "/moderation/cases/{server_id}/{case_id}/actions/{action_id}", "moderation.cases.manage"),
+    ("POST", "/moderation/cases/{server_id}/{case_id}/rules", "moderation.cases.manage"),
+    ("DELETE", "/moderation/cases/{server_id}/{case_id}/rules/{rule_id}", "moderation.cases.manage"),
+    ("POST", "/moderation/cases/{server_id}/{case_id}/actions/create", "moderation.cases.manage"),
+)
+
+
+def _route_permission_dependency(path: str, method: str, permission_key: str):
+    for route in app.routes:
+        if not isinstance(route, APIRoute):
+            continue
+        if route.path != path or method.upper() not in route.methods:
+            continue
+        for dependency in route.dependant.dependencies:
+            if getattr(dependency.call, "permission_key", None) == permission_key:
+                return dependency.call
+        raise AssertionError(f"Permission dependency not found: {method} {path} -> {permission_key}")
+    raise AssertionError(f"Route not found: {method} {path}")
+
+
+async def _case_endpoint_permission_denial_scenario(
+    monkeypatch,
+    method: str,
+    path: str,
+    permission_key: str,
+) -> None:
+    import api.dependencies.server_access as server_access
+
+    async def allow_dashboard_access(**kwargs):
+        return None
+
+    async def deny_permission(**kwargs):
+        assert kwargs["permission_key"] == permission_key
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Missing required permission",
+        )
+
+    monkeypatch.setattr(server_access, "assert_dashboard_access", allow_dashboard_access)
+    monkeypatch.setattr(server_access, "assert_user_has_permission", deny_permission)
+    dependency = _route_permission_dependency(path, method, permission_key)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await dependency(
+            server_id=123,
+            session=object(),
+            current_user_id=456,
+            access_token="token",
+        )
+
+    assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+
+
+@pytest.mark.parametrize(("method", "path", "permission_key"), CASE_ENDPOINT_PERMISSION_MATRIX)
+def test_case_endpoints_reject_users_without_required_permission(
+    monkeypatch,
+    method: str,
+    path: str,
+    permission_key: str,
+):
+    asyncio.run(
+        _case_endpoint_permission_denial_scenario(
+            monkeypatch,
+            method,
+            path,
+            permission_key,
+        )
+    )
 
 
 def test_permission_dependency_exposes_permission_key_for_route_inspection():
@@ -96,6 +192,25 @@ def test_settings_write_routes_use_feature_permissions():
         ("POST", "/servers/{server_id}/temp-voice/trigger-channel/create"): {"temp_voice.settings.edit"},
         ("GET", "/moderation/message-log/{server_id}"): {"moderation.actions.view"},
         ("GET", "/moderation/deleted-attachments/{server_id}"): {"moderation.actions.view"},
+        ("GET", "/moderation/cases/{server_id}"): {"moderation.cases.view"},
+        ("GET", "/moderation/cases/{server_id}/{case_id}"): {"moderation.cases.view"},
+        ("GET", "/moderation/cases/{server_id}/{case_id}/users"): {"moderation.cases.view"},
+        (
+            "GET",
+            "/moderation/cases/{server_id}/{case_id}/evidence/{evidence_id}/download-url",
+        ): {"moderation.cases.view"},
+        ("POST", "/moderation/cases/{server_id}"): {"moderation.cases.manage"},
+        ("PATCH", "/moderation/cases/{server_id}/{case_id}/status"): {"moderation.cases.manage"},
+        ("POST", "/moderation/cases/{server_id}/{case_id}/users"): {"moderation.cases.manage"},
+        ("DELETE", "/moderation/cases/{server_id}/{case_id}/users/{user_id}"): {"moderation.cases.manage"},
+        ("POST", "/moderation/cases/{server_id}/{case_id}/notes"): {"moderation.cases.manage"},
+        ("POST", "/moderation/cases/{server_id}/{case_id}/evidence"): {"moderation.cases.manage"},
+        ("POST", "/moderation/cases/{server_id}/{case_id}/evidence/upload-url"): {"moderation.cases.manage"},
+        ("POST", "/moderation/cases/{server_id}/{case_id}/actions"): {"moderation.cases.manage"},
+        ("DELETE", "/moderation/cases/{server_id}/{case_id}/actions/{action_id}"): {"moderation.cases.manage"},
+        ("POST", "/moderation/cases/{server_id}/{case_id}/rules"): {"moderation.cases.manage"},
+        ("DELETE", "/moderation/cases/{server_id}/{case_id}/rules/{rule_id}"): {"moderation.cases.manage"},
+        ("POST", "/moderation/cases/{server_id}/{case_id}/actions/create"): {"moderation.cases.manage"},
         ("PUT", "/servers/{server_id}/moderation-settings"): {"moderation.settings.edit"},
         ("POST", "/servers/{server_id}/moderation-settings/create-mute-role"): {"moderation.settings.edit"},
         ("PUT", "/servers/{server_id}/ai-settings"): {"ai.settings.edit"},
@@ -137,6 +252,41 @@ def test_settings_write_routes_use_feature_permissions():
 
     for (method, path), permission_keys in expected.items():
         assert permission_keys.issubset(_route_permission_keys(path, method))
+
+
+async def _case_action_permission_denial_scenario(monkeypatch) -> None:
+    import api.routers.moderation_cases as moderation_cases_router
+
+    checked_permissions: list[str] = []
+
+    async def deny_permission(**kwargs):
+        checked_permissions.append(kwargs["permission_key"])
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Missing required permission",
+        )
+
+    monkeypatch.setattr(moderation_cases_router, "assert_user_has_permission", deny_permission)
+
+    for action_type in ActionType:
+        with pytest.raises(HTTPException) as exc_info:
+            await require_case_action_apply_permission(
+                server_id=123,
+                body=ModerationCaseActionCreateFromCaseModel(action_type=action_type),
+                session=object(),
+                current_user_id=456,
+                access_token="token",
+            )
+        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+
+    assert checked_permissions == [
+        f"moderation.actions.apply.{action_type.value}"
+        for action_type in ActionType
+    ]
+
+
+def test_case_action_creation_requires_action_specific_permission(monkeypatch):
+    asyncio.run(_case_action_permission_denial_scenario(monkeypatch))
 
 
 def test_rbac_assignment_route_is_registered_under_server_settings():

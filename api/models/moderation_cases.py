@@ -1,4 +1,5 @@
 from datetime import datetime
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -140,6 +141,16 @@ class ModerationCaseEvidenceCreateModel(BaseModel):
         cleaned = value.strip()
         return cleaned or None
 
+    @field_validator("url")
+    @classmethod
+    def validate_http_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("Evidence URL must use http or https")
+        return value
+
 
 class ModerationCaseEvidenceReadModel(BaseModel):
     id: str
@@ -148,6 +159,9 @@ class ModerationCaseEvidenceReadModel(BaseModel):
     url: str | None = None
     text: str | None = None
     attachment_key: str | None = None
+    attachment_filename: str | None = None
+    attachment_content_type: str | None = None
+    attachment_size_bytes: int | None = None
     created_at: datetime
     added_by: ModerationActorModel
 
@@ -155,6 +169,7 @@ class ModerationCaseEvidenceReadModel(BaseModel):
 class ModerationEvidenceUploadUrlRequest(BaseModel):
     filename: str = Field(min_length=1, max_length=255)
     content_type: str | None = Field(default=None, max_length=128)
+    size_bytes: int = Field(ge=1)
 
     @field_validator("filename", "content_type")
     @classmethod
@@ -169,11 +184,13 @@ class ModerationEvidenceUploadUrlResponse(BaseModel):
     upload_url: str
     key: str
     method: str = "PUT"
+    headers: dict[str, str] = Field(default_factory=dict)
+    expires_in_seconds: int
 
 
-class ModerationEvidenceUploadResult(BaseModel):
-    key: str
-
+class ModerationEvidenceDownloadUrlResponse(BaseModel):
+    download_url: str
+    expires_in_seconds: int
 
 class ModerationCaseActionLinkCreateModel(BaseModel):
     moderation_action_id: str

@@ -1122,6 +1122,9 @@ class ModerationCaseEvidence(SQLModel, table=True):
     url: Optional[str] = None
     text: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     attachment_key: Optional[str] = None
+    attachment_filename: Optional[str] = Field(default=None, max_length=255)
+    attachment_content_type: Optional[str] = Field(default=None, max_length=128)
+    attachment_size_bytes: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
     created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
 
     moderation_case: ModerationCase = Relationship(back_populates="evidence_items")

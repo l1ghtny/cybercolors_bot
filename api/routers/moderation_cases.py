@@ -1,11 +1,16 @@
 from typing import List
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, Header, Request, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from api.dependencies.current_user import get_optional_current_discord_user_id, resolve_actor_user_id
-from api.dependencies.server_access import require_server_dashboard_access
+from api.dependencies.auth import get_bearer_access_token
+from api.dependencies.current_user import (
+    get_current_discord_user_id,
+    get_optional_current_discord_user_id,
+    resolve_actor_user_id,
+)
+from api.dependencies.server_access import require_server_permission
 from api.models.moderation_actions import ModerationActionRead
 from api.models.moderation_cases import (
     ModerationCaseActionCreateFromCaseModel,
@@ -23,7 +28,7 @@ from api.models.moderation_cases import (
     ModerationCaseUserAddModel,
     ModerationCaseUserReadModel,
     ModerationEvidenceUploadUrlRequest,
-    ModerationEvidenceUploadResult,
+    ModerationEvidenceDownloadUrlResponse,
     ModerationEvidenceUploadUrlResponse,
 )
 from api.services.moderation_cases_service import (
@@ -39,11 +44,12 @@ from api.services.moderation_cases_service import (
     remove_action_from_case as remove_action_from_case_service,
     remove_user_from_case as remove_user_from_case_service,
     remove_case_rule as remove_case_rule_service,
-    safe_upload_key,
-    store_evidence_blob,
+    get_case_evidence_attachment,
     upsert_case_rules as upsert_case_rules_service,
     update_case_status as update_case_status_service,
 )
+from api.services.evidence_storage import create_download_ticket, create_upload_ticket
+from api.services.rbac_service import assert_user_has_permission
 from api.services.moderation_core import get_case_or_404
 from src.db.database import get_session
 from src.db.models import CaseStatus
@@ -51,11 +57,28 @@ from src.db.models import CaseStatus
 moderation_cases_router = APIRouter()
 
 
+async def require_case_action_apply_permission(
+    server_id: int,
+    body: ModerationCaseActionCreateFromCaseModel,
+    session: AsyncSession = Depends(get_session),
+    current_user_id: int = Depends(get_current_discord_user_id),
+    access_token: str = Depends(get_bearer_access_token),
+) -> int:
+    await assert_user_has_permission(
+        session=session,
+        server_id=server_id,
+        user_id=current_user_id,
+        permission_key=f"moderation.actions.apply.{body.action_type.value}",
+        access_token=access_token,
+    )
+    return current_user_id
+
+
 @moderation_cases_router.post(
     "/cases/{server_id}",
     response_model=ModerationCaseReadModel,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_server_dashboard_access)],
+    dependencies=[Depends(require_server_permission("moderation.cases.manage"))],
 )
 async def create_moderation_case(
     server_id: int,
@@ -75,7 +98,7 @@ async def create_moderation_case(
 @moderation_cases_router.get(
     "/cases/{server_id}",
     response_model=List[ModerationCaseSummaryModel],
-    dependencies=[Depends(require_server_dashboard_access)],
+    dependencies=[Depends(require_server_permission("moderation.cases.view"))],
 )
 async def list_moderation_cases(
     server_id: int,
@@ -96,7 +119,7 @@ async def list_moderation_cases(
 @moderation_cases_router.get(
     "/cases/{server_id}/{case_id}",
     response_model=ModerationCaseDetailsModel,
-    dependencies=[Depends(require_server_dashboard_access)],
+    dependencies=[Depends(require_server_permission("moderation.cases.view"))],
 )
 async def get_moderation_case_details(
     server_id: int,
@@ -109,7 +132,7 @@ async def get_moderation_case_details(
 @moderation_cases_router.patch(
     "/cases/{server_id}/{case_id}/status",
     response_model=ModerationCaseReadModel,
-    dependencies=[Depends(require_server_dashboard_access)],
+    dependencies=[Depends(require_server_permission("moderation.cases.manage"))],
 )
 async def update_moderation_case_status(
     server_id: int,
@@ -133,7 +156,7 @@ async def update_moderation_case_status(
 @moderation_cases_router.get(
     "/cases/{server_id}/{case_id}/users",
     response_model=list[ModerationCaseUserReadModel],
-    dependencies=[Depends(require_server_dashboard_access)],
+    dependencies=[Depends(require_server_permission("moderation.cases.view"))],
 )
 async def get_case_users(
     server_id: int,
@@ -146,7 +169,7 @@ async def get_case_users(
 @moderation_cases_router.post(
     "/cases/{server_id}/{case_id}/users",
     response_model=ModerationCaseReadModel,
-    dependencies=[Depends(require_server_dashboard_access)],
+    dependencies=[Depends(require_server_permission("moderation.cases.manage"))],
 )
 async def add_user_to_case(
     server_id: int,
@@ -169,7 +192,7 @@ async def add_user_to_case(
 @moderation_cases_router.delete(
     "/cases/{server_id}/{case_id}/users/{user_id}",
     response_model=ModerationCaseReadModel,
-    dependencies=[Depends(require_server_dashboard_access)],
+    dependencies=[Depends(require_server_permission("moderation.cases.manage"))],
 )
 async def remove_user_from_case(
     server_id: int,
@@ -184,7 +207,7 @@ async def remove_user_from_case(
     "/cases/{server_id}/{case_id}/notes",
     response_model=ModerationCaseNoteReadModel,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_server_dashboard_access)],
+    dependencies=[Depends(require_server_permission("moderation.cases.manage"))],
 )
 async def add_moderation_case_note(
     server_id: int,
@@ -207,7 +230,7 @@ async def add_moderation_case_note(
     "/cases/{server_id}/{case_id}/evidence",
     response_model=ModerationCaseEvidenceReadModel,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_server_dashboard_access)],
+    dependencies=[Depends(require_server_permission("moderation.cases.manage"))],
 )
 async def add_moderation_case_evidence(
     server_id: int,
@@ -229,38 +252,55 @@ async def add_moderation_case_evidence(
 @moderation_cases_router.post(
     "/cases/{server_id}/{case_id}/evidence/upload-url",
     response_model=ModerationEvidenceUploadUrlResponse,
-    dependencies=[Depends(require_server_dashboard_access)],
+    dependencies=[Depends(require_server_permission("moderation.cases.manage"))],
 )
 async def create_evidence_upload_url(
     server_id: int,
     case_id: UUID,
     body: ModerationEvidenceUploadUrlRequest,
-    request: Request,
     session: AsyncSession = Depends(get_session),
 ):
     await get_case_or_404(server_id, case_id, session)
-    key = safe_upload_key(server_id, case_id, body.filename)
-    upload_url = str(request.base_url) + f"moderation/evidence/upload/{key}"
-    return ModerationEvidenceUploadUrlResponse(upload_url=upload_url, key=key, method="PUT")
+    return ModerationEvidenceUploadUrlResponse(
+        **create_upload_ticket(
+            server_id=server_id,
+            case_id=case_id,
+            filename=body.filename,
+            content_type=body.content_type,
+            size_bytes=body.size_bytes,
+        )
+    )
 
 
-@moderation_cases_router.put(
-    "/evidence/upload/{key}",
-    response_model=ModerationEvidenceUploadResult,
-    status_code=status.HTTP_201_CREATED,
+@moderation_cases_router.get(
+    "/cases/{server_id}/{case_id}/evidence/{evidence_id}/download-url",
+    response_model=ModerationEvidenceDownloadUrlResponse,
+    dependencies=[Depends(require_server_permission("moderation.cases.view"))],
 )
-async def upload_evidence_blob(
-    key: str,
-    payload: bytes = Body(...),
-    content_type: str | None = Header(default=None, alias="Content-Type"),
+async def create_evidence_download_url(
+    server_id: int,
+    case_id: UUID,
+    evidence_id: UUID,
+    session: AsyncSession = Depends(get_session),
 ):
-    return store_evidence_blob(key=key, payload=payload, content_type=content_type)
+    evidence = await get_case_evidence_attachment(
+        session=session,
+        server_id=server_id,
+        case_id=case_id,
+        evidence_id=evidence_id,
+    )
+    return ModerationEvidenceDownloadUrlResponse(
+        **create_download_ticket(
+            key=str(evidence.attachment_key),
+            filename=evidence.attachment_filename,
+        )
+    )
 
 
 @moderation_cases_router.post(
     "/cases/{server_id}/{case_id}/actions",
     response_model=ModerationCaseReadModel,
-    dependencies=[Depends(require_server_dashboard_access)],
+    dependencies=[Depends(require_server_permission("moderation.cases.manage"))],
 )
 async def link_action_to_moderation_case(
     server_id: int,
@@ -282,7 +322,7 @@ async def link_action_to_moderation_case(
 @moderation_cases_router.delete(
     "/cases/{server_id}/{case_id}/actions/{action_id}",
     response_model=ModerationCaseReadModel,
-    dependencies=[Depends(require_server_dashboard_access)],
+    dependencies=[Depends(require_server_permission("moderation.cases.manage"))],
 )
 async def unlink_action_from_moderation_case(
     server_id: int,
@@ -301,7 +341,7 @@ async def unlink_action_from_moderation_case(
 @moderation_cases_router.post(
     "/cases/{server_id}/{case_id}/rules",
     response_model=ModerationCaseReadModel,
-    dependencies=[Depends(require_server_dashboard_access)],
+    dependencies=[Depends(require_server_permission("moderation.cases.manage"))],
 )
 async def upsert_moderation_case_rules(
     server_id: int,
@@ -320,7 +360,7 @@ async def upsert_moderation_case_rules(
 @moderation_cases_router.delete(
     "/cases/{server_id}/{case_id}/rules/{rule_id}",
     response_model=ModerationCaseReadModel,
-    dependencies=[Depends(require_server_dashboard_access)],
+    dependencies=[Depends(require_server_permission("moderation.cases.manage"))],
 )
 async def delete_moderation_case_rule(
     server_id: int,
@@ -340,21 +380,20 @@ async def delete_moderation_case_rule(
     "/cases/{server_id}/{case_id}/actions/create",
     response_model=ModerationActionRead,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_server_dashboard_access)],
+    dependencies=[Depends(require_server_permission("moderation.cases.manage"))],
 )
 async def create_moderation_action_from_case(
     server_id: int,
     case_id: UUID,
     body: ModerationCaseActionCreateFromCaseModel,
     session: AsyncSession = Depends(get_session),
-    current_user_id: int | None = Depends(get_optional_current_discord_user_id),
+    current_user_id: int = Depends(require_case_action_apply_permission),
 ):
-    actor_user_id = resolve_actor_user_id(None, current_user_id)
     return await create_action_from_case_service(
         session=session,
         server_id=server_id,
         case_id=case_id,
         body=body,
-        actor_user_id=actor_user_id,
+        actor_user_id=current_user_id,
         apply_discord_effects=True,
     )

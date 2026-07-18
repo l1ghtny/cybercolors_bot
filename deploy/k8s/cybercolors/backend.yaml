@@ -53,6 +53,8 @@ spec:
             - secretRef:
                 name: cybercolors-app-secrets
                 optional: true
+            - secretRef:
+                name: cybercolors-evidence-storage
           env:
             - name: PYTHONPATH
               value: /home/discord-bot

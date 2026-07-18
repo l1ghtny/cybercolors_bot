@@ -2,6 +2,7 @@ fastapi-swagger-dark>=0.0.7
 jinja2
 sqlalchemy>=2.0.44
 requests>=2.32.3
+boto3>=1.35.0
 python-dotenv>=1.0.1
 discord.py>=2.4.0
 PyGithub>=2.4.0

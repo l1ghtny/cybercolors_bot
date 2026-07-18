@@ -1,7 +1,6 @@
 from datetime import datetime
-from pathlib import Path
 from typing import List
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, or_
@@ -27,6 +26,7 @@ from api.models.moderation_cases import (
     ModerationActorModel,
 )
 from api.services.moderation_actions_service import create_action
+from api.services.evidence_storage import validate_uploaded_evidence
 from api.services.moderation_core import (
     build_actor,
     ensure_case_writable_for_actions,
@@ -53,15 +53,6 @@ from src.db.models import (
     GlobalUser,
     ModerationRule,
 )
-
-EVIDENCE_UPLOAD_ROOT = Path("logs") / "moderation_evidence"
-
-
-def safe_upload_key(server_id: int, case_id: UUID, filename: str) -> str:
-    ext = ""
-    if "." in filename:
-        ext = "." + filename.rsplit(".", 1)[-1].lower()[:10]
-    return f"{server_id}_{case_id}_{uuid4().hex}{ext}"
 
 
 def _parse_rule_ids(rule_ids: list[str]) -> list[UUID]:
@@ -439,7 +430,6 @@ async def create_case(
     await session.refresh(moderation_case)
     return await to_case_read(moderation_case, session)
 
-
 async def list_cases(
     session: AsyncSession,
     server_id: int,
@@ -585,6 +575,9 @@ async def get_case_details(
                 url=evidence.url,
                 text=evidence.text,
                 attachment_key=evidence.attachment_key,
+                attachment_filename=evidence.attachment_filename,
+                attachment_content_type=evidence.attachment_content_type,
+                attachment_size_bytes=evidence.attachment_size_bytes,
                 created_at=evidence.created_at,
                 added_by=added_by,
             )
@@ -766,6 +759,26 @@ async def add_case_evidence(
             detail="At least one of url, text, or attachment_key must be provided",
         )
 
+    attachment_metadata = None
+    if body.attachment_key:
+        existing_attachment = (
+            await session.exec(
+                select(ModerationCaseEvidence).where(
+                    ModerationCaseEvidence.attachment_key == body.attachment_key,
+                )
+            )
+        ).first()
+        if existing_attachment:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Evidence object is already attached to a case",
+            )
+        attachment_metadata = await validate_uploaded_evidence(
+            server_id=server_id,
+            case_id=case_id,
+            key=body.attachment_key,
+        )
+
     added_by = await build_actor(session, server_id, added_by_user_id, require_membership=True)
     evidence = ModerationCaseEvidence(
         case_id=case_id,
@@ -773,7 +786,10 @@ async def add_case_evidence(
         evidence_type=body.evidence_type,
         url=body.url,
         text=body.text,
-        attachment_key=body.attachment_key,
+        attachment_key=attachment_metadata.key if attachment_metadata else None,
+        attachment_filename=attachment_metadata.filename if attachment_metadata else None,
+        attachment_content_type=attachment_metadata.content_type if attachment_metadata else None,
+        attachment_size_bytes=attachment_metadata.size_bytes if attachment_metadata else None,
     )
     session.add(evidence)
     await session.flush()
@@ -785,9 +801,25 @@ async def add_case_evidence(
         url=evidence.url,
         text=evidence.text,
         attachment_key=evidence.attachment_key,
+        attachment_filename=evidence.attachment_filename,
+        attachment_content_type=evidence.attachment_content_type,
+        attachment_size_bytes=evidence.attachment_size_bytes,
         created_at=evidence.created_at,
         added_by=added_by,
     )
+
+
+async def get_case_evidence_attachment(
+    session: AsyncSession,
+    server_id: int,
+    case_id: UUID,
+    evidence_id: UUID,
+) -> ModerationCaseEvidence:
+    await get_case_or_404(server_id, case_id, session)
+    evidence = await session.get(ModerationCaseEvidence, evidence_id)
+    if not evidence or evidence.case_id != case_id or not evidence.attachment_key:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case evidence attachment not found")
+    return evidence
 
 
 async def link_action_to_case(
@@ -1012,21 +1044,3 @@ async def remove_action_from_case(
     return await to_case_read(moderation_case, session)
 
 
-def store_evidence_blob(
-    key: str,
-    payload: bytes,
-    content_type: str | None,
-    root: Path = EVIDENCE_UPLOAD_ROOT,
-) -> dict:
-    if "/" in key or "\\" in key:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid upload key")
-    if not payload:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty payload")
-
-    root.mkdir(parents=True, exist_ok=True)
-    file_path = root / key
-    file_path.write_bytes(payload)
-
-    metadata_path = root / f"{key}.meta"
-    metadata_path.write_text((content_type or "application/octet-stream"), encoding="utf-8")
-    return {"key": key}
