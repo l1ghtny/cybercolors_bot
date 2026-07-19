@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import logging
 
 import discord
 from discord import app_commands
@@ -40,6 +41,9 @@ from src.modules.moderation.mute_management import (
 )
 from src.modules.moderation.mod_log import build_unmute_log_message, send_mod_log_message
 from src.modules.moderation.public_notices import send_public_action_notice
+
+
+logger = logging.getLogger("bot")
 
 
 def _localized_bool(locale: str, value: bool) -> str:
@@ -429,9 +433,15 @@ async def mute(
                 message_cleanup=message_cleanup,
             )
             await session.commit()
-    except Exception as error:
+    except Exception:
+        logger.exception(
+            "Failed to create mute action in guild %s for target %s by moderator %s",
+            interaction.guild.id,
+            user.id,
+            interaction.user.id,
+        )
         await interaction.followup.send(
-            tr(locale, "mute.log_failed", error=error),
+            tr(locale, "mute.failed"),
             ephemeral=True,
         )
         return

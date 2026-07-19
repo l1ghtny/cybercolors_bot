@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -60,6 +60,13 @@ class ModerationActionCreate(BaseModel):
     server_id: int
     server_name: str
     message_cleanup: ModerationActionMessageCleanupCreate | None = None
+
+    @field_validator("expires_at")
+    @classmethod
+    def normalize_expires_at(cls, value: datetime | None) -> datetime | None:
+        if value is None or value.tzinfo is None:
+            return value
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
 
     @model_validator(mode="after")
     def validate_reason_or_rule(self):
