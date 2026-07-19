@@ -804,6 +804,7 @@ class MonitoredUser(SQLModel, table=True):
     release_due_at: Optional[datetime] = Field(default=None, nullable=True, index=True)
     released_at: Optional[datetime] = Field(default=None, nullable=True)
     release_error: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    notification_snoozed_until: Optional[datetime] = Field(default=None, nullable=True, index=True)
     is_active: bool = Field(default=True, nullable=False, index=True)
     created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
     updated_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)

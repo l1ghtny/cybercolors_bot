@@ -269,6 +269,7 @@ async def patch_monitored_user(
             user_id=user_id,
             reason=body.reason,
             is_active=body.is_active,
+            snooze_minutes=body.snooze_minutes,
             updated_by_user_id=updated_by_user_id,
         )
     except LookupError:

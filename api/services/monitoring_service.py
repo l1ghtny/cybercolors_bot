@@ -54,6 +54,7 @@ async def _to_monitored_user_read(
         release_due_at=item.release_due_at,
         released_at=item.released_at,
         release_error=item.release_error,
+        notification_snoozed_until=item.notification_snoozed_until,
         is_active=item.is_active,
         created_at=item.created_at,
         updated_at=item.updated_at,
@@ -251,6 +252,7 @@ async def upsert_monitored_user(
         existing.release_due_at = release_due_at
         existing.released_at = None
         existing.release_error = None
+        existing.notification_snoozed_until = None
         existing.added_by_user_id = added_by_user_id
         existing.updated_at = naive_utcnow()
         session.add(existing)
@@ -296,6 +298,7 @@ async def update_monitored_user(
     reason: str | None,
     is_active: bool | None,
     updated_by_user_id: int,
+    snooze_minutes: int | None = None,
 ) -> MonitoredUserReadModel:
     item = (
         await session.exec(
@@ -314,6 +317,7 @@ async def update_monitored_user(
         item.reason = reason
     if is_active is not None:
         item.is_active = is_active
+        item.notification_snoozed_until = None
         if item.source == "newcomer":
             if is_active:
                 item.released_at = None
@@ -321,6 +325,12 @@ async def update_monitored_user(
                 item.released_at = naive_utcnow()
                 item.release_due_at = None
                 item.release_error = None
+    if snooze_minutes is not None:
+        item.notification_snoozed_until = (
+            naive_utcnow() + timedelta(minutes=snooze_minutes)
+            if snooze_minutes > 0
+            else None
+        )
     if is_active is not None and is_active != previous_active:
         _append_status_event(
             session=session,
@@ -334,6 +344,15 @@ async def update_monitored_user(
     await session.flush()
     await session.refresh(item)
     return await _to_monitored_user_read(session, item)
+
+
+def monitoring_notifications_snoozed(
+    monitored_user: MonitoredUser,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    snoozed_until = monitored_user.notification_snoozed_until
+    return snoozed_until is not None and snoozed_until > (now or naive_utcnow())
 
 
 async def list_monitored_user_comments(
@@ -857,6 +876,8 @@ async def record_monitored_user_activity(
 
     server_settings = await get_or_create_server_monitoring_settings(session, server_id)
     if not server_settings.discord_notifications_enabled:
+        return event, False
+    if monitoring_notifications_snoozed(monitored_user):
         return event, False
 
     override_row = await session.get(MonitoredUserNotificationSettings, monitored_user.id)

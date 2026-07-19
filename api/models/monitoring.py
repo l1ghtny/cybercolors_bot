@@ -15,12 +15,13 @@ class MonitoredUserCreateModel(BaseModel):
 class MonitoredUserUpdateModel(BaseModel):
     reason: str | None = Field(default=None, max_length=5000)
     is_active: bool | None = None
+    snooze_minutes: int | None = Field(default=None, ge=0, le=10080)
     updated_by_user_id: str | None = Field(default=None, pattern=r"^\d*$")
 
     @model_validator(mode="after")
     def validate_payload(self):
-        if self.reason is None and self.is_active is None:
-            raise ValueError("At least one of reason or is_active must be provided")
+        if self.reason is None and self.is_active is None and self.snooze_minutes is None:
+            raise ValueError("At least one of reason, is_active, or snooze_minutes must be provided")
         return self
 
 
@@ -38,6 +39,7 @@ class MonitoredUserReadModel(BaseModel):
     release_due_at: datetime | None = None
     released_at: datetime | None = None
     release_error: str | None = None
+    notification_snoozed_until: datetime | None = None
     is_active: bool
     created_at: datetime
     updated_at: datetime
