@@ -13,6 +13,7 @@ from api.services.moderation_actions_service import (
     create_action,
     get_action_details,
     list_action_summaries,
+    send_action_revert_dm,
 )
 from src.db.database import get_async_session
 from src.db.models import ActionType, GlobalUser, ModerationAction, ServerModerationSettings
@@ -100,6 +101,11 @@ async def _revert_action(
             stored.expires_at = stored.expires_at or datetime.now(timezone.utc).replace(tzinfo=None)
             session.add(stored)
             await session.commit()
+            await send_action_revert_dm(
+                session=session,
+                action=stored,
+                reason=reason,
+            )
 
     async with get_async_session() as session:
         settings = await session.get(ServerModerationSettings, action.server_id)

@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 import logging
 import os
@@ -64,6 +64,7 @@ from src.db.models import (
     ModerationCaseRuleCitation,
     ModerationImportSourceItem,
     ModerationRule,
+    Server,
     ServerLocalizationSettings,
     ServerModerationSettings,
 )
@@ -606,28 +607,80 @@ async def _get_server_locale(session: AsyncSession, server_id: int) -> str:
     return normalize_locale_code(settings.locale_code if settings else None)
 
 
-async def _send_warn_dm_for_action(
+def _format_dm_expiry(expires_at: datetime) -> str:
+    normalized = expires_at
+    if normalized.tzinfo is None:
+        normalized = normalized.replace(tzinfo=timezone.utc)
+    return f"<t:{int(normalized.timestamp())}:F> (<t:{int(normalized.timestamp())}:R>)"
+
+
+async def _send_action_dm_for_action(
     session: AsyncSession,
     action: ModerationActionCreate,
+    action_number: int,
     resolved_reason: str,
     resolved_rules: list[ModerationRule],
     resolved_commentary: str | None,
 ) -> None:
-    locale = await _get_server_locale(session=session, server_id=action.server_id)
-    message = tr(
-        locale,
-        "warn.dm_body",
-        server_name=action.server_name,
-        rule_label=_rules_label(resolved_rules, fallback_reason=resolved_reason, locale=locale),
-    )
-    if resolved_commentary:
-        message += tr(locale, "warn.dm_commentary", commentary=resolved_commentary)
-
     try:
-        await create_direct_message(user_id=action.target_user_id, content=message)
+        locale = await _get_server_locale(session=session, server_id=action.server_id)
+        message = tr(
+            locale,
+            f"action.dm_{action.action_type.value}_body",
+            action_number=action_number,
+            server_name=action.server_name,
+            rule_label=_rules_label(resolved_rules, fallback_reason=resolved_reason, locale=locale),
+        )
+        if resolved_commentary:
+            message += tr(locale, "action.dm_commentary", commentary=resolved_commentary)
+        if action.expires_at is not None:
+            message += tr(
+                locale,
+                "action.dm_expires",
+                expires_at=_format_dm_expiry(action.expires_at),
+            )
+        await create_direct_message(
+            user_id=action.target_user_id,
+            content=_truncate(message, limit=1900),
+        )
     except Exception as error:
         logger.warning(
-            "Failed to DM warning to user %s in server %s: %s",
+            "Failed to DM %s action #%s to user %s in server %s: %s",
+            action.action_type.value,
+            action_number,
+            action.target_user_id,
+            action.server_id,
+            error,
+        )
+
+
+async def send_action_revert_dm(
+    *,
+    session: AsyncSession,
+    action: ModerationAction,
+    reason: str,
+) -> None:
+    try:
+        locale = await _get_server_locale(session=session, server_id=action.server_id)
+        server = await session.get(Server, action.server_id)
+        server_name = server.server_name if server is not None else str(action.server_id)
+        message = tr(
+            locale,
+            "action.dm_reverted_body",
+            action_name=tr(locale, f"action.dm_type_{action.action_type.value}"),
+            action_number=action.action_number,
+            server_name=server_name,
+            reason=reason,
+        )
+        await create_direct_message(
+            user_id=action.target_user_id,
+            content=_truncate(message, limit=1900),
+        )
+    except Exception as error:
+        logger.warning(
+            "Failed to DM revert of %s action #%s to user %s in server %s: %s",
+            action.action_type.value,
+            action.action_number,
             action.target_user_id,
             action.server_id,
             error,
@@ -669,16 +722,21 @@ async def _apply_discord_action_effects(
     resolved_reason: str,
     resolved_rules: list[ModerationRule],
     resolved_commentary: str | None,
+    action_number: int,
     mute_role_id: int | None = None,
 ) -> None:
-    if action.action_type == ActionType.WARN:
-        await _send_warn_dm_for_action(
+    if action.action_type in {ActionType.WARN, ActionType.KICK, ActionType.BAN}:
+        await _send_action_dm_for_action(
             session=session,
             action=action,
+            action_number=action_number,
             resolved_reason=resolved_reason,
             resolved_rules=resolved_rules,
             resolved_commentary=resolved_commentary,
         )
+
+    if action.action_type == ActionType.WARN:
+        return
     elif action.action_type == ActionType.MUTE:
         if mute_role_id is None:
             raise HTTPException(
@@ -686,6 +744,14 @@ async def _apply_discord_action_effects(
                 detail="Mute role is not configured for this server",
             )
         await _apply_mute_effect_for_action(action=action, mute_role_id=mute_role_id)
+        await _send_action_dm_for_action(
+            session=session,
+            action=action,
+            action_number=action_number,
+            resolved_reason=resolved_reason,
+            resolved_rules=resolved_rules,
+            resolved_commentary=resolved_commentary,
+        )
     elif action.action_type == ActionType.BAN:
         await ban_guild_member(
             server_id=action.server_id,
@@ -830,6 +896,7 @@ async def create_action(
             resolved_reason=resolved_reason,
             resolved_rules=resolved_rules,
             resolved_commentary=resolved_commentary,
+            action_number=db_action.action_number,
             mute_role_id=mute_role_id,
         )
 
@@ -1050,6 +1117,11 @@ async def revert_action(
     session.add(action)
     await session.flush()
 
+    await send_action_revert_dm(
+        session=session,
+        action=action,
+        reason=resolved_reason,
+    )
     await _send_action_revert_to_mod_log(
         session=session,
         action=action,

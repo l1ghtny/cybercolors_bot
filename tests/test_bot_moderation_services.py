@@ -585,6 +585,7 @@ async def _discord_effect_runs_after_action_flush_scenario(effect_observations: 
         resolved_reason,
         resolved_rules,
         resolved_commentary,
+        action_number,
         mute_role_id=None,
     ) -> None:
         persisted_action = (
@@ -600,6 +601,7 @@ async def _discord_effect_runs_after_action_flush_scenario(effect_observations: 
         effect_observations.append(
             {
                 "action_id": persisted_action.id,
+                "action_number": action_number,
                 "mute_role_id": mute_role_id,
                 "is_active": persisted_action.is_active,
             }
@@ -668,8 +670,178 @@ def test_discord_effect_runs_after_action_is_flushed():
 
     assert len(effect_observations) == 1
     assert effect_observations[0]["action_id"] is not None
+    assert effect_observations[0]["action_number"] == 2
     assert effect_observations[0]["is_active"] is True
     assert effect_observations[0]["mute_role_id"] is not None
+
+
+async def _all_action_dm_scenario(events: list[tuple[str, str]]) -> None:
+    import api.services.moderation_actions_service as action_service
+
+    originals = {
+        "create_direct_message": action_service.create_direct_message,
+        "add_guild_member_role": action_service.add_guild_member_role,
+        "kick_guild_member": action_service.kick_guild_member,
+        "ban_guild_member": action_service.ban_guild_member,
+    }
+
+    class FakeSession:
+        async def get(self, _model, _key):
+            return None
+
+    async def fake_dm(user_id: int, content: str) -> dict:
+        events.append(("dm", content))
+        return {"recipient_id": user_id}
+
+    async def fake_add_role(server_id: int, user_id: int, role_id: int) -> None:
+        events.append(("mute", str(role_id)))
+
+    async def fake_kick(server_id: int, user_id: int) -> None:
+        events.append(("kick", str(user_id)))
+
+    async def fake_ban(server_id: int, user_id: int, delete_message_seconds: int = 0) -> None:
+        events.append(("ban", str(user_id)))
+
+    action_service.create_direct_message = fake_dm
+    action_service.add_guild_member_role = fake_add_role
+    action_service.kick_guild_member = fake_kick
+    action_service.ban_guild_member = fake_ban
+
+    try:
+        for action_number, action_type in enumerate(
+            (ActionType.WARN, ActionType.MUTE, ActionType.KICK, ActionType.BAN),
+            start=1,
+        ):
+            payload = ModerationActionCreate(
+                action_type=action_type,
+                moderator_user_id=100,
+                reason="Rule 9",
+                commentary="Moderator context",
+                expires_at=(
+                    datetime(2026, 7, 20, tzinfo=timezone.utc)
+                    if action_type in {ActionType.MUTE, ActionType.BAN}
+                    else None
+                ),
+                target_user_id=200,
+                target_user_name="target",
+                target_user_joined_at=datetime(2026, 1, 1),
+                target_user_server_nickname=None,
+                server_id=300,
+                server_name="CyberColors",
+            )
+            await action_service._apply_discord_action_effects(
+                session=FakeSession(),
+                action=payload,
+                resolved_reason="Rule 9",
+                resolved_rules=[],
+                resolved_commentary="Moderator context",
+                action_number=action_number,
+                mute_role_id=400 if action_type == ActionType.MUTE else None,
+            )
+    finally:
+        for name, value in originals.items():
+            setattr(action_service, name, value)
+
+
+def test_warn_mute_kick_and_ban_send_localized_user_dms() -> None:
+    events: list[tuple[str, str]] = []
+    asyncio.run(_all_action_dm_scenario(events))
+
+    assert [kind for kind, _value in events] == [
+        "dm",
+        "mute",
+        "dm",
+        "dm",
+        "kick",
+        "dm",
+        "ban",
+    ]
+    dm_messages = [value for kind, value in events if kind == "dm"]
+    assert ["warned", "muted", "kicked", "banned"] == [
+        next(word for word in ("warned", "muted", "kicked", "banned") if word in message)
+        for message in dm_messages
+    ]
+    assert all("Rule 9" in message and "Moderator context" in message for message in dm_messages)
+    assert "#1" in dm_messages[0]
+    assert "#4" in dm_messages[3]
+    assert "**Expires:**" in dm_messages[1]
+    assert "**Expires:**" in dm_messages[3]
+
+
+def test_closed_user_dms_do_not_block_moderation_effect(monkeypatch) -> None:
+    import api.services.moderation_actions_service as action_service
+
+    kicked_users: list[int] = []
+
+    class FakeSession:
+        async def get(self, _model, _key):
+            return None
+
+    async def reject_dm(user_id: int, content: str) -> dict:
+        raise RuntimeError("DMs are closed")
+
+    async def fake_kick(server_id: int, user_id: int) -> None:
+        kicked_users.append(user_id)
+
+    monkeypatch.setattr(action_service, "create_direct_message", reject_dm)
+    monkeypatch.setattr(action_service, "kick_guild_member", fake_kick)
+
+    async def scenario() -> None:
+        await action_service._apply_discord_action_effects(
+            session=FakeSession(),
+            action=ModerationActionCreate(
+                action_type=ActionType.KICK,
+                moderator_user_id=100,
+                reason="Rule 9",
+                target_user_id=200,
+                target_user_name="target",
+                target_user_joined_at=datetime(2026, 1, 1),
+                target_user_server_nickname=None,
+                server_id=300,
+                server_name="CyberColors",
+            ),
+            resolved_reason="Rule 9",
+            resolved_rules=[],
+            resolved_commentary=None,
+            action_number=12,
+        )
+
+    asyncio.run(scenario())
+    assert kicked_users == [200]
+
+
+def test_action_revert_sends_user_dm(monkeypatch) -> None:
+    import api.services.moderation_actions_service as action_service
+
+    sent_messages: list[dict] = []
+
+    class FakeSession:
+        async def get(self, model, _key):
+            if model is Server:
+                return SimpleNamespace(server_name="CyberColors")
+            return None
+
+    async def fake_dm(user_id: int, content: str) -> dict:
+        sent_messages.append({"user_id": user_id, "content": content})
+        return {}
+
+    monkeypatch.setattr(action_service, "create_direct_message", fake_dm)
+    asyncio.run(
+        action_service.send_action_revert_dm(
+            session=FakeSession(),
+            action=SimpleNamespace(
+                action_type=ActionType.MUTE,
+                action_number=42,
+                target_user_id=200,
+                server_id=300,
+            ),
+            reason="Appeal accepted",
+        )
+    )
+
+    assert sent_messages[0]["user_id"] == 200
+    assert "mute action **#42**" in sent_messages[0]["content"]
+    assert "Appeal accepted" in sent_messages[0]["content"]
 
 async def _new_case_action_scenario(sent_messages: list[dict]) -> None:
     async def fake_create_direct_message(user_id: int, content: str) -> dict:
