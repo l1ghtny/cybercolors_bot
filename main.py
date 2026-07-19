@@ -11,6 +11,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.commands.misc.cats import cat_command, cat_command_text
+from src.commands.app_command_errors import handle_app_command_error
 from src.commands.temp_voice import temp_voice_limit, temp_voice_rename
 from src.commands.moderation.security import (
     security_create_newcomer_role,
@@ -241,6 +242,13 @@ class Aclient(discord.AutoShardedClient):
 
 client = Aclient()
 class CyberColorsCommandTree(app_commands.CommandTree):
+    async def on_error(
+        self,
+        interaction: discord.Interaction,
+        error: app_commands.AppCommandError,
+    ) -> None:
+        await handle_app_command_error(interaction, error, logger=logger)
+
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.guild_id is None or not isinstance(interaction.user, discord.Member):
             return True
