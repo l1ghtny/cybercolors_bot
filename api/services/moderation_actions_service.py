@@ -832,6 +832,8 @@ async def list_action_summaries(
     server_id: int,
     target_user_id: int | None = None,
     limit: int = 500,
+    action_types: set[ActionType] | None = None,
+    is_active: bool | None = None,
 ) -> list[ModerationActionSummaryModel]:
     target_user = aliased(GlobalUser)
     moderator_user = aliased(GlobalUser)
@@ -866,6 +868,10 @@ async def list_action_summaries(
     )
     if target_user_id is not None:
         statement = statement.where(ModerationAction.target_user_id == target_user_id)
+    if action_types:
+        statement = statement.where(ModerationAction.action_type.in_(list(action_types)))
+    if is_active is not None:
+        statement = statement.where(ModerationAction.is_active == is_active)
 
     statement = (
         statement.group_by(

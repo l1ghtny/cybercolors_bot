@@ -17,6 +17,7 @@ from src.db.database import get_async_session
 from src.db.models import ActionType, GlobalUser, ModerationAction, ServerModerationSettings
 from src.modules.localization.service import get_server_locale, tr
 from src.modules.moderation.bot_services import (
+    action_choices,
     action_message_cleanup_choices,
     build_moderator_action_receipt,
     case_choices,
@@ -647,3 +648,27 @@ async def action_revert(interaction: discord.Interaction, action_id: str, reason
         ephemeral=True,
         allowed_mentions=discord.AllowedMentions.none(),
     )
+
+
+@action_revert.autocomplete("action_id")
+async def action_revert_autocomplete(interaction: discord.Interaction, current: str):
+    if interaction.guild_id is None:
+        return []
+    if not await has_bot_permission(
+        guild_id=interaction.guild_id,
+        user_id=interaction.user.id,
+        permission_key="moderation.actions.revert",
+    ):
+        return []
+    try:
+        async with get_async_session() as session:
+            actions = await list_action_summaries(
+                session=session,
+                server_id=interaction.guild_id,
+                limit=100,
+                action_types={ActionType.WARN, ActionType.MUTE, ActionType.BAN},
+                is_active=True,
+            )
+    except Exception:
+        return []
+    return action_choices(actions, current)

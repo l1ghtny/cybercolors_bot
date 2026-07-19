@@ -5,7 +5,11 @@ import discord
 from discord import app_commands
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from api.models.moderation_actions import ModerationActionCreate, ModerationActionMessageCleanupCreate
+from api.models.moderation_actions import (
+    ModerationActionCreate,
+    ModerationActionMessageCleanupCreate,
+    ModerationActionSummaryModel,
+)
 from api.models.moderation_cases import ModerationCaseCreateModel, ModerationCaseSummaryModel
 from api.models.moderation_rules import ModerationRuleReadModel
 from api.services.moderation_actions_service import _dashboard_action_url, _dashboard_case_url, create_action
@@ -132,6 +136,38 @@ def rule_choices(
             continue
         display_name = label if len(label) <= 100 else f"{label[:97]}..."
         choices.append(app_commands.Choice(name=display_name, value=str(rule.id)))
+        if len(choices) >= limit:
+            break
+    return choices
+
+
+def action_choices(
+    actions: list[ModerationActionSummaryModel],
+    current: str,
+    limit: int = 25,
+) -> list[app_commands.Choice[str]]:
+    current_lower = current.lower().strip()
+    choices: list[app_commands.Choice[str]] = []
+    for action in actions:
+        action_type = action.action_type.value if hasattr(action.action_type, "value") else str(action.action_type)
+        reason = " ".join(action.reason.split())
+        created_at = action.created_at.strftime("%Y-%m-%d %H:%M")
+        label = (
+            f"{action_type.upper()} · {action.target_user_username} · "
+            f"#{action.id[:8]} · {created_at} · {reason}"
+        )
+        searchable = " ".join(
+            (
+                label,
+                action.id,
+                action.target_user_id,
+                action.target_user_username,
+            )
+        ).lower()
+        if current_lower and current_lower not in searchable:
+            continue
+        display_name = label if len(label) <= 100 else f"{label[:97]}..."
+        choices.append(app_commands.Choice(name=display_name, value=action.id))
         if len(choices) >= limit:
             break
     return choices
