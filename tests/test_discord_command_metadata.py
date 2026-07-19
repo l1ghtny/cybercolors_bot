@@ -193,16 +193,7 @@ def test_bot_command_catalog_covers_registered_discord_commands():
 
 
 def test_bot_command_catalog_exposes_moderation_command_details():
-    command = get_bot_command("mod.actions.manage")
-
-    assert command is not None
-    assert command.invoke == "/mod actions manage"
-    assert {component.label for component in command.components} == {
-        "Open dashboard",
-        "Add info in dashboard",
-        "Delete messages",
-        "Revert",
-    }
+    assert get_bot_command("mod.actions.manage") is None
 
     warn_command = get_bot_command("mod.warn")
     assert warn_command is not None
@@ -288,9 +279,8 @@ def test_moderation_bot_commands_use_product_rbac_permissions():
         "ban": {"moderation.actions.apply.ban"},
         "unban": {"moderation.actions.apply.ban"},
         "actions_list": {"moderation.actions.view"},
-        "action_manage": {"moderation.actions.view"},
         "action_revert": {"moderation.actions.revert"},
-        "revert_button": {"moderation.actions.revert"},
+        "_open_action_revert_confirmation": {"moderation.actions.revert"},
         "moderation_settings": {"moderation.settings.view"},
         "moderation_set_mute_role": {"moderation.settings.edit"},
         "moderation_set_log_channel": {"moderation.settings.edit"},

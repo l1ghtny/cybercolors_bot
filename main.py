@@ -32,11 +32,11 @@ from src.commands.moderation.rules import (
 )
 from src.commands.moderation.warn import warn
 from src.commands.moderation.actions import (
-    action_manage,
     action_revert,
     actions_list,
     ban,
     kick,
+    register_moderation_action_components,
     unban,
 )
 from src.commands.moderation.cases import (
@@ -143,6 +143,7 @@ class Aclient(discord.AutoShardedClient):
         # 2. Call your cache loader
         await self.load_user_cache()
         await self.load_current_server_rules()
+        register_moderation_action_components(self)
         await register_ai_moderation_review_views(self)
         start_message_ingestion_workers()
 
@@ -363,7 +364,6 @@ moderation_cases_group.add_command(case_link_action)
 moderation_cases_group.add_command(case_unlink_action)
 
 moderation_actions_group.add_command(actions_list)
-moderation_actions_group.add_command(action_manage)
 moderation_actions_group.add_command(action_revert)
 
 temp_voice_group.add_command(temp_voice_rename)

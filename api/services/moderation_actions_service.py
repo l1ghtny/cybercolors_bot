@@ -565,6 +565,41 @@ async def _import_metadata_for_action_ids(
     return result
 
 
+def build_action_log_components(
+    action: ModerationAction,
+    locale: str | None = None,
+) -> list[dict]:
+    action_url = _dashboard_action_url(action.server_id, action.id)
+    buttons = [
+        {
+            "type": 2,
+            "style": 5,
+            "label": tr(locale, "action.open_dashboard"),
+            "url": action_url,
+        },
+        {
+            "type": 2,
+            "style": 5,
+            "label": tr(locale, "action.add_info_dashboard"),
+            "url": action_url,
+        },
+    ]
+    if action.is_active and action.action_type in {
+        ActionType.WARN,
+        ActionType.MUTE,
+        ActionType.BAN,
+    }:
+        buttons.append(
+            {
+                "type": 2,
+                "style": 4,
+                "label": tr(locale, "action.revert_button"),
+                "custom_id": f"mod-action:revert:{action.id}",
+            }
+        )
+    return [{"type": 1, "components": buttons}]
+
+
 async def _send_action_to_mod_log(
     session: AsyncSession,
     action: ModerationAction,
@@ -584,7 +619,11 @@ async def _send_action_to_mod_log(
     )
 
     try:
-        await create_channel_message(channel_id=settings.mod_log_channel_id, embeds=[embed])
+        await create_channel_message(
+            channel_id=settings.mod_log_channel_id,
+            embeds=[embed],
+            components=build_action_log_components(action, locale),
+        )
     except Exception as error:
         logger.warning(
             "Failed to send moderation action log to channel %s for server %s: %s",

@@ -329,12 +329,15 @@ async def create_channel_message(
     channel_id: int,
     content: str | None = None,
     embeds: list[dict] | None = None,
+    components: list[dict] | None = None,
 ) -> dict:
     message_payload: dict = {"allowed_mentions": {"parse": []}}
     if content is not None:
         message_payload["content"] = content
     if embeds:
         message_payload["embeds"] = embeds
+    if components:
+        message_payload["components"] = components
 
     payload = await _discord_post(
         f"/channels/{channel_id}/messages",

@@ -12,6 +12,7 @@ from api.services.moderation_actions_service import (
     _build_action_log_embed,
     _build_action_log_message,
     _build_action_revert_log_embed,
+    build_action_log_components,
     create_action,
     revert_action,
 )
@@ -240,6 +241,48 @@ def test_build_action_log_message_links_dashboard_and_uses_rule_label(monkeypatc
         target_username="target",
     )
     assert [field["name"] for field in duplicate_embed["fields"]] == ["Target", "Moderator", "Rule", "Commentary", "Case"]
+
+
+def test_action_log_components_include_safe_action_controls(monkeypatch):
+    monkeypatch.setenv("DASHBOARD_BASE_URL", "https://dash.example/")
+    action_id = uuid4()
+    action = SimpleNamespace(
+        id=action_id,
+        action_type=ActionType.WARN,
+        server_id=123,
+        is_active=True,
+    )
+
+    components = build_action_log_components(action)
+    buttons = components[0]["components"]
+
+    assert [button["label"] for button in buttons] == [
+        "Open dashboard",
+        "Add info in dashboard",
+        "Revert",
+    ]
+    assert buttons[0]["url"] == f"https://dash.example/dashboard/123/moderation/actions/{action_id}"
+    assert buttons[1]["url"] == buttons[0]["url"]
+    assert buttons[2] == {
+        "type": 2,
+        "style": 4,
+        "label": "Revert",
+        "custom_id": f"mod-action:revert:{action_id}",
+    }
+
+    kick_buttons = build_action_log_components(
+        SimpleNamespace(**{**action.__dict__, "action_type": ActionType.KICK})
+    )[0]["components"]
+    inactive_buttons = build_action_log_components(
+        SimpleNamespace(**{**action.__dict__, "is_active": False})
+    )[0]["components"]
+
+    assert len(kick_buttons) == 2
+    assert len(inactive_buttons) == 2
+    assert build_action_log_components(action, "ru")[0]["components"][2]["label"] == tr(
+        "ru",
+        "action.revert_button",
+    )
 
 
 def test_build_action_revert_log_embed_links_dashboard_and_uses_display_names(monkeypatch):

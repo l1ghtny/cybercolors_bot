@@ -1,9 +1,6 @@
 from datetime import datetime, timedelta, timezone
-from uuid import UUID
-
 import discord
 from discord import app_commands
-from fastapi import HTTPException
 from sqlmodel import select
 
 from api.models.moderation_actions import ModerationActionMessageCleanupCreate
@@ -11,7 +8,6 @@ from api.services.moderation_action_numbers import resolve_moderation_action_ref
 from api.services.moderation_actions_service import (
     _dashboard_action_url,
     create_action,
-    get_action_details,
     list_action_summaries,
     send_action_revert_dm,
 )
@@ -57,6 +53,13 @@ async def _resolve_global_username(user_id: int) -> str | None:
     async with get_async_session() as session:
         user = await session.get(GlobalUser, user_id)
     return user.username if user else None
+
+
+def _can_use_action_revert_controls(interaction: discord.Interaction) -> bool:
+    permissions = getattr(interaction, "permissions", None)
+    if permissions is None:
+        permissions = getattr(interaction.user, "guild_permissions", None)
+    return bool(permissions and permissions.moderate_members)
 
 
 async def _revert_action(
@@ -149,6 +152,12 @@ class ActionRevertReasonModal(discord.ui.Modal):
             return
         await interaction.response.defer(ephemeral=True)
         locale = await get_server_locale(interaction.guild.id)
+        if not _can_use_action_revert_controls(interaction):
+            await interaction.followup.send(
+                tr(locale, "action.revert_discord_permission_required"),
+                ephemeral=True,
+            )
+            return
         if not await ensure_bot_permission(interaction, "moderation.actions.revert", locale=locale):
             return
         async with get_async_session() as session:
@@ -198,61 +207,119 @@ class ActionRevertReasonModal(discord.ui.Modal):
         )
 
 
-class ActionManageView(discord.ui.View):
-    def __init__(self, *, server_id: int, action_id: str, can_revert: bool, locale: str):
-        super().__init__(timeout=300)
+class ActionRevertConfirmationView(discord.ui.View):
+    def __init__(self, *, action_id: str, locale: str, requesting_user_id: int):
+        super().__init__(timeout=60)
         self.action_id = action_id
-        self.add_item(
-            discord.ui.Button(
-                label=tr(locale, "action.open_dashboard"),
-                style=discord.ButtonStyle.link,
-                url=_dashboard_action_url(server_id, action_id),
-            )
-        )
-        self.add_item(
-            discord.ui.Button(
-                label=tr(locale, "action.add_info_dashboard"),
-                style=discord.ButtonStyle.link,
-                url=_dashboard_action_url(server_id, action_id),
-            )
-        )
-        self.revert_button.label = tr(locale, "action.revert_button")
-        self.revert_button.disabled = not can_revert
+        self.locale = locale
+        self.requesting_user_id = requesting_user_id
+        self.confirm_button.label = tr(locale, "action.revert_confirm_button")
+        self.cancel_button.label = tr(locale, "action.revert_cancel_button")
 
-    @discord.ui.button(label="Revert", style=discord.ButtonStyle.danger)
-    async def revert_button(self, interaction: discord.Interaction, _button: discord.ui.Button):
-        if interaction.guild is None:
-            await interaction.response.send_message(tr(None, "common.server_only"), ephemeral=True)
-            return
-        locale = await get_server_locale(interaction.guild.id)
-        if not await ensure_bot_permission(interaction, "moderation.actions.revert", locale=locale):
-            return
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id == self.requesting_user_id:
+            return True
+        await interaction.response.send_message(
+            tr(self.locale, "action.revert_confirmation_owner_only"),
+            ephemeral=True,
+        )
+        return False
+
+    @discord.ui.button(label="Confirm revert", style=discord.ButtonStyle.danger)
+    async def confirm_button(self, interaction: discord.Interaction, _button: discord.ui.Button):
+        self.stop()
         await interaction.response.send_modal(
-            ActionRevertReasonModal(action_id=self.action_id, locale=locale)
+            ActionRevertReasonModal(action_id=self.action_id, locale=self.locale)
+        )
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel_button(self, interaction: discord.Interaction, _button: discord.ui.Button):
+        self.stop()
+        await interaction.response.edit_message(
+            content=tr(self.locale, "action.revert_cancelled"),
+            view=None,
         )
 
 
-def _action_embed(action, locale: str, server_id: int) -> discord.Embed:
-    action_type = action.action_type.value if hasattr(action.action_type, "value") else str(action.action_type)
-    embed = discord.Embed(
-        title=f"{tr(locale, 'modlog.title')}: {action_type} #{action.action_number}",
-        url=_dashboard_action_url(server_id, action.id),
-        color=discord.Color.blurple(),
+async def _open_action_revert_confirmation(
+    interaction: discord.Interaction,
+    action_id: str,
+) -> None:
+    if interaction.guild is None:
+        await interaction.response.send_message(tr(None, "common.server_only"), ephemeral=True)
+        return
+    await interaction.response.defer(ephemeral=True)
+    locale = await get_server_locale(interaction.guild.id)
+    if not _can_use_action_revert_controls(interaction):
+        await interaction.followup.send(
+            tr(locale, "action.revert_discord_permission_required"),
+            ephemeral=True,
+        )
+        return
+    if not await ensure_bot_permission(
+        interaction,
+        "moderation.actions.revert",
+        locale=locale,
+    ):
+        return
+    async with get_async_session() as session:
+        action = await _fetch_action_for_server(session, interaction.guild.id, action_id)
+    if action is None:
+        await interaction.followup.send(tr(locale, "action.not_found"), ephemeral=True)
+        return
+    if action.action_type not in {ActionType.WARN, ActionType.MUTE, ActionType.BAN}:
+        await interaction.followup.send(tr(locale, "action.revert_unavailable"), ephemeral=True)
+        return
+    if not action.is_active:
+        await interaction.followup.send(tr(locale, "action.revert_inactive"), ephemeral=True)
+        return
+    await interaction.followup.send(
+        tr(
+            locale,
+            "action.revert_confirm_prompt",
+            action_type=action.action_type.value,
+            action_number=action.action_number,
+            target=f"<@{action.target_user_id}>",
+        ),
+        view=ActionRevertConfirmationView(
+            action_id=str(action.id),
+            locale=locale,
+            requesting_user_id=interaction.user.id,
+        ),
+        ephemeral=True,
+        allowed_mentions=discord.AllowedMentions.none(),
     )
-    embed.add_field(name=tr(locale, "modlog.target_label"), value=f"<@{action.target_user_id}> (`{action.target_user_username}`)", inline=True)
-    embed.add_field(name=tr(locale, "modlog.moderator_label"), value=f"<@{action.moderator_user_id}> (`{action.moderator_username}`)", inline=True)
-    embed.add_field(name=tr(locale, "modlog.reason_label"), value=action.reason[:1024], inline=False)
-    if action.case_id:
-        embed.add_field(name=tr(locale, "modlog.case_label"), value=action.case_title or action.case_id, inline=False)
-    if action.expires_at:
-        embed.add_field(name=tr(locale, "modlog.expires_at_label"), value=action.expires_at.isoformat(), inline=True)
-    if getattr(action, "created_at_label", None):
-        embed.add_field(name=tr(locale, "modlog.created_at_label"), value=action.created_at_label, inline=False)
-    embed.add_field(name="Active", value=str(action.is_active), inline=True)
-    embed.set_footer(
-        text=f"{tr(locale, 'modlog.action_number_label')}: #{action.action_number}"
-    )
-    return embed
+
+
+class ActionLogRevertButton(
+    discord.ui.DynamicItem[discord.ui.Button],
+    template=r"mod-action:revert:(?P<action_id>[0-9a-fA-F-]{36})",
+):
+    def __init__(self, *, action_id: str):
+        self.action_id = action_id
+        super().__init__(
+            discord.ui.Button(
+                label="Revert",
+                style=discord.ButtonStyle.danger,
+                custom_id=f"mod-action:revert:{action_id}",
+            )
+        )
+
+    @classmethod
+    async def from_custom_id(
+        cls,
+        _interaction: discord.Interaction,
+        _item: discord.ui.Item,
+        match,
+    ):
+        return cls(action_id=match["action_id"])
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await _open_action_revert_confirmation(interaction, self.action_id)
+
+
+def register_moderation_action_components(client: discord.Client) -> None:
+    client.add_dynamic_items(ActionLogRevertButton)
 
 
 async def _create_member_action(
@@ -589,42 +656,6 @@ async def actions_list(
 
 
 @app_commands.checks.has_permissions(moderate_members=True)
-@app_commands.command(name="manage", description="Show action controls for a moderation action.")
-async def action_manage(interaction: discord.Interaction, action_id: str):
-    if interaction.guild is None:
-        await interaction.response.send_message(tr(None, "common.server_only"), ephemeral=True)
-        return
-    await interaction.response.defer(ephemeral=True)
-    locale = await get_server_locale(interaction.guild.id)
-    if not await ensure_bot_permission(interaction, "moderation.actions.view", locale=locale):
-        return
-    try:
-        async with get_async_session() as session:
-            stored_action = await _fetch_action_for_server(
-                session,
-                interaction.guild.id,
-                action_id,
-            )
-            if stored_action is None:
-                raise ValueError("Moderation action not found")
-            action = await get_action_details(
-                session=session,
-                server_id=interaction.guild.id,
-                action_id=stored_action.id,
-            )
-    except (ValueError, HTTPException):
-        await interaction.followup.send(tr(locale, "action.not_found"), ephemeral=True)
-        return
-    embed = _action_embed(action, locale, interaction.guild.id)
-    can_revert = action.action_type in {ActionType.WARN, ActionType.MUTE, ActionType.BAN} and action.is_active
-    await interaction.followup.send(
-        embed=embed,
-        view=ActionManageView(server_id=interaction.guild.id, action_id=action.id, can_revert=can_revert, locale=locale),
-        ephemeral=True,
-    )
-
-
-@app_commands.checks.has_permissions(moderate_members=True)
 @app_commands.command(name="revert", description="Revert an active warn, mute, or ban action.")
 async def action_revert(interaction: discord.Interaction, action_id: str, reason: str | None = None):
     if interaction.guild is None:
@@ -699,28 +730,6 @@ async def action_revert_autocomplete(interaction: discord.Interaction, current: 
                 limit=100,
                 action_types={ActionType.WARN, ActionType.MUTE, ActionType.BAN},
                 is_active=True,
-            )
-    except Exception:
-        return []
-    return action_choices(actions, current)
-
-
-@action_manage.autocomplete("action_id")
-async def action_manage_autocomplete(interaction: discord.Interaction, current: str):
-    if interaction.guild_id is None:
-        return []
-    if not await has_bot_permission(
-        guild_id=interaction.guild_id,
-        user_id=interaction.user.id,
-        permission_key="moderation.actions.view",
-    ):
-        return []
-    try:
-        async with get_async_session() as session:
-            actions = await list_action_summaries(
-                session=session,
-                server_id=interaction.guild_id,
-                limit=100,
             )
     except Exception:
         return []

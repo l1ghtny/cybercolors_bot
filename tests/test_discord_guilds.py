@@ -16,6 +16,19 @@ async def _create_channel_message_embed_scenario(captured: list[dict]) -> None:
         result = await discord_guilds.create_channel_message(
             channel_id=123,
             embeds=[{"title": "Moderation log"}],
+            components=[
+                {
+                    "type": 1,
+                    "components": [
+                        {
+                            "type": 2,
+                            "style": 4,
+                            "label": "Revert",
+                            "custom_id": "mod-action:revert:action-id",
+                        }
+                    ],
+                }
+            ],
         )
     finally:
         discord_guilds._discord_post = original
@@ -33,6 +46,19 @@ def test_create_channel_message_sends_embed_payload_without_content():
             "payload": {
                 "allowed_mentions": {"parse": []},
                 "embeds": [{"title": "Moderation log"}],
+                "components": [
+                    {
+                        "type": 1,
+                        "components": [
+                            {
+                                "type": 2,
+                                "style": 4,
+                                "label": "Revert",
+                                "custom_id": "mod-action:revert:action-id",
+                            }
+                        ],
+                    }
+                ],
             },
         }
     ]

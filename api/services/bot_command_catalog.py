@@ -728,26 +728,6 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         workflow=["Loads recent action summaries and sends an ephemeral embed with dashboard links."],
     ),
     BotCommandDocModel(
-        id="mod.actions.manage",
-        name="manage",
-        qualified_name="mod actions manage",
-        invoke="/mod actions manage",
-        category="moderation-actions",
-        summary="Show action controls for a moderation action.",
-        required_permissions=["moderate_members"],
-        parameters=[ACTION_ID_PARAM],
-        components=[
-            _component("button", "Open dashboard", "Link button to the moderation action in the dashboard."),
-            _component("button", "Add info in dashboard", "Second dashboard link button for adding details."),
-            _component("dashboard", "Delete messages", "Dashboard action form can delete selected or recent target-user messages and attach them to the action."),
-            _component("button", "Revert", "Danger button enabled for active mute and ban actions."),
-        ],
-        workflow=[
-            "Loads action details, sends an action embed, and displays dashboard links plus a conditional revert button.",
-            "Deleted-message evidence is managed in the dashboard, including linking existing deleted messages and cleanup performed while applying an action.",
-        ],
-    ),
-    BotCommandDocModel(
         id="mod.actions.revert",
         name="revert",
         qualified_name="mod actions revert",
@@ -930,7 +910,6 @@ COMMAND_RBAC_PERMISSIONS: dict[str, tuple[str, ...]] = {
     "mod.cases.link_action": ("moderation.cases.manage",),
     "mod.cases.unlink_action": ("moderation.cases.manage",),
     "mod.actions.list": ("moderation.actions.view",),
-    "mod.actions.manage": ("moderation.actions.view",),
     "mod.actions.revert": ("moderation.actions.revert",),
 }
 
@@ -1244,10 +1223,6 @@ RU_COMMAND_TEXT: dict[str, dict[str, list[str] | str]] = {
     "mod.actions.list": {
         "summary": "Показать недавние модераторские действия.",
         "workflow": ["Загружает недавние действия и отправляет приватный embed со ссылками на панель управления."],
-    },
-    "mod.actions.manage": {
-        "summary": "Показать элементы управления модераторским действием.",
-        "workflow": ["Загружает детали действия, отправляет embed и показывает ссылки на панель вместе с условной кнопкой отката."],
     },
     "mod.actions.revert": {
         "summary": "Откатить активный мут или бан.",
