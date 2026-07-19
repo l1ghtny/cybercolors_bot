@@ -253,6 +253,7 @@ async def upsert_monitored_user(
         existing.released_at = None
         existing.release_error = None
         existing.notification_snoozed_until = None
+        existing.last_notification_at = None
         existing.added_by_user_id = added_by_user_id
         existing.updated_at = naive_utcnow()
         session.add(existing)
@@ -318,6 +319,7 @@ async def update_monitored_user(
     if is_active is not None:
         item.is_active = is_active
         item.notification_snoozed_until = None
+        item.last_notification_at = None
         if item.source == "newcomer":
             if is_active:
                 item.released_at = None
@@ -353,6 +355,19 @@ def monitoring_notifications_snoozed(
 ) -> bool:
     snoozed_until = monitored_user.notification_snoozed_until
     return snoozed_until is not None and snoozed_until > (now or naive_utcnow())
+
+
+def monitoring_notification_cooldown_active(
+    monitored_user: MonitoredUser,
+    cooldown_minutes: int,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    if cooldown_minutes <= 0 or monitored_user.last_notification_at is None:
+        return False
+    return monitored_user.last_notification_at > (
+        (now or naive_utcnow()) - timedelta(minutes=cooldown_minutes)
+    )
 
 
 async def list_monitored_user_comments(
@@ -676,6 +691,7 @@ def to_server_monitoring_settings_read_model(
             str(settings.notification_channel_id) if settings.notification_channel_id is not None else None
         ),
         discord_notifications_enabled=settings.discord_notifications_enabled,
+        notification_cooldown_minutes=settings.notification_cooldown_minutes,
         defaults=_defaults_from_settings(settings),
         auto_monitor_enabled=settings.auto_monitor_enabled,
         auto_monitor_recent_account_days=settings.auto_monitor_recent_account_days,
@@ -712,6 +728,8 @@ async def update_server_monitoring_settings(
             settings.notification_channel_id = None
     if body.discord_notifications_enabled is not None:
         settings.discord_notifications_enabled = body.discord_notifications_enabled
+    if body.notification_cooldown_minutes is not None:
+        settings.notification_cooldown_minutes = body.notification_cooldown_minutes
     if body.defaults is not None:
         defaults = body.defaults
         settings.default_notify_rejoin = defaults.notify_rejoin
@@ -855,7 +873,16 @@ async def record_monitored_user_activity(
     message_content: str | None = None,
     metadata: dict | None = None,
 ) -> tuple[MonitoredUserActivityEvent | None, bool]:
-    monitored_user = await _get_monitored_user_or_none(session, server_id, user_id)
+    monitored_user = (
+        await session.exec(
+            select(MonitoredUser)
+            .where(
+                MonitoredUser.server_id == server_id,
+                MonitoredUser.user_id == user_id,
+            )
+            .with_for_update()
+        )
+    ).first()
     if not monitored_user or not monitored_user.is_active:
         return None, False
 
@@ -908,6 +935,17 @@ async def record_monitored_user_activity(
         event.metadata_json = {**(event.metadata_json or {}), "message_count": message_count, "threshold": threshold}
         session.add(event)
         await session.flush()
+
+    now = naive_utcnow()
+    if monitoring_notification_cooldown_active(
+        monitored_user,
+        server_settings.notification_cooldown_minutes,
+        now=now,
+    ):
+        return event, False
+    monitored_user.last_notification_at = now
+    session.add(monitored_user)
+    await session.flush()
 
     return event, True
 

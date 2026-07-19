@@ -30,6 +30,33 @@ replies = APIRouter(
 )
 
 
+def _group_reply_edits(
+    body: List[ReplyEditModel],
+) -> dict[UUID, tuple[str, set[str]]]:
+    grouped: dict[UUID, tuple[str, set[str]]] = {}
+    for edit in body:
+        existing = grouped.get(edit.id)
+        if existing is None:
+            grouped[edit.id] = (edit.bot_reply, {edit.user_message})
+            continue
+        bot_reply, messages = existing
+        if bot_reply != edit.bot_reply:
+            raise ValueError("All edits for one reply must use the same bot_reply")
+        messages.add(edit.user_message)
+    return grouped
+
+
+def _plan_trigger_sync(
+    existing_triggers: list[Triggers],
+    desired_messages: set[str],
+) -> tuple[list[Triggers], set[str]]:
+    existing_messages = {trigger.message for trigger in existing_triggers}
+    to_delete = [
+        trigger for trigger in existing_triggers if trigger.message not in desired_messages
+    ]
+    return to_delete, desired_messages - existing_messages
+
+
 async def require_duplicate_target_server_replies_manage(
     body: ReplyDuplicateRequestModel,
     session: AsyncSession = Depends(get_session),
@@ -197,30 +224,44 @@ async def edit_replies(
 ):
     updated_replies = 0
     created_triggers = 0
-    for reply in body:
+    deleted_triggers = 0
+    try:
+        grouped_edits = _group_reply_edits(body)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    for reply_id, (bot_reply, desired_messages) in grouped_edits.items():
         existing_reply = (
             await session.exec(
                 select(Replies).where(
-                    Replies.id == reply.id,
+                    Replies.id == reply_id,
                     Replies.server_id == server_id,
                 )
             )
         ).first()
         if existing_reply:
-            if existing_reply.bot_reply != reply.bot_reply:
-                existing_reply.bot_reply = reply.bot_reply
+            if existing_reply.bot_reply != bot_reply:
+                existing_reply.bot_reply = bot_reply
+                session.add(existing_reply)
                 updated_replies += 1
 
-            existing_trigger = (
+            existing_triggers = (
                 await session.exec(
-                    select(Triggers).where(
-                        Triggers.reply_id == existing_reply.id,
-                        Triggers.message == reply.user_message,
-                    )
+                    select(Triggers).where(Triggers.reply_id == existing_reply.id)
                 )
-            ).first()
-            if not existing_trigger:
-                session.add(Triggers(message=reply.user_message, reply_id=existing_reply.id))
+            ).all()
+            to_delete, to_create = _plan_trigger_sync(
+                list(existing_triggers),
+                desired_messages,
+            )
+            for trigger in to_delete:
+                await session.delete(trigger)
+                deleted_triggers += 1
+            for message in to_create:
+                session.add(Triggers(message=message, reply_id=existing_reply.id))
                 created_triggers += 1
 
     await session.commit()
@@ -229,6 +270,7 @@ async def edit_replies(
         processed=len(body),
         created=created_triggers,
         updated=updated_replies,
+        deleted=deleted_triggers,
     )
 
 

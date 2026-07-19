@@ -132,6 +132,7 @@ class ServerMonitoringSettingsReadModel(BaseModel):
     server_id: str
     notification_channel_id: str | None = None
     discord_notifications_enabled: bool
+    notification_cooldown_minutes: int
     defaults: MonitoringEventDefaultsModel
     auto_monitor_enabled: bool
     auto_monitor_recent_account_days: int
@@ -143,6 +144,7 @@ class ServerMonitoringSettingsReadModel(BaseModel):
 class ServerMonitoringSettingsUpdateModel(BaseModel):
     notification_channel_id: str | None = Field(default=None, pattern=r"^\d*$")
     discord_notifications_enabled: bool | None = None
+    notification_cooldown_minutes: int | None = Field(default=None, ge=0, le=1440)
     defaults: MonitoringEventDefaultsModel | None = None
     auto_monitor_enabled: bool | None = None
     auto_monitor_recent_account_days: int | None = Field(default=None, ge=1, le=3650)
