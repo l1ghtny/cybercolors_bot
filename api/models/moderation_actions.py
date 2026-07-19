@@ -77,6 +77,7 @@ class ModerationActionCreate(BaseModel):
 
 class ModerationActionRead(BaseModel):
     id: str
+    action_number: int
     action_type: ActionType
     server_id: str
     target_user_id: str
@@ -104,6 +105,7 @@ class ModerationActionRead(BaseModel):
 
 class ModerationActionSummaryModel(BaseModel):
     id: str
+    action_number: int
     action_type: ActionType
     server_id: str
     target_user_id: str

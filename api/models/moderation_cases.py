@@ -23,6 +23,7 @@ class ModerationRuleRef(BaseModel):
 
 class ModerationActionSummaryModel(BaseModel):
     id: str
+    action_number: int
     action_type: str
     target_user: "ModerationActorModel"
     moderator: "ModerationActorModel"

@@ -646,9 +646,34 @@ class ModerationRule(SQLModel, table=True):
     case_citations: List["ModerationCaseRuleCitation"] = Relationship(back_populates="rule")
 
 
+class ModerationActionCounter(SQLModel, table=True):
+    __tablename__ = "moderation_action_counters"
+
+    server_id: int = Field(
+        sa_column=Column(
+            BigInteger,
+            ForeignKey("servers.server_id", ondelete="CASCADE"),
+            primary_key=True,
+        )
+    )
+    last_number: int = Field(sa_column=Column(BigInteger, nullable=False))
+
+
 class ModerationAction(SQLModel, table=True):
     __tablename__ = "moderation_actions"
+    __table_args__ = (
+        UniqueConstraint(
+            "server_id",
+            "action_number",
+            name="uq_moderation_actions_server_action_number",
+        ),
+    )
+
     id: Optional[UUID] = uuid7_primary_key_field()
+    action_number: Optional[int] = Field(
+        default=None,
+        sa_column=Column(BigInteger, nullable=False),
+    )
     action_type: ActionType
 
     server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id")))

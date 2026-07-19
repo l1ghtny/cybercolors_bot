@@ -127,6 +127,7 @@ async def _overview_and_timeline_scenario() -> None:
         session.add(
             ModerationAction(
                 id=action_id,
+                action_number=1,
                 action_type=ActionType.MUTE,
                 server_id=server_id,
                 target_user_id=target_id,

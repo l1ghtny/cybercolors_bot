@@ -154,7 +154,7 @@ def action_choices(
         created_at = action.created_at.strftime("%Y-%m-%d %H:%M")
         label = (
             f"{action_type.upper()} · {action.target_user_username} · "
-            f"#{action.id[:8]} · {created_at} · {reason}"
+            f"#{action.action_number} · {created_at} · {reason}"
         )
         searchable = " ".join(
             (
@@ -167,7 +167,12 @@ def action_choices(
         if current_lower and current_lower not in searchable:
             continue
         display_name = label if len(label) <= 100 else f"{label[:97]}..."
-        choices.append(app_commands.Choice(name=display_name, value=action.id))
+        choices.append(
+            app_commands.Choice(
+                name=display_name,
+                value=str(action.action_number),
+            )
+        )
         if len(choices) >= limit:
             break
     return choices
@@ -188,6 +193,7 @@ def build_moderator_action_receipt(
     action: ModerationAction | None = None,
     action_type: ActionType | str | None = None,
     action_id: str | UUID | None = None,
+    action_number: int | None = None,
     rule: str | None = None,
     commentary: str | None = None,
     case_id: str | UUID | None = None,
@@ -196,6 +202,7 @@ def build_moderator_action_receipt(
 ) -> str:
     """Build the private moderator receipt sent after the public notice."""
     resolved_action_id = action_id or getattr(action, "id", None)
+    resolved_action_number = action_number or getattr(action, "action_number", None)
     resolved_action_type = action_type or getattr(action, "action_type", None)
     resolved_case_id = case_id or getattr(action, "case_id", None)
     resolved_commentary = commentary if commentary is not None else getattr(action, "commentary", None)
@@ -203,11 +210,11 @@ def build_moderator_action_receipt(
 
     lines = [f"**{tr(locale, 'action.private_receipt_title')}**", f"{tr(locale, 'action.public_notice_label')}: {public_message}"]
 
-    if resolved_action_id:
+    if resolved_action_id and resolved_action_number is not None:
         action_id_text = str(resolved_action_id)
         lines.append(
-            f"{tr(locale, 'modlog.action_id_label')}: "
-            f"[`{action_id_text[:8]}`]({_dashboard_action_url(server_id, action_id_text)})"
+            f"{tr(locale, 'modlog.action_number_label')}: "
+            f"[`#{resolved_action_number}`]({_dashboard_action_url(server_id, action_id_text)})"
         )
     if resolved_action_type:
         action_type_text = resolved_action_type.value if hasattr(resolved_action_type, "value") else str(resolved_action_type)

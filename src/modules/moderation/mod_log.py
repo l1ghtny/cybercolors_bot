@@ -106,6 +106,7 @@ def build_action_revert_log_embed(
     server_id: int,
     action_type: str,
     action_id: str,
+    action_number: int,
     action_url: str,
     target_user_id: int,
     target_display: str | None,
@@ -136,12 +137,17 @@ def build_action_revert_log_embed(
         )
     embed.add_field(
         name=tr(locale, "modlog.original_action_label"),
-        value=f"[{action_type} #{action_id[:8]}]({action_url})",
+        value=f"[{action_type} #{action_number}]({action_url})",
         inline=False,
     )
     embed.add_field(name=tr(locale, "modlog.reason_label"), value=_truncate(reason, 1024), inline=False)
     embed.add_field(name=tr(locale, "modlog.reverted_label"), value=f"`{reverted}`", inline=True)
-    embed.set_footer(text=f"{tr(locale, 'modlog.action_id_label')}: {action_id} | Server ID: {server_id}")
+    embed.set_footer(
+        text=(
+            f"{tr(locale, 'modlog.action_number_label')}: #{action_number} | "
+            f"{tr(locale, 'modlog.server_id_label')}: {server_id}"
+        )
+    )
     return embed
 
 

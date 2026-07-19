@@ -44,6 +44,7 @@ from api.services.moderation_core import (
     to_moderation_history,
 )
 from api.services.moderation_import_metadata import action_import_metadata
+from api.services.moderation_action_numbers import allocate_moderation_action_number
 from api.services.moderation_queries import (
     query_deleted_messages,
     query_deleted_messages_for_action,
@@ -184,7 +185,8 @@ def _build_action_log_message(
     locale: str | None = None,
 ) -> str:
     action_url = _dashboard_action_url(action.server_id, action.id)
-    action_label = action.action_type.value if hasattr(action.action_type, "value") else str(action.action_type)
+    action_type_label = action.action_type.value if hasattr(action.action_type, "value") else str(action.action_type)
+    action_label = f"{action_type_label} #{action.action_number}"
     lines = [
         f"**{tr(locale, 'modlog.action_label')}:** {_markdown_link(action_label, action_url)}",
         f"**{tr(locale, 'modlog.target_label')}:** {_format_user_for_log(action.target_user_id, target_username, locale)}",
@@ -213,7 +215,10 @@ def _build_action_log_message(
     import_metadata = action_import_metadata(action, locale=locale)
     if import_metadata["created_at_label"]:
         lines.append(f"**{tr(locale, 'modlog.created_at_label')}:** {import_metadata['created_at_label']}")
-    lines.append(f"**{tr(locale, 'modlog.action_id_label')}:** {_markdown_link(action.id, action_url)}")
+    lines.append(
+        f"**{tr(locale, 'modlog.action_number_label')}:** "
+        f"{_markdown_link(f'#{action.action_number}', action_url)}"
+    )
 
     message = f"{tr(locale, 'modlog.header')}\n" + "\n".join(lines)
     return _truncate(message, limit=1900)
@@ -248,7 +253,8 @@ def _build_action_log_embed(
     locale: str | None = None,
 ) -> dict:
     action_url = _dashboard_action_url(action.server_id, action.id)
-    action_label = action.action_type.value if hasattr(action.action_type, "value") else str(action.action_type)
+    action_type_label = action.action_type.value if hasattr(action.action_type, "value") else str(action.action_type)
+    action_label = f"{action_type_label} #{action.action_number}"
     rule_labels = _rule_labels_for_action(action, locale)
     display_reason = _display_reason_for_log(action.reason, action.commentary, rule_labels)
     fields = [
@@ -297,7 +303,7 @@ def _build_action_log_embed(
         "url": action_url,
         "color": _action_log_color(action.action_type),
         "fields": fields,
-        "footer": {"text": f"{tr(locale, 'modlog.action_id_label')}: {action.id}"},
+        "footer": {"text": f"{tr(locale, 'modlog.action_number_label')}: #{action.action_number}"},
     }
     if created_at is not None and import_metadata["source_created_at_known"]:
         embed["timestamp"] = _format_dt(created_at)
@@ -329,7 +335,7 @@ def _build_action_revert_log_embed(
         ),
         _embed_field(
             tr(locale, "modlog.original_action_label"),
-            _markdown_link(f"{action_type} #{str(action.id)[:8]}", action_url),
+            _markdown_link(f"{action_type} #{action.action_number}", action_url),
             inline=False,
         ),
         _embed_field(tr(locale, "modlog.reason_label"), reason, inline=False),
@@ -340,7 +346,7 @@ def _build_action_revert_log_embed(
         "url": action_url,
         "color": 0x5865F2,
         "fields": fields,
-        "footer": {"text": f"{tr(locale, 'modlog.action_id_label')}: {action.id}"},
+        "footer": {"text": f"{tr(locale, 'modlog.action_number_label')}: #{action.action_number}"},
         "timestamp": _format_dt(naive_utcnow()),
     }
 
@@ -488,6 +494,7 @@ async def _load_action_for_read(session: AsyncSession, action_id: UUID) -> Moder
 
 def _to_action_summary(
     action_id: UUID,
+    action_number: int,
     action_type,
     server_id: int,
     target_user_id: int,
@@ -507,6 +514,7 @@ def _to_action_summary(
     import_metadata = import_metadata or {}
     return ModerationActionSummaryModel(
         id=str(action_id),
+        action_number=action_number,
         action_type=action_type,
         server_id=str(server_id),
         target_user_id=str(target_user_id),
@@ -757,7 +765,9 @@ async def create_action(
     if apply_discord_effects:
         mute_role_id = await _prepare_discord_action_effects(session=session, action=action)
 
+    action_number = await allocate_moderation_action_number(session, action.server_id)
     db_action = ModerationAction(
+        action_number=action_number,
         action_type=action.action_type,
         moderator_user_id=moderator_user_id,
         reason=resolved_reason,
@@ -841,6 +851,7 @@ async def list_action_summaries(
     statement = (
         select(
             ModerationAction.id,
+            ModerationAction.action_number,
             ModerationAction.action_type,
             ModerationAction.server_id,
             ModerationAction.target_user_id,
@@ -876,6 +887,7 @@ async def list_action_summaries(
     statement = (
         statement.group_by(
             ModerationAction.id,
+            ModerationAction.action_number,
             ModerationAction.action_type,
             ModerationAction.server_id,
             ModerationAction.target_user_id,
@@ -897,20 +909,21 @@ async def list_action_summaries(
     return [
         _to_action_summary(
             action_id=row[0],
-            action_type=row[1],
-            server_id=row[2],
-            target_user_id=row[3],
-            moderator_user_id=row[4],
-            reason=row[5],
-            case_id=row[6],
-            case_title=row[7],
-            created_at=row[8],
-            expires_at=row[9],
-            is_active=row[10],
-            target_username=row[11],
-            moderator_username=row[12],
-            rules_count=int(row[13] or 0),
-            deleted_messages_count=int(row[14] or 0),
+            action_number=row[1],
+            action_type=row[2],
+            server_id=row[3],
+            target_user_id=row[4],
+            moderator_user_id=row[5],
+            reason=row[6],
+            case_id=row[7],
+            case_title=row[8],
+            created_at=row[9],
+            expires_at=row[10],
+            is_active=row[11],
+            target_username=row[12],
+            moderator_username=row[13],
+            rules_count=int(row[14] or 0),
+            deleted_messages_count=int(row[15] or 0),
             import_metadata=metadata_by_action_id.get(row[0]),
         )
         for row in rows

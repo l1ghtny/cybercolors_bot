@@ -39,7 +39,12 @@ RULE_PARAM = _param("rule", "string", "Server moderation rule selected from acti
 CASE_PARAM = _param("case", "string", "Existing open case, or a special create-new case option when available.", required=False, autocomplete=True)
 USER_PARAM = _param("user", "member", "Target Discord member.")
 COMMENTARY_PARAM = _param("commentary", "string", "Optional moderator context stored with the action.", required=False)
-ACTION_ID_PARAM = _param("action_id", "string", "Moderation action UUID.")
+ACTION_ID_PARAM = _param(
+    "action_id",
+    "string",
+    "Moderation action number selected from autocomplete; UUID also accepted.",
+    autocomplete=True,
+)
 CASE_ID_PARAM = _param("case", "string", "Moderation case UUID selected from autocomplete.", autocomplete=True)
 DURATION_CHOICES = [
     _choice("server default", "default"),
@@ -695,7 +700,7 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         summary="Link an existing moderation action to a case.",
         required_permissions=["moderate_members"],
         parameters=[CASE_ID_PARAM, ACTION_ID_PARAM],
-        workflow=["Links the action UUID to the case and records the invoking moderator."],
+        workflow=["Links the selected moderation action to the case and records the invoking moderator."],
     ),
     BotCommandDocModel(
         id="mod.cases.unlink_action",
@@ -942,7 +947,7 @@ COMMANDS_BY_ID: dict[str, BotCommandDocModel] = {command.id: command for command
 AVAILABLE_BOT_COMMAND_LOCALES: tuple[str, ...] = ("en", "ru")
 
 RU_PARAMETER_DESCRIPTIONS: dict[str, str] = {
-    "action_id": "UUID модераторского действия.",
+    "action_id": "Номер действия из автодополнения; UUID также поддерживается.",
     "auto_reconnect_on_mute": "Нужно ли автоматически возвращать пользователя в голосовой канал после мута.",
     "auto_release_minutes": "Задержка автоматического снятия ограничений от 1 до 43200 минут.",
     "case": "UUID модераторского дела или вариант из автодополнения.",
@@ -1230,7 +1235,7 @@ RU_COMMAND_TEXT: dict[str, dict[str, list[str] | str]] = {
     },
     "mod.cases.link_action": {
         "summary": "Связать существующее модераторское действие с делом.",
-        "workflow": ["Связывает UUID действия с делом и записывает вызвавшего модератора."],
+        "workflow": ["Связывает выбранное действие с делом и записывает вызвавшего модератора."],
     },
     "mod.cases.unlink_action": {
         "summary": "Отвязать модераторское действие от дела.",

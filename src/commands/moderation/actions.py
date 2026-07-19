@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from sqlmodel import select
 
 from api.models.moderation_actions import ModerationActionMessageCleanupCreate
+from api.services.moderation_action_numbers import resolve_moderation_action_reference
 from api.services.moderation_actions_service import (
     _dashboard_action_url,
     create_action,
@@ -44,14 +45,11 @@ from src.modules.moderation.mute_management import deactivate_user_bans
 
 
 async def _fetch_action_for_server(session, server_id: int, action_id: str) -> ModerationAction | None:
-    try:
-        parsed_id = UUID(str(action_id))
-    except ValueError:
-        return None
-    action = await session.get(ModerationAction, parsed_id)
-    if action is None or action.server_id != server_id:
-        return None
-    return action
+    return await resolve_moderation_action_reference(
+        session,
+        server_id=server_id,
+        reference=action_id,
+    )
 
 
 async def _resolve_global_username(user_id: int) -> str | None:
@@ -110,6 +108,7 @@ async def _revert_action(
             server_id=action.server_id,
             action_type=action.action_type.value,
             action_id=str(action.id),
+            action_number=action.action_number,
             action_url=_dashboard_action_url(action.server_id, action.id),
             target_user_id=action.target_user_id,
             target_display=await _resolve_global_username(action.target_user_id),
@@ -169,7 +168,13 @@ class ActionRevertReasonModal(discord.ui.Modal):
         if error:
             await interaction.followup.send(error, ephemeral=True)
             return
-        success_message = tr(locale, "action.revert_success", action_type=action.action_type.value, action_id=str(action.id)[:8], reverted=reverted)
+        success_message = tr(
+            locale,
+            "action.revert_success",
+            action_type=action.action_type.value,
+            action_number=action.action_number,
+            reverted=reverted,
+        )
         await send_public_action_notice(interaction, success_message)
         await interaction.followup.send(
             build_moderator_action_receipt(
@@ -190,6 +195,7 @@ class ActionRevertReasonModal(discord.ui.Modal):
 class ActionManageView(discord.ui.View):
     def __init__(self, *, server_id: int, action_id: str, can_revert: bool, locale: str):
         super().__init__(timeout=300)
+        self.action_id = action_id
         self.add_item(
             discord.ui.Button(
                 label=tr(locale, "action.open_dashboard"),
@@ -215,15 +221,15 @@ class ActionManageView(discord.ui.View):
         locale = await get_server_locale(interaction.guild.id)
         if not await ensure_bot_permission(interaction, "moderation.actions.revert", locale=locale):
             return
-        custom_id = interaction.message.embeds[0].footer.text if interaction.message and interaction.message.embeds else ""
-        action_id = custom_id.replace("Action ID: ", "").strip()
-        await interaction.response.send_modal(ActionRevertReasonModal(action_id=action_id, locale=locale))
+        await interaction.response.send_modal(
+            ActionRevertReasonModal(action_id=self.action_id, locale=locale)
+        )
 
 
 def _action_embed(action, locale: str, server_id: int) -> discord.Embed:
     action_type = action.action_type.value if hasattr(action.action_type, "value") else str(action.action_type)
     embed = discord.Embed(
-        title=f"{tr(locale, 'modlog.title')}: {action_type}",
+        title=f"{tr(locale, 'modlog.title')}: {action_type} #{action.action_number}",
         url=_dashboard_action_url(server_id, action.id),
         color=discord.Color.blurple(),
     )
@@ -237,7 +243,9 @@ def _action_embed(action, locale: str, server_id: int) -> discord.Embed:
     if getattr(action, "created_at_label", None):
         embed.add_field(name=tr(locale, "modlog.created_at_label"), value=action.created_at_label, inline=False)
     embed.add_field(name="Active", value=str(action.is_active), inline=True)
-    embed.set_footer(text=f"Action ID: {action.id}")
+    embed.set_footer(
+        text=f"{tr(locale, 'modlog.action_number_label')}: #{action.action_number}"
+    )
     return embed
 
 
@@ -566,11 +574,11 @@ async def actions_list(
                     if getattr(action, "created_at_label", None)
                     else []
                 ),
-                f"{tr(locale, 'modlog.action_id_label')}: [`{action.id[:8]}`]({_dashboard_action_url(interaction.guild.id, action.id)})",
+                f"{tr(locale, 'modlog.action_number_label')}: [#{action.action_number}]({_dashboard_action_url(interaction.guild.id, action.id)})",
                 f"Active: `{action.is_active}`",
             ]
         )
-        embed.add_field(name=f"{action_type} #{action.id[:8]}", value=value, inline=False)
+        embed.add_field(name=f"{action_type} #{action.action_number}", value=value, inline=False)
     await interaction.followup.send(embed=embed, ephemeral=True)
 
 
@@ -586,7 +594,18 @@ async def action_manage(interaction: discord.Interaction, action_id: str):
         return
     try:
         async with get_async_session() as session:
-            action = await get_action_details(session=session, server_id=interaction.guild.id, action_id=UUID(action_id))
+            stored_action = await _fetch_action_for_server(
+                session,
+                interaction.guild.id,
+                action_id,
+            )
+            if stored_action is None:
+                raise ValueError("Moderation action not found")
+            action = await get_action_details(
+                session=session,
+                server_id=interaction.guild.id,
+                action_id=stored_action.id,
+            )
     except (ValueError, HTTPException):
         await interaction.followup.send(tr(locale, "action.not_found"), ephemeral=True)
         return
@@ -632,7 +651,13 @@ async def action_revert(interaction: discord.Interaction, action_id: str, reason
     if error:
         await interaction.followup.send(error, ephemeral=True)
         return
-    success_message = tr(locale, "action.revert_success", action_type=action.action_type.value, action_id=str(action.id)[:8], reverted=reverted)
+    success_message = tr(
+        locale,
+        "action.revert_success",
+        action_type=action.action_type.value,
+        action_number=action.action_number,
+        reverted=reverted,
+    )
     await send_public_action_notice(interaction, success_message)
     await interaction.followup.send(
         build_moderator_action_receipt(
@@ -668,6 +693,28 @@ async def action_revert_autocomplete(interaction: discord.Interaction, current: 
                 limit=100,
                 action_types={ActionType.WARN, ActionType.MUTE, ActionType.BAN},
                 is_active=True,
+            )
+    except Exception:
+        return []
+    return action_choices(actions, current)
+
+
+@action_manage.autocomplete("action_id")
+async def action_manage_autocomplete(interaction: discord.Interaction, current: str):
+    if interaction.guild_id is None:
+        return []
+    if not await has_bot_permission(
+        guild_id=interaction.guild_id,
+        user_id=interaction.user.id,
+        permission_key="moderation.actions.view",
+    ):
+        return []
+    try:
+        async with get_async_session() as session:
+            actions = await list_action_summaries(
+                session=session,
+                server_id=interaction.guild_id,
+                limit=100,
             )
     except Exception:
         return []

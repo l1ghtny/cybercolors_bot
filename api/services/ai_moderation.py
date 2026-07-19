@@ -28,7 +28,7 @@ from api.services.monitoring_service import upsert_monitored_user
 from api.services.moderation_actions_service import create_action
 from api.services.moderation_core import build_optional_actor, naive_utcnow, to_moderation_history
 from src.modules.localization.service import normalize_locale_code, tr
-from src.db.models import AIModerationDecision, ActionType, GlobalUser, Server, ServerLocalizationSettings, ServerModerationSettings, TempVoiceLog, User
+from src.db.models import AIModerationDecision, ActionType, GlobalUser, ModerationAction, Server, ServerLocalizationSettings, ServerModerationSettings, TempVoiceLog, User
 
 PENDING_SUGGESTION_STATUSES = {"pending_review", "action_requested", "case_created", "case_linked"}
 ACTIONABLE_SUGGESTIONS = {
@@ -442,14 +442,25 @@ async def _decision_locale(session: AsyncSession | None, server_id: int) -> str:
     return normalize_locale_code(settings.locale_code if settings else None)
 
 
-def _ai_review_resolution_embed_payload(decision: AIModerationDecision, *, action_id: str | None = None, locale: str | None = None) -> dict:
+def _ai_review_resolution_embed_payload(
+    decision: AIModerationDecision,
+    *,
+    action_number: int | None = None,
+    locale: str | None = None,
+) -> dict:
     fields = [
         {"name": tr(locale, "ai_review.field_status"), "value": f"`{_ai_review_display(locale, 'status', decision.status)}`", "inline": True},
         {"name": tr(locale, "ai_review.field_selected_action"), "value": f"`{_ai_review_display(locale, 'action', decision.selected_action)}`", "inline": True},
         {"name": tr(locale, "ai_review.field_reviewer"), "value": f"<@{decision.reviewed_by_user_id}> (`{decision.reviewed_by_user_id}`)" if decision.reviewed_by_user_id else f"`{tr(locale, 'modlog.unknown')}`", "inline": True},
     ]
-    if action_id or decision.linked_action_id:
-        fields.append({"name": tr(locale, "modlog.action_id_label"), "value": f"`{action_id or decision.linked_action_id}`", "inline": False})
+    if action_number is not None or decision.linked_action_id:
+        fields.append(
+            {
+                "name": tr(locale, "modlog.action_number_label"),
+                "value": f"`#{action_number if action_number is not None else '?'}`",
+                "inline": False,
+            }
+        )
     if decision.linked_case_id:
         fields.append({"name": tr(locale, "ai_review.field_case_id"), "value": f"`{decision.linked_case_id}`", "inline": False})
     if decision.action_reason:
@@ -476,6 +487,15 @@ async def _publish_ai_review_resolution(
         return
     try:
         locale = await _decision_locale(session, decision.server_id)
+        action_number: int | None = None
+        linked_action_id = action_id or decision.linked_action_id
+        if session is not None and linked_action_id is not None:
+            try:
+                linked_action = await session.get(ModerationAction, UUID(str(linked_action_id)))
+            except ValueError:
+                linked_action = None
+            if linked_action is not None:
+                action_number = linked_action.action_number
         original_embeds: list[dict] = []
         try:
             message = await fetch_channel_message(
@@ -491,7 +511,14 @@ async def _publish_ai_review_resolution(
         await edit_channel_message(
             channel_id=decision.review_channel_id,
             message_id=decision.review_message_id,
-            embeds=[*original_embeds, _ai_review_resolution_embed_payload(decision, action_id=action_id, locale=locale)],
+            embeds=[
+                *original_embeds,
+                _ai_review_resolution_embed_payload(
+                    decision,
+                    action_number=action_number,
+                    locale=locale,
+                ),
+            ],
             components=[],
         )
     except Exception:

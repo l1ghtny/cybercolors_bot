@@ -13,6 +13,7 @@ def _action(
 ) -> ModerationActionSummaryModel:
     return ModerationActionSummaryModel(
         id=action_id,
+        action_number=42,
         action_type=ActionType.MUTE,
         server_id="478278763239702538",
         target_user_id="895261951293292585",
@@ -25,7 +26,7 @@ def _action(
     )
 
 
-def test_action_choices_show_readable_label_and_keep_full_uuid_value() -> None:
+def test_action_choices_show_readable_label_and_use_action_number_value() -> None:
     action_id = "019f7ad5-af78-77b2-a23e-23569a3f3cd7"
     choices = action_choices(
         [_action(action_id=action_id, username="Denis Bailyn", reason="Rule 9 violation")],
@@ -33,8 +34,8 @@ def test_action_choices_show_readable_label_and_keep_full_uuid_value() -> None:
     )
 
     assert len(choices) == 1
-    assert choices[0].value == action_id
-    assert choices[0].name.startswith("MUTE · Denis Bailyn · #019f7ad5 · 2026-07-19 14:44")
+    assert choices[0].value == "42"
+    assert choices[0].name.startswith("MUTE · Denis Bailyn · #42 · 2026-07-19 14:44")
     assert len(choices[0].name) <= 100
 
 

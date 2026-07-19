@@ -10,7 +10,12 @@ from api.models.moderation_cases import (
     ModerationCaseRulesUpsertModel,
     ModerationCaseStatusUpdateModel,
 )
-from api.services.moderation_actions_service import _dashboard_action_url, _dashboard_case_url
+from api.services.moderation_action_numbers import resolve_moderation_action_reference
+from api.services.moderation_actions_service import (
+    _dashboard_action_url,
+    _dashboard_case_url,
+    list_action_summaries,
+)
 from api.services.moderation_cases_service import (
     add_case_evidence,
     add_case_note,
@@ -30,6 +35,7 @@ from src.db.models import CaseStatus, CaseUserRole, EvidenceType
 from src.modules.localization.service import get_server_locale, tr
 from src.modules.moderation.bot_rbac import ensure_bot_permission, has_bot_permission
 from src.modules.moderation.bot_services import (
+    action_choices,
     case_choices,
     fetch_active_rule_models,
     fetch_open_case_models,
@@ -50,9 +56,14 @@ def _case_dashboard_link(server_id: int, case_id: str, label: str = "Open case")
     return f"[{label}]({_dashboard_case_url(server_id, case_id)})"
 
 
-def _action_dashboard_link(server_id: int, action_id: str, action_type: object) -> str:
+def _action_dashboard_link(
+    server_id: int,
+    action_id: str,
+    action_number: int,
+    action_type: object,
+) -> str:
     action_label = action_type.value if hasattr(action_type, "value") else str(action_type)
-    return f"[{action_label} #{action_id[:8]}]({_dashboard_action_url(server_id, action_id)})"
+    return f"[{action_label} #{action_number}]({_dashboard_action_url(server_id, action_id)})"
 
 
 def _actor_line(label: str, actor) -> str:
@@ -307,7 +318,15 @@ def _case_detail_embed(details, locale: str, server_id: int) -> discord.Embed:
     if details.evidence:
         embed.add_field(name="Evidence", value="\n".join(item.url or item.text or item.attachment_key or item.evidence_type.value for item in details.evidence[:5]), inline=False)
     if details.linked_action_summaries:
-        actions = [_action_dashboard_link(server_id, action.id, action.action_type) for action in details.linked_action_summaries[:5]]
+        actions = [
+            _action_dashboard_link(
+                server_id,
+                action.id,
+                action.action_number,
+                action.action_type,
+            )
+            for action in details.linked_action_summaries[:5]
+        ]
         embed.add_field(name=tr(locale, "case.actions"), value=", ".join(actions), inline=False)
     embed.set_footer(text=f"Case ID: {case.id}")
     return embed
@@ -547,12 +566,33 @@ async def case_link_action(interaction: discord.Interaction, case: str, action_i
         return
     try:
         async with get_async_session() as session:
-            updated = await link_action_to_case(session=session, server_id=interaction.guild.id, case_id=_parse_case_id(case), moderation_action_id=action_id, linked_by_user_id=interaction.user.id)
+            linked_action = await resolve_moderation_action_reference(
+                session,
+                server_id=interaction.guild.id,
+                reference=action_id,
+            )
+            if linked_action is None:
+                raise ValueError("Moderation action not found")
+            updated = await link_action_to_case(
+                session=session,
+                server_id=interaction.guild.id,
+                case_id=_parse_case_id(case),
+                moderation_action_id=linked_action.id,
+                linked_by_user_id=interaction.user.id,
+            )
             await session.commit()
     except Exception as error:
         await interaction.followup.send(tr(locale, "case.details_failed", error=error), ephemeral=True)
         return
-    await interaction.followup.send(tr(locale, "case.action_linked", action_id=action_id[:8], case_id=updated.id[:8]), ephemeral=True)
+    await interaction.followup.send(
+        tr(
+            locale,
+            "case.action_linked",
+            action_number=linked_action.action_number,
+            case_id=updated.id[:8],
+        ),
+        ephemeral=True,
+    )
 
 
 @app_commands.checks.has_permissions(moderate_members=True)
@@ -567,12 +607,32 @@ async def case_unlink_action(interaction: discord.Interaction, case: str, action
         return
     try:
         async with get_async_session() as session:
-            updated = await remove_action_from_case(session=session, server_id=interaction.guild.id, case_id=_parse_case_id(case), action_id=UUID(action_id))
+            linked_action = await resolve_moderation_action_reference(
+                session,
+                server_id=interaction.guild.id,
+                reference=action_id,
+            )
+            if linked_action is None:
+                raise ValueError("Moderation action not found")
+            updated = await remove_action_from_case(
+                session=session,
+                server_id=interaction.guild.id,
+                case_id=_parse_case_id(case),
+                action_id=linked_action.id,
+            )
             await session.commit()
     except Exception as error:
         await interaction.followup.send(tr(locale, "case.details_failed", error=error), ephemeral=True)
         return
-    await interaction.followup.send(tr(locale, "case.action_unlinked", action_id=action_id[:8], case_id=updated.id[:8]), ephemeral=True)
+    await interaction.followup.send(
+        tr(
+            locale,
+            "case.action_unlinked",
+            action_number=linked_action.action_number,
+            case_id=updated.id[:8],
+        ),
+        ephemeral=True,
+    )
 
 
 for _command in (
@@ -593,6 +653,31 @@ for _command in (
 
 for _command in (case_add_rule, case_remove_rule):
     _command.autocomplete("rule")(case_create_rule_autocomplete)
+
+
+async def _case_action_autocomplete(interaction: discord.Interaction, current: str):
+    if interaction.guild_id is None:
+        return []
+    if not await has_bot_permission(
+        guild_id=interaction.guild_id,
+        user_id=interaction.user.id,
+        permission_key="moderation.cases.manage",
+    ):
+        return []
+    try:
+        async with get_async_session() as session:
+            actions = await list_action_summaries(
+                session=session,
+                server_id=interaction.guild_id,
+                limit=100,
+            )
+    except Exception:
+        return []
+    return action_choices(actions, current)
+
+
+for _command in (case_link_action, case_unlink_action):
+    _command.autocomplete("action_id")(_case_action_autocomplete)
 
 
 

@@ -402,6 +402,7 @@ async def build_user_profile_card(
         recent_actions=[
             UserModerationActionSummaryModel(
                 id=str(action.id),
+                action_number=action.action_number,
                 action_type=action.action_type.value if hasattr(action.action_type, "value") else str(action.action_type),
                 reason=action.reason,
                 created_at=action.created_at,

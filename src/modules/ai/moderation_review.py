@@ -17,6 +17,7 @@ from src.db.database import get_async_session
 from src.db.models import (
     AIModerationDecision,
     ActionType,
+    ModerationAction,
     ModerationRule,
     MessageLog,
     ServerAISettings,
@@ -648,6 +649,7 @@ def build_ai_review_resolution_embed(
     *,
     locale: str | None = None,
     rule_labels: list[str] | None = None,
+    action_number: int | None = None,
 ) -> discord.Embed:
     color = discord.Color.green() if decision.status == "action_applied" else discord.Color.greyple()
     embed = discord.Embed(
@@ -664,7 +666,11 @@ def build_ai_review_resolution_embed(
         label_key = "modlog.rule_label" if len(rule_labels) == 1 else "modlog.rules_label"
         embed.add_field(name=tr(locale, label_key), value="\n".join(f"`{item}`" for item in rule_labels), inline=False)
     if decision.linked_action_id:
-        embed.add_field(name=tr(locale, "modlog.action_id_label"), value=f"`{decision.linked_action_id}`", inline=False)
+        embed.add_field(
+            name=tr(locale, "modlog.action_number_label"),
+            value=f"`#{action_number if action_number is not None else '?'}`",
+            inline=False,
+        )
     if decision.linked_case_id:
         embed.add_field(name=tr(locale, "ai_review.field_case_id"), value=f"`{decision.linked_case_id}`", inline=False)
     if decision.action_reason:
@@ -691,6 +697,7 @@ async def _edit_ai_review_message(
     decision: AIModerationDecision,
     locale: str | None = None,
     rule_labels: list[str] | None = None,
+    action_number: int | None = None,
 ) -> None:
     target_message = message
     if target_message is None and guild is not None and decision.review_channel_id and decision.review_message_id:
@@ -715,6 +722,7 @@ async def _edit_ai_review_message(
             decision,
             locale=locale,
             rule_labels=rule_labels,
+            action_number=action_number,
         )
     )
     await target_message.edit(embeds=original_embeds, view=build_disabled_ai_review_view(decision, locale=locale))
@@ -735,6 +743,11 @@ async def _refresh_review_message_for_decision(interaction: discord.Interaction,
     async with get_async_session() as session:
         locale = await _server_locale(session, decision.server_id)
         rule_labels = await _rule_labels_for_decision(session, decision, locale)
+        linked_action = (
+            await session.get(ModerationAction, decision.linked_action_id)
+            if decision.linked_action_id
+            else None
+        )
     try:
         await _edit_ai_review_message(
             guild=interaction.guild,
@@ -742,6 +755,7 @@ async def _refresh_review_message_for_decision(interaction: discord.Interaction,
             decision=decision,
             locale=locale,
             rule_labels=rule_labels,
+            action_number=linked_action.action_number if linked_action is not None else None,
         )
     except (discord.Forbidden, discord.NotFound, discord.HTTPException) as error:
         logger.warning("Failed to refresh AI review message for decision %s: %s", decision.id, error)

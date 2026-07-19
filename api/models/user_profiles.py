@@ -89,6 +89,7 @@ class NicknameRecordModel(BaseModel):
 
 class UserModerationActionSummaryModel(BaseModel):
     id: str
+    action_number: int
     action_type: str
     reason: str
     created_at: datetime

@@ -10,6 +10,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.services.moderation_core import get_or_create_server_record, naive_utcnow
+from api.services.moderation_action_numbers import allocate_moderation_action_number
 from api.services.moderation_import_metadata import unknown_source_date_note
 from src.db.models import (
     ActionType,
@@ -323,7 +324,9 @@ async def import_moderation_action(
     session.add(item)
     await session.flush()
 
+    action_number = await allocate_moderation_action_number(session, payload.server_id)
     action = ModerationAction(
+        action_number=action_number,
         action_type=payload.action_type,
         server_id=payload.server_id,
         target_user_id=payload.target_user_id,

@@ -304,6 +304,7 @@ async def _to_action_summary(
 ) -> ModerationActionSummaryModel:
     return ModerationActionSummaryModel(
         id=str(action.id),
+        action_number=action.action_number,
         action_type=action.action_type.value if hasattr(action.action_type, "value") else str(action.action_type),
         target_user=await build_actor(session, action.server_id, action.target_user_id),
         moderator=await build_actor(session, action.server_id, action.moderator_user_id),
@@ -448,6 +449,7 @@ def to_moderation_history(result: Sequence[ModerationAction]) -> list[Moderation
         payload.append(
             ModerationActionRead(
                 id=str(action.id),
+                action_number=action.action_number,
                 action_type=action.action_type,
                 server_id=str(action.server_id),
                 target_user_id=str(action.target_user_id),

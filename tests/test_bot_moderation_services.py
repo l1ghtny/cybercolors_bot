@@ -7,6 +7,7 @@ from sqlmodel import select
 
 from api.models.moderation_actions import ModerationActionCreate
 from api.models.moderation_rules import ModerationRuleReadModel
+from api.services.moderation_action_numbers import resolve_moderation_action_reference
 from api.services.moderation_actions_service import (
     _build_action_log_embed,
     _build_action_log_message,
@@ -108,6 +109,7 @@ def test_build_moderator_action_receipt_has_private_details(monkeypatch):
     expires_at = datetime(2026, 1, 2, 3, 4, 5)
     action = SimpleNamespace(
         id=action_id,
+        action_number=42,
         action_type=ActionType.MUTE,
         case_id=case_id,
         commentary="internal moderator note",
@@ -148,6 +150,7 @@ def test_build_action_log_message_links_dashboard_and_uses_rule_label(monkeypatc
     rule_id = uuid4()
     action = SimpleNamespace(
         id=action_id,
+        action_number=42,
         action_type=ActionType.WARN,
         server_id=123,
         target_user_id=456,
@@ -185,7 +188,7 @@ def test_build_action_log_message_links_dashboard_and_uses_rule_label(monkeypatc
     assert "Rule ID" not in message
     assert str(rule_id) not in message
     assert "**Case:** [Case Alpha]" in message
-    assert "**Action ID:** [" in message
+    assert "**Action:** [#42]" in message
 
     localized_message = _build_action_log_message(
         action=action,
@@ -195,14 +198,14 @@ def test_build_action_log_message_links_dashboard_and_uses_rule_label(monkeypatc
     )
     assert f"**{tr('ru', 'modlog.action_label')}:**" in localized_message
     assert f"**{tr('ru', 'modlog.commentary_label')}:**" in localized_message
-    assert f"**{tr('ru', 'modlog.action_id_label')}:**" in localized_message
+    assert f"**{tr('ru', 'modlog.action_number_label')}:**" in localized_message
 
     embed = _build_action_log_embed(
         action=action,
         moderator_username="moderator",
         target_username="target",
     )
-    assert embed["title"] == "Moderation log: warn"
+    assert embed["title"] == "Moderation log: warn #42"
     assert embed["url"] == f"https://dash.example/dashboard/123/moderation/actions/{action_id}"
     assert embed["color"] == 0xF2C94C
     field_names = [field["name"] for field in embed["fields"]]
@@ -210,7 +213,7 @@ def test_build_action_log_message_links_dashboard_and_uses_rule_label(monkeypatc
     assert embed["fields"][3]["value"] == "rule breach"
     assert embed["fields"][4]["value"] == "context note"
     assert "Commentary: context note" not in embed["fields"][3]["value"]
-    assert embed["footer"]["text"] == f"Action ID: {action_id}"
+    assert embed["footer"]["text"] == "Action: #42"
 
     localized_embed = _build_action_log_embed(
         action=action,
@@ -244,6 +247,7 @@ def test_build_action_revert_log_embed_links_dashboard_and_uses_display_names(mo
     action_id = uuid4()
     action = SimpleNamespace(
         id=action_id,
+        action_number=42,
         action_type=ActionType.WARN,
         server_id=123,
         target_user_id=456,
@@ -263,10 +267,10 @@ def test_build_action_revert_log_embed_links_dashboard_and_uses_display_names(mo
     assert embed["color"] == 0x5865F2
     assert embed["fields"][0]["value"] == "<@456> (`target`, `456`)"
     assert embed["fields"][1]["value"] == "<@789> (`moderator`, `789`)"
-    assert embed["fields"][2]["value"] == f"[warn #{str(action_id)[:8]}](https://dash.example/dashboard/123/moderation/actions/{action_id})"
+    assert embed["fields"][2]["value"] == f"[warn #42](https://dash.example/dashboard/123/moderation/actions/{action_id})"
     assert embed["fields"][3]["value"] == "mistaken action"
     assert embed["fields"][4]["value"] == "`False`"
-    assert embed["footer"]["text"] == f"Action ID: {action_id}"
+    assert embed["footer"]["text"] == "Action: #42"
 
 
 async def _create_bot_action_scenario(sent_messages: list[dict]) -> None:
@@ -378,6 +382,7 @@ async def _mute_effect_scenario(added_roles: list[dict]) -> None:
         session.add(User(user_id=target_id, server_id=server_id, server_nickname="target-nick", is_member=True))
         session.add(ServerModerationSettings(server_id=server_id, mute_role_id=mute_role_id))
         prior_action = ModerationAction(
+            action_number=1,
             action_type=ActionType.MUTE,
             moderator_user_id=moderator_id,
             reason="previous mute",
@@ -406,6 +411,21 @@ async def _mute_effect_scenario(added_roles: list[dict]) -> None:
             moderator_user_id=moderator_id,
             apply_discord_effects=True,
         )
+        assert created.action_number == 2
+        assert (
+            await resolve_moderation_action_reference(
+                session,
+                server_id=server_id,
+                reference="#2",
+            )
+        ).id == created.id
+        assert (
+            await resolve_moderation_action_reference(
+                session,
+                server_id=server_id,
+                reference=str(created.id),
+            )
+        ).id == created.id
         await session.commit()
 
     async with get_async_session() as session:
@@ -601,6 +621,7 @@ async def _discord_effect_runs_after_action_flush_scenario(effect_observations: 
             session.add(User(user_id=target_id, server_id=server_id, server_nickname="target-nick", is_member=True))
             session.add(ServerModerationSettings(server_id=server_id, mute_role_id=mute_role_id))
             prior_action = ModerationAction(
+                action_number=1,
                 action_type=ActionType.MUTE,
                 moderator_user_id=moderator_id,
                 reason="previous mute",
@@ -826,6 +847,7 @@ async def _revert_ban_action_scenario(unbanned_users: list[dict]) -> None:
             session.add(GlobalUser(discord_id=moderator_id, username="moderator"))
             session.add(GlobalUser(discord_id=target_id, username="target"))
             action = ModerationAction(
+                action_number=1,
                 action_type=ActionType.BAN,
                 moderator_user_id=moderator_id,
                 reason="bad behavior",
@@ -890,6 +912,7 @@ async def _revert_mute_action_scenario(removed_roles: list[dict]) -> None:
             session.add(GlobalUser(discord_id=target_id, username="target"))
             session.add(ServerModerationSettings(server_id=server_id, mute_role_id=mute_role_id))
             action = ModerationAction(
+                action_number=1,
                 action_type=ActionType.MUTE,
                 moderator_user_id=moderator_id,
                 reason="spam",
@@ -938,6 +961,7 @@ async def _revert_warn_action_scenario() -> None:
         session.add(GlobalUser(discord_id=moderator_id, username="moderator"))
         session.add(GlobalUser(discord_id=target_id, username="target"))
         action = ModerationAction(
+            action_number=1,
             action_type=ActionType.WARN,
             moderator_user_id=moderator_id,
             reason="rule break",
