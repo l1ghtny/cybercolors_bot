@@ -205,6 +205,7 @@ async def read_visibility(server_id: int, access_token: str) -> DiscordCommandVi
                     "Discord rejected the command-permission read. Reconnect command management "
                     "and confirm you can manage the affected roles and channels."
                 ),
+                error_status_code=401,
             )
     permission_by_target = {
         str(item.get("id")): _overwrites(item.get("permissions"))

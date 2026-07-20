@@ -83,6 +83,7 @@ def test_visibility_rejects_mismatched_bot_and_oauth_applications(monkeypatch):
         assert path == "/oauth2/applications/@me"
         return {"id": "1067841289527242772"}
 
+    monkeypatch.setattr(visibility, "_get_bot_token", lambda: "test-token")
     monkeypatch.setattr(visibility, "_discord_get", fake_get)
     with pytest.raises(visibility.DiscordVisibilityError, match="DISCORD_CLIENT_ID"):
         asyncio.run(visibility._assert_bot_matches_application(object(), "1067156290335428659"))
