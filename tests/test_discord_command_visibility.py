@@ -1,5 +1,6 @@
 import asyncio
 
+import httpx
 import pytest
 from pydantic import ValidationError
 
@@ -89,7 +90,7 @@ def test_visibility_rejects_mismatched_bot_and_oauth_applications(monkeypatch):
 
 def test_native_preflight_accepts_owner_admin_or_manage_guild_plus_roles(monkeypatch):
     async def capabilities_for(guild: dict):
-        async def fake_get(_client, path, _headers):
+        async def fake_get(_client, path, _headers, **_kwargs):
             if path == "/oauth2/@me":
                 return {"scopes": [visibility.COMMAND_PERMISSION_SCOPE]}
             return [guild]
@@ -101,3 +102,26 @@ def test_native_preflight_accepts_owner_admin_or_manage_guild_plus_roles(monkeyp
     assert asyncio.run(capabilities_for({"id": "123", "permissions": str(visibility.ADMINISTRATOR)})) == (True, True)
     assert asyncio.run(capabilities_for({"id": "123", "permissions": str(visibility.MANAGE_GUILD | visibility.MANAGE_ROLES)})) == (True, True)
     assert asyncio.run(capabilities_for({"id": "123", "permissions": str(visibility.MANAGE_GUILD)})) == (True, False)
+
+
+def test_discord_get_can_surface_oauth_reconnect_errors():
+    async def run():
+        transport = httpx.MockTransport(
+            lambda _request: httpx.Response(401, json={"message": "401: Unauthorized"})
+        )
+        async with httpx.AsyncClient(transport=transport) as client:
+            with pytest.raises(visibility.DiscordVisibilityError) as captured:
+                await visibility._discord_get(
+                    client,
+                    "/oauth2/@me",
+                    {"Authorization": "Bearer expired"},
+                    error_code="discord_oauth_reconnect_required",
+                    error_detail="Reconnect command management.",
+                    error_status_code=401,
+                )
+        return captured.value
+
+    error = asyncio.run(run())
+    assert error.code == "discord_oauth_reconnect_required"
+    assert error.status_code == 401
+    assert error.detail == "Reconnect command management."

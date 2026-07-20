@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -23,6 +24,7 @@ COMMAND_PERMISSION_SCOPE = "applications.commands.permissions.update"
 ADMINISTRATOR = 1 << 3
 MANAGE_GUILD = 1 << 5
 MANAGE_ROLES = 1 << 28
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -94,15 +96,30 @@ def _children(command: dict[str, Any], native_target_id: str, catalog: dict[str,
     return children
 
 
-async def _discord_get(client: httpx.AsyncClient, path: str, headers: dict[str, str]) -> Any:
+async def _discord_get(
+    client: httpx.AsyncClient,
+    path: str,
+    headers: dict[str, str],
+    *,
+    error_code: str = "discord_api_unavailable",
+    error_detail: str = "Discord rejected the request used to load command visibility",
+    error_status_code: int | None = None,
+) -> Any:
     response = await client.get(f"{DISCORD_API_BASE_URL}{path}", headers=headers)
     if response.status_code >= 400:
+        logger.warning(
+            "Discord command visibility GET failed path=%s status=%s",
+            path,
+            response.status_code,
+        )
         # A Discord 4xx is an upstream failure from this dashboard's
         # perspective. Do not leak it as our own 403 product-access denial.
         raise DiscordVisibilityError(
-            "discord_api_unavailable",
-            "Discord rejected the request used to load command visibility",
-            502 if response.status_code < 500 else 503,
+            error_code,
+            error_detail,
+            error_status_code
+            if error_status_code is not None
+            else (502 if response.status_code < 500 else 503),
         )
     return response.json()
 
@@ -127,12 +144,26 @@ async def _assert_bot_matches_application(client: httpx.AsyncClient, application
 
 async def _capabilities(client: httpx.AsyncClient, access_token: str, server_id: int) -> tuple[bool, bool]:
     headers = {"Authorization": f"Bearer {access_token}"}
-    oauth = await _discord_get(client, "/oauth2/@me", headers)
+    oauth = await _discord_get(
+        client,
+        "/oauth2/@me",
+        headers,
+        error_code="discord_oauth_reconnect_required",
+        error_detail="Discord command-management access expired or was revoked. Reconnect it and try again.",
+        error_status_code=401,
+    )
     scopes = oauth.get("scopes", []) if isinstance(oauth, dict) else []
     if isinstance(scopes, str):
         scopes = scopes.split()
     scope_granted = COMMAND_PERMISSION_SCOPE in scopes
-    guilds = await _discord_get(client, "/users/@me/guilds", headers)
+    guilds = await _discord_get(
+        client,
+        "/users/@me/guilds",
+        headers,
+        error_code="discord_oauth_reconnect_required",
+        error_detail="Discord command-management access expired or was revoked. Reconnect it and try again.",
+        error_status_code=401,
+    )
     guild = next((item for item in guilds if str(item.get("id")) == str(server_id)), None) if isinstance(guilds, list) else None
     if not isinstance(guild, dict):
         return scope_granted, False
@@ -169,6 +200,11 @@ async def read_visibility(server_id: int, access_token: str) -> DiscordCommandVi
                 client,
                 f"/applications/{application_id}/guilds/{server_id}/commands/permissions",
                 {"Authorization": f"Bearer {access_token}"},
+                error_code="discord_command_permissions_unavailable",
+                error_detail=(
+                    "Discord rejected the command-permission read. Reconnect command management "
+                    "and confirm you can manage the affected roles and channels."
+                ),
             )
     permission_by_target = {
         str(item.get("id")): _overwrites(item.get("permissions"))

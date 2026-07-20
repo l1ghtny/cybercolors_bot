@@ -32,10 +32,10 @@ from src.commands.moderation.rules import (
 )
 from src.commands.moderation.warn import warn
 from src.commands.moderation.message_actions import (
-    handle_reply_action_link_command,
     link_message_to_action_ctx,
     start_action_from_message_ctx,
 )
+from src.commands.sync import sync_application_commands
 from src.commands.moderation.actions import (
     action_revert,
     actions_list,
@@ -223,14 +223,10 @@ class Aclient(discord.AutoShardedClient):
     async def on_ready(self):
         await self.wait_until_ready()
         if not self.synced:  # check if slash commands have been synced
-            if TEST_GUILD_ID:
-                guild = discord.Object(id=int(TEST_GUILD_ID))
-                tree.copy_global_to(guild=guild)
-                await tree.sync(guild=guild)
-                print(f"Commands synced to guild {TEST_GUILD_ID}.")
-            else:
-                await tree.sync()  # global (can take 1-24 hours)
-                print("Commands synced globally.")
+            synced = await sync_application_commands(tree, test_guild_id=TEST_GUILD_ID)
+            print(f"Commands synced globally ({synced.global_count}).")
+            if synced.guild_id is not None:
+                print(f"Commands synced to guild {synced.guild_id} ({synced.guild_count}).")
             self.synced = True
         if not self.added:
             self.added = True
@@ -670,8 +666,6 @@ async def on_message(message):
         return
 
     enqueue_message_ingestion(message)
-    if await handle_reply_action_link_command(message):
-        return
     message_content_base = message.content.lower()
     link_deleted = await delete_server_links(message, message_content_base)
     if link_deleted is True:

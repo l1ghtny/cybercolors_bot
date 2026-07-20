@@ -1,4 +1,3 @@
-import re
 from datetime import datetime, timedelta, timezone
 
 import discord
@@ -12,7 +11,7 @@ from api.services.moderation_actions_service import (
 from src.db.database import get_async_session
 from src.db.models import ActionType, ServerModerationSettings
 from src.modules.localization.service import get_server_locale, tr
-from src.modules.moderation.bot_rbac import ensure_bot_permission, has_bot_permission
+from src.modules.moderation.bot_rbac import ensure_bot_permission
 from src.modules.moderation.bot_services import (
     build_moderator_action_receipt,
     create_bot_moderation_action,
@@ -30,7 +29,6 @@ from src.modules.moderation.moderation_helpers import (
 from src.modules.moderation.public_notices import send_public_action_notice
 
 
-REPLY_LINK_PATTERN = re.compile(r"^!link_action\s+(?P<reference>#?[0-9a-fA-F-]+)\s*$", re.IGNORECASE)
 ACTION_PERMISSION_KEYS = {
     ActionType.WARN: "moderation.actions.apply.warn",
     ActionType.MUTE: "moderation.actions.apply.mute",
@@ -440,68 +438,6 @@ async def start_action_from_message_context(
         ),
         ephemeral=True,
     )
-
-
-async def handle_reply_action_link_command(message: discord.Message) -> bool:
-    match = REPLY_LINK_PATTERN.fullmatch(message.content.strip())
-    if match is None:
-        return False
-    if message.guild is None or message.reference is None or message.reference.message_id is None:
-        await message.reply("Reply to the message you want to link, then use `!link_action #123`.")
-        return True
-    if not isinstance(message.author, discord.Member) or not message.author.guild_permissions.moderate_members:
-        await message.reply("You need the Moderate Members permission to link action evidence.")
-        return True
-    locale = await get_server_locale(message.guild.id)
-    if not await has_bot_permission(
-        guild_id=message.guild.id,
-        user_id=message.author.id,
-        permission_key="moderation.actions.link_messages",
-    ):
-        await message.reply(
-            tr(locale, "rbac.command_denied", permission="moderation.actions.link_messages")
-        )
-        return True
-
-    try:
-        async with get_async_session() as session:
-            action = await resolve_moderation_action_reference(
-                session,
-                server_id=message.guild.id,
-                reference=match.group("reference"),
-            )
-            if action is None:
-                await message.reply(tr(locale, "action.not_found"))
-                return True
-            source_message = message.reference.resolved
-            if isinstance(source_message, discord.Message):
-                await _archive_source_message(
-                    session,
-                    source_message=source_message,
-                    moderator=message.author,
-                )
-            result = await link_message_to_action(
-                session,
-                action_id=action.id,
-                message_id=message.reference.message_id,
-                linked_by_user_id=message.author.id,
-            )
-            await session.commit()
-    except Exception as error:
-        await message.reply(tr(locale, "action.message_link_failed", error=error))
-        return True
-
-    await message.reply(
-        tr(
-            locale,
-            "action.message_linked",
-            message_id=result.message_id,
-            action_number=action.action_number,
-            action_url=_dashboard_action_url(message.guild.id, action.id),
-        ),
-        allowed_mentions=discord.AllowedMentions.none(),
-    )
-    return True
 
 
 link_message_to_action_ctx = app_commands.ContextMenu(
