@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
 from sqlmodel import select
@@ -7,6 +7,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from api.models.monitoring import MonitoredUserReadModel
 from api.models.server_security import (
     ServerSecurityCreateNewcomerRoleModel,
+    ServerSecurityIncidentActionsUpdateModel,
     ServerSecurityLockdownUpdateModel,
     ServerSecurityNewcomerActionModel,
     ServerSecurityNewcomerRestrictionApplyResult,
@@ -21,7 +22,9 @@ from api.services.discord_guilds import (
     create_guild_role,
     fetch_guild_roles,
     fetch_guild_channels,
+    fetch_guild_metadata,
     update_guild_role_permissions,
+    update_guild_incident_actions,
     update_channel_slowmode,
 )
 from api.services.moderation_core import naive_utcnow
@@ -84,6 +87,46 @@ async def to_server_security_read_model(
         server_id,
         settings.newcomer_member_role_id,
     )
+    slowmode_by_channel: dict[str, int] = {}
+    if settings.lockdown_enabled and settings.lockdown_slowmode_channel_ids:
+        try:
+            channels = {
+                str(channel.get("id")): channel
+                for channel in await fetch_guild_channels(server_id)
+            }
+            slowmode_by_channel = {
+                channel_id: int(channels[channel_id].get("rate_limit_per_user") or 0)
+                for channel_id in settings.lockdown_slowmode_channel_ids
+                if channel_id in channels
+            }
+        except Exception:
+            if settings.lockdown_slowmode_seconds is not None:
+                slowmode_by_channel = {
+                    channel_id: settings.lockdown_slowmode_seconds
+                    for channel_id in settings.lockdown_slowmode_channel_ids
+                }
+
+    invites_disabled_until = None
+    dms_disabled_until = None
+    verification_level = None
+    raid_alerts_enabled = None
+    membership_screening_enabled = None
+    try:
+        guild = await fetch_guild_metadata(server_id)
+        incidents = guild.get("incidents_data") or {}
+        features = set(guild.get("features") or [])
+        invites_disabled_until = incidents.get("invites_disabled_until")
+        dms_disabled_until = incidents.get("dms_disabled_until")
+        verification_level = guild.get("verification_level")
+        raid_alerts_enabled = (
+            "RAID_ALERTS_DISABLED" not in features
+            if "COMMUNITY" in features
+            else None
+        )
+        membership_screening_enabled = "MEMBER_VERIFICATION_GATE_ENABLED" in features
+    except Exception:
+        pass
+
     return ServerSecuritySettingsReadModel(
         server_id=str(server_id),
         verified_role_id=str(settings.verified_role_id) if settings.verified_role_id is not None else None,
@@ -114,6 +157,12 @@ async def to_server_security_read_model(
         role_mutations_paused=settings.role_mutations_paused,
         lockdown_slowmode_seconds=settings.lockdown_slowmode_seconds,
         lockdown_slowmode_channel_ids=list(settings.lockdown_slowmode_channel_ids or []),
+        lockdown_slowmode_by_channel=slowmode_by_channel,
+        invites_disabled_until=invites_disabled_until,
+        dms_disabled_until=dms_disabled_until,
+        verification_level=verification_level,
+        raid_alerts_enabled=raid_alerts_enabled,
+        membership_screening_enabled=membership_screening_enabled,
         updated_at=settings.updated_at,
     )
 
@@ -382,9 +431,14 @@ async def apply_lockdown_state(
         )
 
     channels = {str(channel.get("id")): channel for channel in await fetch_guild_channels(server_id)}
-    slowmode_seconds = body.slowmode_seconds or 0
-    requested_channel_ids = list(body.channel_ids)
-    if body.enabled and slowmode_seconds > 0 and not requested_channel_ids:
+    requested_slowmodes = dict(body.slowmode_by_channel)
+    if not requested_slowmodes and body.channel_ids:
+        requested_slowmodes = {
+            channel_id: body.slowmode_seconds or 0
+            for channel_id in body.channel_ids
+        }
+    requested_channel_ids = list(requested_slowmodes)
+    if body.enabled and (body.slowmode_seconds or 0) > 0 and not requested_channel_ids:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="channel_ids cannot be empty when slowmode is enabled",
@@ -414,12 +468,17 @@ async def apply_lockdown_state(
     }
     try:
         if body.enabled:
-            for channel_id in requested_channel_ids:
-                await update_channel_slowmode(int(channel_id), slowmode_seconds)
+            for channel_id, seconds in requested_slowmodes.items():
+                await update_channel_slowmode(int(channel_id), seconds)
                 applied_channels.append(channel_id)
             settings.lockdown_slowmode_previous = previous
             settings.lockdown_slowmode_channel_ids = requested_channel_ids
-            settings.lockdown_slowmode_seconds = slowmode_seconds or None
+            unique_slowmodes = set(requested_slowmodes.values())
+            settings.lockdown_slowmode_seconds = (
+                next(iter(unique_slowmodes))
+                if len(unique_slowmodes) == 1
+                else None
+            )
             settings.public_bot_responses_paused = body.pause_public_responses
             settings.role_mutations_paused = body.pause_role_mutations
         else:
@@ -449,3 +508,24 @@ async def apply_lockdown_state(
     await session.flush()
     await session.refresh(settings)
     return settings
+
+
+async def apply_incident_actions(
+    server_id: int,
+    body: ServerSecurityIncidentActionsUpdateModel,
+) -> None:
+    payload: dict[str, str | None] = {}
+    now = datetime.now(timezone.utc)
+    if body.invites_disabled_minutes is not None:
+        payload["invites_disabled_until"] = (
+            (now + timedelta(minutes=body.invites_disabled_minutes)).isoformat()
+            if body.invites_disabled_minutes > 0
+            else None
+        )
+    if body.dms_disabled_minutes is not None:
+        payload["dms_disabled_until"] = (
+            (now + timedelta(minutes=body.dms_disabled_minutes)).isoformat()
+            if body.dms_disabled_minutes > 0
+            else None
+        )
+    await update_guild_incident_actions(server_id, payload)

@@ -8,6 +8,7 @@ class ServerChannelModel(BaseModel):
     position: int = 0
     parent_id: str | None = None
     parent_name: str | None = None
+    rate_limit_per_user: int = 0
 
 
 class ServerRoleModel(BaseModel):

@@ -14,6 +14,9 @@ from api.services.moderation_actions_service import (
     _build_action_revert_log_embed,
     build_action_log_components,
     create_action,
+    get_deleted_messages_for_action,
+    get_linked_messages_for_action,
+    link_message_to_action,
     revert_action,
 )
 from api.services.moderation_rules_service import create_manual_rule
@@ -27,6 +30,7 @@ from src.db.models import (
     MessageLog,
     ModerationAction,
     ModerationActionDeletedMessageLink,
+    ModerationActionMessageLink,
     ModerationActionRuleCitation,
     Server,
     ServerModerationSettings,
@@ -41,6 +45,7 @@ from src.modules.moderation.bot_services import (
     rule_choices,
     rule_label,
 )
+from src.modules.moderation.moderation_helpers import handle_message_deletion
 
 
 def _make_discord_id() -> int:
@@ -614,6 +619,76 @@ def test_create_action_can_delete_and_link_target_messages():
     asyncio.run(_action_message_cleanup_scenario(deleted_messages))
 
     assert len(deleted_messages) == 2
+
+
+async def _live_message_action_link_migrates_on_delete_scenario() -> None:
+    server_id = _make_discord_id()
+    moderator_id = _make_discord_id()
+    target_id = _make_discord_id()
+    channel_id = _make_discord_id()
+    message_id = _make_discord_id()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    async with get_async_session() as session:
+        session.add(Server(server_id=server_id, server_name="link-server", bot_active=True))
+        session.add(GlobalUser(discord_id=moderator_id, username="moderator"))
+        session.add(GlobalUser(discord_id=target_id, username="target"))
+        session.add(User(user_id=moderator_id, server_id=server_id, is_member=True))
+        session.add(User(user_id=target_id, server_id=server_id, is_member=True))
+        await session.flush()
+        action = ModerationAction(
+            action_number=1,
+            action_type=ActionType.WARN,
+            server_id=server_id,
+            target_user_id=target_id,
+            moderator_user_id=moderator_id,
+            reason="linked evidence",
+            created_at=now,
+        )
+        session.add(action)
+        session.add(
+            MessageLog(
+                message_id=message_id,
+                server_id=server_id,
+                channel_id=channel_id,
+                user_id=target_id,
+                content="durable evidence",
+                created_at=now,
+            )
+        )
+        await session.flush()
+        action_id = action.id
+        result = await link_message_to_action(
+            session,
+            action_id=action_id,
+            message_id=message_id,
+            linked_by_user_id=moderator_id,
+        )
+        assert result.state == "live"
+        assert len(await get_linked_messages_for_action(session, action_id)) == 1
+        await session.commit()
+
+    async with get_async_session() as session:
+        await handle_message_deletion(message_id, server_id, session)
+
+    async with get_async_session() as session:
+        assert (
+            await session.exec(
+                select(ModerationActionMessageLink).where(
+                    ModerationActionMessageLink.moderation_action_id == action_id
+                )
+            )
+        ).first() is None
+        deleted = await get_deleted_messages_for_action(session, action_id)
+        assert len(deleted) == 1
+        assert deleted[0].message_id == str(message_id)
+        assert deleted[0].content == "durable evidence"
+
+    await engine.dispose()
+
+
+def test_live_message_action_link_migrates_to_deleted_evidence():
+    asyncio.run(_live_message_action_link_migrates_on_delete_scenario())
 
 
 async def _discord_effect_runs_after_action_flush_scenario(effect_observations: list[dict]) -> None:

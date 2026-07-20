@@ -15,6 +15,9 @@ from api.dependencies.server_access import require_server_dashboard_access, requ
 from api.services.dashboard_access_service import assert_dashboard_access
 from api.services.rbac_service import assert_user_has_permission
 from api.models.moderation_actions import (
+    ModerationActionLinkedMessageReadModel,
+    ModerationActionMessageLinkCreate,
+    ModerationActionMessageLinkResultModel,
     ModerationActionCreate,
     ModerationMessageLogReadModel,
     ModerationActionRead,
@@ -35,11 +38,13 @@ from api.services.moderation_actions_service import (
     browse_deleted_messages_for_server,
     create_action as create_action_service,
     get_action_details as get_action_details_service,
+    get_linked_messages_for_action as get_linked_messages_for_action_service,
     get_deleted_messages_for_action as get_deleted_messages_for_action_service,
     get_server_history_summary,
     get_user_history_summary_by_search,
     list_message_logs_for_server,
     list_action_summaries,
+    link_message_to_action as link_message_to_action_service,
     link_existing_deleted_message_to_action as link_existing_deleted_message_to_action_service,
     revert_action as revert_action_service,
 )
@@ -97,10 +102,17 @@ async def require_action_deleted_message_dashboard_access(
     access_token: str = Depends(get_bearer_access_token),
 ) -> int:
     caller_user_id = resolve_actor_user_id(body.linked_by_user_id, current_user_id)
-    await _assert_action_dashboard_access(
+    action = await _assert_action_dashboard_access(
         session=session,
         action_id=action_id,
         caller_user_id=caller_user_id,
+        access_token=access_token,
+    )
+    await assert_user_has_permission(
+        session=session,
+        server_id=action.server_id,
+        user_id=caller_user_id,
+        permission_key="moderation.actions.link_messages",
         access_token=access_token,
     )
     return caller_user_id
@@ -114,13 +126,43 @@ async def require_action_deleted_message_link_dashboard_access(
     access_token: str = Depends(get_bearer_access_token),
 ) -> int:
     linked_by_user_id = resolve_actor_user_id(body.linked_by_user_id, current_user_id)
-    await _assert_action_dashboard_access(
+    action = await _assert_action_dashboard_access(
         session=session,
         action_id=action_id,
         caller_user_id=linked_by_user_id,
         access_token=access_token,
     )
+    await assert_user_has_permission(
+        session=session,
+        server_id=action.server_id,
+        user_id=linked_by_user_id,
+        permission_key="moderation.actions.link_messages",
+        access_token=access_token,
+    )
     return linked_by_user_id
+
+
+async def require_action_message_link_dashboard_access(
+    action_id: UUID,
+    body: ModerationActionMessageLinkCreate,
+    session: AsyncSession = Depends(get_session),
+    current_user_id: int = Depends(get_current_discord_user_id),
+    access_token: str = Depends(get_bearer_access_token),
+) -> int:
+    action = await _assert_action_dashboard_access(
+        session=session,
+        action_id=action_id,
+        caller_user_id=current_user_id,
+        access_token=access_token,
+    )
+    await assert_user_has_permission(
+        session=session,
+        server_id=action.server_id,
+        user_id=current_user_id,
+        permission_key="moderation.actions.link_messages",
+        access_token=access_token,
+    )
+    return current_user_id
 
 
 async def require_action_read_dashboard_access(
@@ -356,6 +398,36 @@ async def get_deleted_messages_for_action(
     _: None = Depends(require_action_read_dashboard_access),
 ):
     return await get_deleted_messages_for_action_service(session=session, action_id=action_id)
+
+
+@moderation_actions_router.post(
+    "/actions/messages/{action_id}",
+    response_model=ModerationActionMessageLinkResultModel,
+)
+async def link_message_to_action(
+    action_id: UUID,
+    body: ModerationActionMessageLinkCreate,
+    session: AsyncSession = Depends(get_session),
+    linked_by_user_id: int = Depends(require_action_message_link_dashboard_access),
+):
+    return await link_message_to_action_service(
+        session=session,
+        action_id=action_id,
+        message_id=int(body.message_id),
+        linked_by_user_id=linked_by_user_id,
+    )
+
+
+@moderation_actions_router.get(
+    "/actions/messages/{action_id}",
+    response_model=list[ModerationActionLinkedMessageReadModel],
+)
+async def get_linked_messages_for_action(
+    action_id: UUID,
+    session: AsyncSession = Depends(get_session),
+    _: None = Depends(require_action_read_dashboard_access),
+):
+    return await get_linked_messages_for_action_service(session=session, action_id=action_id)
 
 
 @moderation_actions_router.get(

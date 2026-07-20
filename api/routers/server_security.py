@@ -6,6 +6,7 @@ from api.dependencies.current_user import get_current_discord_user_id
 from api.models.monitoring import MonitoredUserReadModel
 from api.models.server_security import (
     ServerSecurityCreateNewcomerRoleModel,
+    ServerSecurityIncidentActionsUpdateModel,
     ServerSecurityLockdownUpdateModel,
     ServerSecurityNewcomerActionModel,
     ServerSecurityNewcomerRestrictionApplyResult,
@@ -17,6 +18,7 @@ from api.models.server_security import (
 )
 from api.services.server_security import (
     apply_lockdown_state,
+    apply_incident_actions,
     apply_newcomer_restrictions,
     build_newcomer_role_suggestion,
     apply_newcomer_member_action,
@@ -137,4 +139,16 @@ async def set_server_lockdown_state(
     _: int = Depends(require_server_permission("security.lockdown.manage")),
 ):
     settings = await apply_lockdown_state(session=session, server_id=server_id, body=body)
+    return await to_server_security_read_model(server_id, settings)
+
+
+@server_security_router.put("/incident-actions", response_model=ServerSecuritySettingsReadModel)
+async def set_server_incident_actions(
+    server_id: int,
+    body: ServerSecurityIncidentActionsUpdateModel,
+    session: AsyncSession = Depends(get_session),
+    _: int = Depends(require_server_permission("security.lockdown.manage")),
+):
+    await apply_incident_actions(server_id=server_id, body=body)
+    settings = await get_or_create_server_security_settings(session, server_id)
     return await to_server_security_read_model(server_id, settings)

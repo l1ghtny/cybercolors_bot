@@ -272,6 +272,7 @@ async def list_server_channels(server_id: int, text_only: bool = True) -> list[S
                 position=int(channel.get("position", 0)),
                 parent_id=str(parent_id) if parent_id else None,
                 parent_name=categories.get(parent_id) if parent_id else None,
+                rate_limit_per_user=int(channel.get("rate_limit_per_user") or 0),
             )
         )
 
@@ -294,6 +295,7 @@ async def get_server_channel_payload(server_id: int, channel_id: int) -> ServerC
         position=int(channel.get("position", 0)),
         parent_id=str(parent_id) if parent_id else None,
         parent_name=categories.get(parent_id) if parent_id else None,
+        rate_limit_per_user=int(channel.get("rate_limit_per_user") or 0),
     )
 
 

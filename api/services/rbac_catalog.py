@@ -42,6 +42,12 @@ PERMISSIONS: tuple[PermissionDefinition, ...] = (
     PermissionDefinition("moderation.actions.apply.mute", "moderation", "Apply mutes", "Mute and unmute members."),
     PermissionDefinition("moderation.actions.apply.kick", "moderation", "Apply kicks", "Kick members."),
     PermissionDefinition("moderation.actions.apply.ban", "moderation", "Apply bans", "Ban and unban members."),
+    PermissionDefinition(
+        "moderation.actions.link_messages",
+        "moderation",
+        "Link action messages",
+        "Link live or deleted Discord messages to moderation actions.",
+    ),
     PermissionDefinition("moderation.actions.revert", "moderation", "Revert actions", "Revert moderation actions."),
     PermissionDefinition("moderation.cases.manage", "moderation", "Manage cases", "Create, update, close, and annotate moderation cases."),
     PermissionDefinition("moderation.rules.manage", "moderation", "Manage rules", "Create and update moderation rules."),
@@ -90,6 +96,7 @@ PRESETS: tuple[PresetDefinition, ...] = (
         VIEWER_PERMISSION_KEYS
         + (
             "moderation.actions.apply.warn",
+            "moderation.actions.link_messages",
             "moderation.cases.manage",
             "birthdays.records.manage",
         ),
@@ -102,6 +109,7 @@ PRESETS: tuple[PresetDefinition, ...] = (
         + (
             "moderation.actions.apply.warn",
             "moderation.actions.apply.mute",
+            "moderation.actions.link_messages",
             "moderation.cases.manage",
             "moderation.monitoring.manage",
             "birthdays.records.manage",
@@ -117,6 +125,7 @@ PRESETS: tuple[PresetDefinition, ...] = (
             "moderation.actions.apply.mute",
             "moderation.actions.apply.kick",
             "moderation.actions.apply.ban",
+            "moderation.actions.link_messages",
             "moderation.actions.revert",
             "moderation.cases.manage",
             "moderation.rules.manage",

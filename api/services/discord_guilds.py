@@ -148,6 +148,16 @@ async def fetch_guild_metadata(server_id: int) -> dict:
     return {}
 
 
+async def update_guild_incident_actions(
+    server_id: int,
+    actions: dict[str, str | None],
+) -> dict:
+    allowed_actions = {"invites_disabled_until", "dms_disabled_until"}
+    payload = {key: value for key, value in actions.items() if key in allowed_actions}
+    result = await _discord_put(f"/guilds/{server_id}/incident-actions", payload)
+    return result if isinstance(result, dict) else {}
+
+
 async def fetch_guild_member(server_id: int, user_id: int) -> dict | None:
     try:
         payload = await _discord_get(f"/guilds/{server_id}/members/{user_id}")

@@ -31,6 +31,11 @@ from src.commands.moderation.rules import (
     rules_parse_guide,
 )
 from src.commands.moderation.warn import warn
+from src.commands.moderation.message_actions import (
+    handle_reply_action_link_command,
+    link_message_to_action_ctx,
+    start_action_from_message_ctx,
+)
 from src.commands.moderation.actions import (
     action_revert,
     actions_list,
@@ -372,6 +377,8 @@ temp_voice_group.add_command(temp_voice_limit)
 tree.add_command(moderation_group)
 tree.add_command(temp_voice_group)
 tree.add_command(rules_import_from_message_ctx)
+tree.add_command(link_message_to_action_ctx)
+tree.add_command(start_action_from_message_ctx)
 
 
 # Add birthdays to the database
@@ -663,6 +670,8 @@ async def on_message(message):
         return
 
     enqueue_message_ingestion(message)
+    if await handle_reply_action_link_command(message):
+        return
     message_content_base = message.content.lower()
     link_deleted = await delete_server_links(message, message_content_base)
     if link_deleted is True:

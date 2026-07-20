@@ -184,6 +184,7 @@ def test_settings_write_routes_use_feature_permissions():
         ("POST", "/servers/{server_id}/security/newcomer-role/apply-restrictions"): {"security.settings.edit"},
         ("PUT", "/servers/{server_id}/security/permissions"): {"security.settings.edit"},
         ("PUT", "/servers/{server_id}/security/lockdown"): {"security.lockdown.manage"},
+        ("PUT", "/servers/{server_id}/security/incident-actions"): {"security.lockdown.manage"},
         ("GET", "/servers/{server_id}/temp-voice"): {"temp_voice.settings.view"},
         ("GET", "/servers/{server_id}/temp-voice/archives"): {"temp_voice.settings.view"},
         ("GET", "/servers/{server_id}/temp-voice/archives/{log_id}"): {"temp_voice.settings.view"},

@@ -11,6 +11,8 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.models.moderation_actions import (
+    ModerationActionLinkedMessageReadModel,
+    ModerationActionMessageLinkResultModel,
     ModerationActionCreate,
     ModerationMessageLogReadModel,
     ModerationActionRead,
@@ -58,6 +60,7 @@ from src.db.models import (
     MessageLog,
     ModerationAction,
     ModerationActionDeletedMessageLink,
+    ModerationActionMessageLink,
     ModerationActionRuleCitation,
     ModerationCase,
     ModerationCaseActionLink,
@@ -69,7 +72,11 @@ from src.db.models import (
     ServerModerationSettings,
 )
 from src.modules.localization.service import normalize_locale_code, tr
-from src.modules.moderation.moderation_helpers import check_if_server_exists, check_if_user_exists
+from src.modules.moderation.moderation_helpers import (
+    check_if_server_exists,
+    check_if_user_exists,
+    migrate_message_action_links_to_deleted,
+)
 from src.modules.moderation.mute_management import deactivate_user_mutes
 
 logger = logging.getLogger("api.moderation")
@@ -509,6 +516,7 @@ def _to_action_summary(
     target_username: str | None,
     moderator_username: str | None,
     rules_count: int,
+    linked_messages_count: int,
     deleted_messages_count: int,
     import_metadata: dict | None = None,
 ) -> ModerationActionSummaryModel:
@@ -535,6 +543,7 @@ def _to_action_summary(
         is_active=is_active,
         is_reverted=moderation_action_is_reverted(action_type, is_active),
         rules_count=rules_count,
+        linked_messages_count=linked_messages_count,
         deleted_messages_count=deleted_messages_count,
     )
 
@@ -971,12 +980,17 @@ async def list_action_summaries(
             target_user.username.label("target_username"),
             moderator_user.username.label("moderator_username"),
             func.count(func.distinct(ModerationActionRuleCitation.id)).label("rules_count"),
+            func.count(func.distinct(ModerationActionMessageLink.id)).label("linked_messages_count"),
             func.count(func.distinct(ModerationActionDeletedMessageLink.id)).label("deleted_messages_count"),
         )
         .join(target_user, target_user.discord_id == ModerationAction.target_user_id, isouter=True)
         .join(moderator_user, moderator_user.discord_id == ModerationAction.moderator_user_id, isouter=True)
         .outerjoin(ModerationCase, ModerationCase.id == ModerationAction.case_id)
         .outerjoin(ModerationActionRuleCitation, ModerationActionRuleCitation.action_id == ModerationAction.id)
+        .outerjoin(
+            ModerationActionMessageLink,
+            ModerationActionMessageLink.moderation_action_id == ModerationAction.id,
+        )
         .outerjoin(
             ModerationActionDeletedMessageLink,
             ModerationActionDeletedMessageLink.moderation_action_id == ModerationAction.id,
@@ -1029,7 +1043,8 @@ async def list_action_summaries(
             target_username=row[12],
             moderator_username=row[13],
             rules_count=int(row[14] or 0),
-            deleted_messages_count=int(row[15] or 0),
+            linked_messages_count=int(row[15] or 0),
+            deleted_messages_count=int(row[16] or 0),
             import_metadata=metadata_by_action_id.get(row[0]),
         )
         for row in rows
@@ -1284,6 +1299,115 @@ async def list_message_logs_for_server(
     ]
 
 
+def _to_linked_message_read(
+    link: ModerationActionMessageLink,
+    message: MessageLog,
+    *,
+    channel_name: str | None = None,
+) -> ModerationActionLinkedMessageReadModel:
+    return ModerationActionLinkedMessageReadModel(
+        message_id=str(message.message_id),
+        server_id=str(message.server_id),
+        channel_id=str(message.channel_id),
+        channel_name=channel_name,
+        author_user_id=str(message.user_id),
+        content=message.content,
+        created_at=message.created_at,
+        linked_by_user_id=str(link.linked_by_user_id),
+        linked_at=link.linked_at,
+    )
+
+
+async def link_message_to_action(
+    session: AsyncSession,
+    *,
+    action_id: UUID,
+    message_id: int,
+    linked_by_user_id: int,
+) -> ModerationActionMessageLinkResultModel:
+    action = await session.get(ModerationAction, action_id)
+    if action is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Moderation action not found")
+
+    await build_actor(session, action.server_id, linked_by_user_id, require_membership=True)
+    message = (
+        await session.exec(
+            select(MessageLog).where(
+                MessageLog.message_id == message_id,
+                MessageLog.server_id == action.server_id,
+            )
+        )
+    ).first()
+    if message is not None:
+        existing = (
+            await session.exec(
+                select(ModerationActionMessageLink).where(
+                    ModerationActionMessageLink.moderation_action_id == action_id,
+                    ModerationActionMessageLink.message_id == message_id,
+                )
+            )
+        ).first()
+        if existing is None:
+            session.add(
+                ModerationActionMessageLink(
+                    moderation_action_id=action_id,
+                    message_id=message.message_id,
+                    server_id=message.server_id,
+                    channel_id=message.channel_id,
+                    author_user_id=message.user_id,
+                    linked_by_user_id=linked_by_user_id,
+                )
+            )
+            await session.flush()
+        return ModerationActionMessageLinkResultModel(state="live", message_id=str(message_id))
+
+    deleted_message = (
+        await session.exec(
+            select(DeletedMessage)
+            .where(
+                DeletedMessage.message_id == message_id,
+                DeletedMessage.server_id == action.server_id,
+            )
+            .order_by(DeletedMessage.deleted_at.desc())
+        )
+    ).first()
+    if deleted_message is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Message is not available in the live or deleted message archive",
+        )
+    await link_existing_deleted_message_to_action(
+        session=session,
+        action_id=action_id,
+        deleted_message_id=deleted_message.id,
+        linked_by_user_id=linked_by_user_id,
+    )
+    return ModerationActionMessageLinkResultModel(state="deleted", message_id=str(message_id))
+
+
+async def get_linked_messages_for_action(
+    session: AsyncSession,
+    action_id: UUID,
+) -> list[ModerationActionLinkedMessageReadModel]:
+    action = await session.get(ModerationAction, action_id)
+    if action is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Moderation action not found")
+
+    rows = (
+        await session.exec(
+            select(ModerationActionMessageLink, MessageLog)
+            .join(MessageLog, MessageLog.message_id == ModerationActionMessageLink.message_id)
+            .where(ModerationActionMessageLink.moderation_action_id == action_id)
+            .order_by(MessageLog.created_at.desc(), MessageLog.message_id.desc())
+        )
+    ).all()
+    channel_names = await _get_channel_names(action.server_id)
+    return [
+        _to_linked_message_read(link, message, channel_name=channel_names.get(message.channel_id))
+        for link, message in rows
+    ]
+
+
 async def _message_logs_for_action_cleanup(
     session: AsyncSession,
     action: ModerationActionCreate,
@@ -1377,13 +1501,11 @@ async def _move_deleted_message_logs_to_action(
         )
         session.add(deleted_message)
         await session.flush()
-        session.add(
-            ModerationActionDeletedMessageLink(
-                moderation_action_id=action_id,
-                deleted_message_id=deleted_message.id,
-                linked_by_user_id=deleted_by_user_id,
-                linked_at=deleted_at,
-            )
+        await migrate_message_action_links_to_deleted(
+            session,
+            deleted_message=deleted_message,
+            ensure_action_id=action_id,
+            linked_by_user_id=deleted_by_user_id,
         )
         for attachment in attachments:
             await session.delete(attachment)

@@ -44,6 +44,20 @@ class ModerationMessageLogReadModel(BaseModel):
     created_at: datetime
 
 
+class ModerationActionMessageLinkCreate(BaseModel):
+    message_id: str = Field(pattern=r"^\d+$")
+
+
+class ModerationActionLinkedMessageReadModel(ModerationMessageLogReadModel):
+    linked_by_user_id: str
+    linked_at: datetime
+
+
+class ModerationActionMessageLinkResultModel(BaseModel):
+    state: str = Field(pattern=r"^(live|deleted)$")
+    message_id: str
+
+
 class ModerationActionCreate(BaseModel):
     action_type: ActionType
     moderator_user_id: int | None = None
@@ -125,6 +139,7 @@ class ModerationActionSummaryModel(BaseModel):
     is_active: bool
     is_reverted: bool = False
     rules_count: int = 0
+    linked_messages_count: int = 0
     deleted_messages_count: int = 0
 
 

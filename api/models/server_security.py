@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class ServerSecuritySettingsReadModel(BaseModel):
@@ -26,6 +26,12 @@ class ServerSecuritySettingsReadModel(BaseModel):
     role_mutations_paused: bool = False
     lockdown_slowmode_seconds: int | None = None
     lockdown_slowmode_channel_ids: list[str] = Field(default_factory=list)
+    lockdown_slowmode_by_channel: dict[str, int] = Field(default_factory=dict)
+    invites_disabled_until: datetime | None = None
+    dms_disabled_until: datetime | None = None
+    verification_level: int | None = None
+    raid_alerts_enabled: bool | None = None
+    membership_screening_enabled: bool | None = None
     updated_at: datetime
 
 
@@ -86,6 +92,7 @@ class ServerSecurityLockdownUpdateModel(BaseModel):
     enabled: bool
     slowmode_seconds: int | None = Field(default=None, ge=0, le=21600)
     channel_ids: list[str] = Field(default_factory=list)
+    slowmode_by_channel: dict[str, int] = Field(default_factory=dict)
     pause_public_responses: bool = False
     pause_role_mutations: bool = False
     reason: str | None = Field(default=None, max_length=500)
@@ -97,6 +104,30 @@ class ServerSecurityLockdownUpdateModel(BaseModel):
         if any(not item.isdigit() for item in normalized):
             raise ValueError("channel_ids must contain Discord numeric IDs")
         return list(dict.fromkeys(normalized))
+
+    @field_validator("slowmode_by_channel")
+    @classmethod
+    def validate_slowmode_by_channel(cls, value: dict[str, int]) -> dict[str, int]:
+        normalized: dict[str, int] = {}
+        for raw_channel_id, seconds in value.items():
+            channel_id = str(raw_channel_id).strip()
+            if not channel_id.isdigit():
+                raise ValueError("slowmode_by_channel keys must be Discord numeric IDs")
+            if seconds < 0 or seconds > 21600:
+                raise ValueError("slowmode_by_channel values must be between 0 and 21600")
+            normalized[channel_id] = seconds
+        return normalized
+
+
+class ServerSecurityIncidentActionsUpdateModel(BaseModel):
+    invites_disabled_minutes: int | None = Field(default=None, ge=0, le=1440)
+    dms_disabled_minutes: int | None = Field(default=None, ge=0, le=1440)
+
+    @model_validator(mode="after")
+    def require_an_action(self):
+        if self.invites_disabled_minutes is None and self.dms_disabled_minutes is None:
+            raise ValueError("Provide at least one incident action")
+        return self
 
 
 

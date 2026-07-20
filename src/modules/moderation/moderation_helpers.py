@@ -13,6 +13,8 @@ from src.db.models import (
     GlobalUser,
     MessageClaim,
     MessageLog,
+    ModerationActionDeletedMessageLink,
+    ModerationActionMessageLink,
     Server,
     TempVoiceLog,
     User,
@@ -291,7 +293,7 @@ async def _record_deleted_message_from_claim(
     session: AsyncSession,
     *,
     deleted_at: datetime,
-) -> None:
+) -> DeletedMessage:
     await session.exec(
         pg_insert(Server)
         .values(
@@ -307,17 +309,73 @@ async def _record_deleted_message_from_claim(
         .values(discord_id=claim.user_id)
         .on_conflict_do_nothing(index_elements=[GlobalUser.discord_id])
     )
-    session.add(
-        DeletedMessage(
-            server_id=guild_id,
-            message_id=claim.message_id,
-            channel_id=claim.channel_id,
-            author_user_id=claim.user_id,
-            content=None,
-            attachments_json=None,
-            deleted_at=deleted_at,
-        )
+    deleted_message = DeletedMessage(
+        server_id=guild_id,
+        message_id=claim.message_id,
+        channel_id=claim.channel_id,
+        author_user_id=claim.user_id,
+        content=None,
+        attachments_json=None,
+        deleted_at=deleted_at,
     )
+    session.add(deleted_message)
+    await session.flush()
+    await migrate_message_action_links_to_deleted(
+        session,
+        deleted_message=deleted_message,
+    )
+    return deleted_message
+
+
+async def migrate_message_action_links_to_deleted(
+    session: AsyncSession,
+    *,
+    deleted_message: DeletedMessage,
+    ensure_action_id=None,
+    linked_by_user_id: int | None = None,
+) -> None:
+    """Move every live action link to the durable deleted-message snapshot."""
+    live_links = (
+        await session.exec(
+            select(ModerationActionMessageLink).where(
+                ModerationActionMessageLink.server_id == deleted_message.server_id,
+                ModerationActionMessageLink.message_id == deleted_message.message_id,
+            )
+        )
+    ).all()
+    links_by_action = {link.moderation_action_id: link for link in live_links}
+    if ensure_action_id is not None and ensure_action_id not in links_by_action:
+        links_by_action[ensure_action_id] = None
+
+    for action_id, live_link in links_by_action.items():
+        existing = (
+            await session.exec(
+                select(ModerationActionDeletedMessageLink).where(
+                    ModerationActionDeletedMessageLink.moderation_action_id == action_id,
+                    ModerationActionDeletedMessageLink.deleted_message_id == deleted_message.id,
+                )
+            )
+        ).first()
+        if existing is None:
+            actor_id = (
+                live_link.linked_by_user_id
+                if live_link is not None
+                else linked_by_user_id
+            )
+            if actor_id is None:
+                continue
+            session.add(
+                ModerationActionDeletedMessageLink(
+                    moderation_action_id=action_id,
+                    deleted_message_id=deleted_message.id,
+                    linked_by_user_id=actor_id,
+                    linked_at=live_link.linked_at if live_link is not None else deleted_message.deleted_at,
+                )
+            )
+
+    for live_link in live_links:
+        await session.delete(live_link)
+    await session.flush()
 
 
 async def handle_message_deletion(message_id: int, guild_id: int | None, session: AsyncSession):
@@ -361,17 +419,18 @@ async def handle_message_deletion(message_id: int, guild_id: int | None, session
         else None
     )
 
-    session.add(
-        DeletedMessage(
-            server_id=guild_id,
-            message_id=message_id,
-            channel_id=logged_msg.channel_id,
-            author_user_id=logged_msg.user_id,
-            content=logged_msg.content,
-            attachments_json=attachments_json,
-            deleted_at=datetime.now(timezone.utc).replace(tzinfo=None),
-        )
+    deleted_message = DeletedMessage(
+        server_id=guild_id,
+        message_id=message_id,
+        channel_id=logged_msg.channel_id,
+        author_user_id=logged_msg.user_id,
+        content=logged_msg.content,
+        attachments_json=attachments_json,
+        deleted_at=datetime.now(timezone.utc).replace(tzinfo=None),
     )
+    session.add(deleted_message)
+    await session.flush()
+    await migrate_message_action_links_to_deleted(session, deleted_message=deleted_message)
 
     for attachment in attachment_rows:
         await session.delete(attachment)
@@ -427,17 +486,18 @@ async def handle_bulk_message_deletion(message_ids: set[int], guild_id: int | No
             else None
         )
 
-        session.add(
-            DeletedMessage(
-                server_id=guild_id,
-                message_id=logged_msg.message_id,
-                channel_id=logged_msg.channel_id,
-                author_user_id=logged_msg.user_id,
-                content=logged_msg.content,
-                attachments_json=attachments_json,
-                deleted_at=deleted_at,
-            )
+        deleted_message = DeletedMessage(
+            server_id=guild_id,
+            message_id=logged_msg.message_id,
+            channel_id=logged_msg.channel_id,
+            author_user_id=logged_msg.user_id,
+            content=logged_msg.content,
+            attachments_json=attachments_json,
+            deleted_at=deleted_at,
         )
+        session.add(deleted_message)
+        await session.flush()
+        await migrate_message_action_links_to_deleted(session, deleted_message=deleted_message)
 
         for attachment in rows:
             await session.delete(attachment)

@@ -713,6 +713,7 @@ class ModerationAction(SQLModel, table=True):
         sa_relationship_kwargs={"foreign_keys": "[ModerationAction.case_id]"},
     )
     case_links: List["ModerationCaseActionLink"] = Relationship(back_populates="moderation_action")
+    message_links: List["ModerationActionMessageLink"] = Relationship(back_populates="moderation_action")
     deleted_message_links: List["ModerationActionDeletedMessageLink"] = Relationship(back_populates="moderation_action")
     rule_citations: List["ModerationActionRuleCitation"] = Relationship(back_populates="action")
     import_source_items: List["ModerationImportSourceItem"] = Relationship(back_populates="moderation_action")
@@ -1197,6 +1198,56 @@ class ModerationActionDeletedMessageLink(SQLModel, table=True):
     moderation_action: ModerationAction = Relationship(back_populates="deleted_message_links")
     deleted_message: DeletedMessage = Relationship(back_populates="action_links")
     linked_by: GlobalUser = Relationship(back_populates="action_deleted_messages")
+
+
+class ModerationActionMessageLink(SQLModel, table=True):
+    """Durable link to a live archived message until it moves to DeletedMessage."""
+
+    __tablename__ = "moderation_action_message_links"
+    __table_args__ = (
+        UniqueConstraint(
+            "moderation_action_id",
+            "message_id",
+            name="uq_moderation_action_message_link",
+        ),
+    )
+
+    id: Optional[UUID] = uuid7_primary_key_field()
+    moderation_action_id: UUID = Field(
+        sa_column=Column(
+            sa.Uuid(),
+            ForeignKey("moderation_actions.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        )
+    )
+    message_id: int = Field(sa_column=Column(BigInteger, nullable=False, index=True))
+    server_id: int = Field(
+        sa_column=Column(
+            BigInteger,
+            ForeignKey("servers.server_id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        )
+    )
+    channel_id: int = Field(sa_column=Column(BigInteger, nullable=False))
+    author_user_id: int = Field(
+        sa_column=Column(
+            BigInteger,
+            ForeignKey("global_users.discord_id"),
+            nullable=False,
+        )
+    )
+    linked_by_user_id: int = Field(
+        sa_column=Column(
+            BigInteger,
+            ForeignKey("global_users.discord_id"),
+            nullable=False,
+        )
+    )
+    linked_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+
+    moderation_action: ModerationAction = Relationship(back_populates="message_links")
 
 
 class UserActivity(SQLModel, table=True):
