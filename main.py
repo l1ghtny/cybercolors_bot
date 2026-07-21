@@ -35,7 +35,11 @@ from src.commands.moderation.message_actions import (
     link_message_to_action_ctx,
     start_action_from_message_ctx,
 )
-from src.commands.moderation.bot_messages import reply_as_bot_ctx
+from src.commands.moderation.bot_messages import (
+    StaticCommandTranslator,
+    reply_as_bot_ctx,
+    reply_as_cybercolors_ctx,
+)
 from src.commands.sync import sync_application_commands
 from src.commands.moderation.actions import (
     action_revert,
@@ -224,12 +228,17 @@ class Aclient(discord.AutoShardedClient):
     async def on_ready(self):
         await self.wait_until_ready()
         if not self.synced:  # check if slash commands have been synced
-            synced = await sync_application_commands(tree, test_guild_id=TEST_GUILD_ID)
+            await tree.set_translator(StaticCommandTranslator())
+            synced = await sync_application_commands(
+                tree,
+                test_guild_id=TEST_GUILD_ID,
+                test_guild_commands=(reply_as_cybercolors_ctx,),
+            )
             print(f"Commands synced globally ({synced.global_count}).")
             if synced.guild_id is not None:
                 print(
-                    f"Guild-specific commands cleared for guild {synced.guild_id} "
-                    f"({synced.guild_count} remain)."
+                    f"Guild-specific command overrides synced for guild {synced.guild_id} "
+                    f"({synced.guild_count} total)."
                 )
             self.synced = True
         if not self.added:
