@@ -376,6 +376,32 @@ jobs:
           kubectl -n cybercolors rollout status deployment/cybercolors-newcomer-release-worker --timeout=900s
           kubectl -n cybercolors rollout status deployment/cybercolors-indexer-worker --timeout=1800s
 
+          for i in $(seq 1 90); do
+            BACKEND_IMAGE="$(kubectl -n cybercolors get deployment cybercolors-backend -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)"
+            FRONTEND_IMAGE="$(kubectl -n cybercolors get deployment cybercolors-frontend -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)"
+            EMBEDDINGS_IMAGE="$(kubectl -n cybercolors get deployment cybercolors-embeddings -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)"
+
+            if [ "$BACKEND_IMAGE" = "localhost:32000/cybercolors-backend:$BACKEND_TAG" ] && \
+               [ "$FRONTEND_IMAGE" = "localhost:32000/cybercolors-frontend:$FRONTEND_TAG" ] && \
+               [ "$EMBEDDINGS_IMAGE" = "localhost:32000/cybercolors-embeddings:$EMBEDDINGS_TAG" ]; then
+              break
+            fi
+
+            if [ "$i" = "90" ]; then
+              echo "Timed out waiting for Argo CD image overrides. backend=$BACKEND_IMAGE frontend=$FRONTEND_IMAGE embeddings=$EMBEDDINGS_IMAGE"
+              kubectl -n argocd get application cybercolors -o yaml || true
+              exit 1
+            fi
+
+            sleep 5
+          done
+
+          kubectl argo rollouts promote cybercolors-backend -n cybercolors --full || true
+          kubectl argo rollouts promote cybercolors-frontend -n cybercolors --full || true
+          kubectl argo rollouts status cybercolors-backend -n cybercolors --timeout 900s
+          kubectl argo rollouts status cybercolors-frontend -n cybercolors --timeout 900s
+
           kubectl argo rollouts get rollout cybercolors-backend -n cybercolors
           kubectl argo rollouts get rollout cybercolors-frontend -n cybercolors
           kubectl -n cybercolors get pods -o wide
+        format-stderr-as-error: true
