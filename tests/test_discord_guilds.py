@@ -44,7 +44,7 @@ def test_create_channel_message_sends_embed_payload_without_content():
         {
             "path": "/channels/123/messages",
             "payload": {
-                "allowed_mentions": {"parse": []},
+                "allowed_mentions": {"parse": [], "replied_user": False},
                 "embeds": [{"title": "Moderation log"}],
                 "components": [
                     {
@@ -59,6 +59,42 @@ def test_create_channel_message_sends_embed_payload_without_content():
                         ],
                     }
                 ],
+            },
+        }
+    ]
+
+
+async def _create_channel_reply_scenario(captured: list[dict]) -> None:
+    async def fake_discord_post(path: str, payload: dict) -> dict:
+        captured.append({"path": path, "payload": payload})
+        return {"id": "456"}
+
+    original = discord_guilds._discord_post
+    discord_guilds._discord_post = fake_discord_post
+    try:
+        await discord_guilds.create_channel_message(
+            channel_id=123,
+            content="A reply",
+            reply_to_message_id=789,
+        )
+    finally:
+        discord_guilds._discord_post = original
+
+
+def test_create_channel_message_can_reply_without_notifying_author():
+    captured: list[dict] = []
+    asyncio.run(_create_channel_reply_scenario(captured))
+
+    assert captured == [
+        {
+            "path": "/channels/123/messages",
+            "payload": {
+                "allowed_mentions": {"parse": [], "replied_user": False},
+                "content": "A reply",
+                "message_reference": {
+                    "message_id": "789",
+                    "fail_if_not_exists": True,
+                },
             },
         }
     ]

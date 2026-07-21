@@ -988,6 +988,30 @@ class ServerRbacAuditEvent(SQLModel, table=True):
     )
 
 
+class BotMessageAuditEvent(SQLModel, table=True):
+    __tablename__ = "bot_message_audit_events"
+
+    id: Optional[UUID] = uuid7_primary_key_field()
+    server_id: int = Field(
+        sa_column=Column(BigInteger, ForeignKey("servers.server_id", ondelete="CASCADE"), nullable=False, index=True)
+    )
+    channel_id: int = Field(sa_column=Column(BigInteger, nullable=False, index=True))
+    discord_message_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(BigInteger, nullable=True, unique=True, index=True),
+    )
+    reply_to_message_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
+    actor_user_id: int = Field(
+        sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False, index=True)
+    )
+    source: str = Field(nullable=False, max_length=32)
+    status: str = Field(default="pending", nullable=False, max_length=20, index=True)
+    content: str = Field(sa_column=Column(Text, nullable=False))
+    error_text: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False, index=True)
+    sent_at: Optional[datetime] = Field(default=None, nullable=True)
+
+
 class ModerationCase(SQLModel, table=True):
     __tablename__ = "moderation_cases"
 

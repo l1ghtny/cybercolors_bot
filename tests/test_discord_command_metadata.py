@@ -190,6 +190,7 @@ def test_bot_command_catalog_covers_registered_discord_commands():
 
     assert registered_qualified_names.difference(catalog_qualified_names) == set()
     assert "Import Rules From Message" in catalog_qualified_names
+    assert "Reply as Modral" in catalog_qualified_names
 
 
 def test_bot_command_catalog_exposes_moderation_command_details():
@@ -227,7 +228,10 @@ def test_bot_command_catalog_endpoint_returns_filterable_contract():
 def test_bot_command_catalog_filters_by_discord_type():
     context_menu_commands = list_bot_commands(discord_type="message_context_menu")
 
-    assert [command.qualified_name for command in context_menu_commands] == ["Import Rules From Message"]
+    assert [command.qualified_name for command in context_menu_commands] == [
+        "Import Rules From Message",
+        "Reply as Modral",
+    ]
 
 
 def test_bot_command_catalog_exposes_valid_rbac_permission_keys():

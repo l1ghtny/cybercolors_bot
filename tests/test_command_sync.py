@@ -6,6 +6,7 @@ from src.commands.moderation.message_actions import (
     link_message_to_action_ctx,
     start_action_from_message_ctx,
 )
+from src.commands.moderation.bot_messages import reply_as_bot_ctx
 from src.commands.sync import sync_application_commands
 
 
@@ -53,5 +54,7 @@ def test_message_context_commands_remain_moderator_only_by_default():
 
     assert link_message_to_action_ctx.default_permissions == expected
     assert start_action_from_message_ctx.default_permissions == expected
+    assert reply_as_bot_ctx.default_permissions == expected
     assert link_message_to_action_ctx.guild_only is True
     assert start_action_from_message_ctx.guild_only is True
+    assert reply_as_bot_ctx.guild_only is True

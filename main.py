@@ -35,6 +35,7 @@ from src.commands.moderation.message_actions import (
     link_message_to_action_ctx,
     start_action_from_message_ctx,
 )
+from src.commands.moderation.bot_messages import reply_as_bot_ctx
 from src.commands.sync import sync_application_commands
 from src.commands.moderation.actions import (
     action_revert,
@@ -378,6 +379,7 @@ tree.add_command(temp_voice_group)
 tree.add_command(rules_import_from_message_ctx)
 tree.add_command(link_message_to_action_ctx)
 tree.add_command(start_action_from_message_ctx)
+tree.add_command(reply_as_bot_ctx)
 
 
 # Add birthdays to the database

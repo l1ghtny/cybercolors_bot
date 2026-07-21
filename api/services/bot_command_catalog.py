@@ -356,6 +356,22 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         workflow=["Available from a Discord message context menu.", "Imports rules without replacing existing rules and refreshes the bot rule cache."],
     ),
     BotCommandDocModel(
+        id="context.reply_as_modral",
+        name="Reply as Modral",
+        qualified_name="Reply as Modral",
+        invoke="Message context menu: Reply as Modral",
+        category="moderation-actions",
+        discord_type="message_context_menu",
+        summary="Send an audited text reply from the bot account.",
+        required_permissions=["moderate_members"],
+        required_rbac_permissions=["communications.send_as_bot"],
+        components=[_component("modal", "Message", "Text Modral should post as a reply, up to 2,000 characters.")],
+        workflow=[
+            "Available from a Discord message context menu.",
+            "Rechecks Discord and dashboard permissions, sends without mention notifications, and records the moderator in the audit trail.",
+        ],
+    ),
+    BotCommandDocModel(
         id="mod.security.security_set_verified_role",
         name="security_set_verified_role",
         qualified_name="mod security security_set_verified_role",
@@ -881,6 +897,7 @@ COMMAND_RBAC_PERMISSIONS: dict[str, tuple[str, ...]] = {
     "mod.rules.rules_list": ("moderation.rules.view",),
     "mod.rules.rules_parse_guide": ("moderation.rules.view",),
     "context.import_rules_from_message": ("moderation.rules.manage",),
+    "context.reply_as_modral": ("communications.send_as_bot",),
     "mod.security.security_set_verified_role": ("security.settings.edit",),
     "mod.security.newcomer_role_suggest": ("security.settings.edit",),
     "mod.security.security_set_newcomer_role": ("security.settings.edit",),
@@ -1107,6 +1124,13 @@ RU_COMMAND_TEXT: dict[str, dict[str, list[str] | str]] = {
     "context.import_rules_from_message": {
         "summary": "Импортировать правила модерации из выбранного сообщения Discord.",
         "workflow": ["Доступно через контекстное меню сообщения Discord.", "Импортирует правила без замены существующих и обновляет кеш правил бота."],
+    },
+    "context.reply_as_modral": {
+        "summary": "\u041e\u0442\u043f\u0440\u0430\u0432\u0438\u0442\u044c \u0430\u0443\u0434\u0438\u0440\u0443\u0435\u043c\u044b\u0439 \u0442\u0435\u043a\u0441\u0442\u043e\u0432\u044b\u0439 \u043e\u0442\u0432\u0435\u0442 \u043e\u0442 \u0438\u043c\u0435\u043d\u0438 \u0431\u043e\u0442\u0430.",
+        "workflow": [
+            "\u0414\u043e\u0441\u0442\u0443\u043f\u043d\u043e \u0447\u0435\u0440\u0435\u0437 \u043a\u043e\u043d\u0442\u0435\u043a\u0441\u0442\u043d\u043e\u0435 \u043c\u0435\u043d\u044e \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u044f Discord.",
+            "\u041f\u043e\u0432\u0442\u043e\u0440\u043d\u043e \u043f\u0440\u043e\u0432\u0435\u0440\u044f\u0435\u0442 \u043f\u0440\u0430\u0432\u0430 Discord \u0438 dashboard, \u043e\u0442\u043f\u0440\u0430\u0432\u043b\u044f\u0435\u0442 \u0431\u0435\u0437 \u0443\u0432\u0435\u0434\u043e\u043c\u043b\u0435\u043d\u0438\u0439 \u043e\u0431 \u0443\u043f\u043e\u043c\u0438\u043d\u0430\u043d\u0438\u044f\u0445 \u0438 \u0437\u0430\u043f\u0438\u0441\u044b\u0432\u0430\u0435\u0442 \u043c\u043e\u0434\u0435\u0440\u0430\u0442\u043e\u0440\u0430 \u0432 \u0436\u0443\u0440\u043d\u0430\u043b \u0430\u0443\u0434\u0438\u0442\u0430.",
+        ],
     },
     "mod.security.security_set_verified_role": {
         "summary": "Установить роль, которую получают участники после прохождения онбординга.",

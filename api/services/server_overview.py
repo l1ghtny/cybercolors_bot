@@ -21,6 +21,7 @@ from api.services.moderation_core import (
 from src.db.models import (
     ActionType,
     Birthday,
+    BotMessageAuditEvent,
     CaseStatus,
     DeletedMessage,
     MessageLog,
@@ -402,6 +403,59 @@ async def _rbac_audit_events(session: AsyncSession, server_id: int, limit: int) 
     return events
 
 
+async def _bot_message_events(session: AsyncSession, server_id: int, limit: int) -> list[ServerTimelineEventModel]:
+    audit_events = (
+        await session.exec(
+            select(BotMessageAuditEvent)
+            .where(BotMessageAuditEvent.server_id == server_id)
+            .order_by(BotMessageAuditEvent.created_at.desc())
+            .limit(limit)
+        )
+    ).all()
+    events: list[ServerTimelineEventModel] = []
+    for audit_event in audit_events:
+        message_id = (
+            str(audit_event.discord_message_id)
+            if audit_event.discord_message_id is not None
+            else None
+        )
+        events.append(
+            ServerTimelineEventModel(
+                id=f"bot_message:{audit_event.id}",
+                server_id=str(server_id),
+                event_type=f"bot_message_{audit_event.status}",
+                entity_type="bot_message",
+                entity_id=str(audit_event.id),
+                occurred_at=audit_event.sent_at or audit_event.created_at,
+                title=(
+                    "Bot message sent"
+                    if audit_event.status == "sent"
+                    else f"Bot message {audit_event.status}"
+                ),
+                description=audit_event.content,
+                actor=await build_optional_actor(session, server_id, audit_event.actor_user_id),
+                metadata={
+                    "channel_id": str(audit_event.channel_id),
+                    "discord_message_id": message_id,
+                    "reply_to_message_id": (
+                        str(audit_event.reply_to_message_id)
+                        if audit_event.reply_to_message_id is not None
+                        else None
+                    ),
+                    "source": audit_event.source,
+                    "status": audit_event.status,
+                    "error": audit_event.error_text,
+                    "jump_url": (
+                        f"https://discord.com/channels/{server_id}/{audit_event.channel_id}/{message_id}"
+                        if message_id is not None
+                        else None
+                    ),
+                },
+            )
+        )
+    return events
+
+
 async def build_server_timeline(session: AsyncSession, server_id: int, limit: int = 100) -> ServerTimelineModel:
     scoped_limit = max(1, min(limit, 200))
     events: list[ServerTimelineEventModel] = []
@@ -411,6 +465,7 @@ async def build_server_timeline(session: AsyncSession, server_id: int, limit: in
     events.extend(await _case_note_events(session, server_id, scoped_limit))
     events.extend(await _case_evidence_events(session, server_id, scoped_limit))
     events.extend(await _rbac_audit_events(session, server_id, scoped_limit))
+    events.extend(await _bot_message_events(session, server_id, scoped_limit))
     events.sort(key=lambda item: item.occurred_at, reverse=True)
     return ServerTimelineModel(
         server_id=str(server_id),

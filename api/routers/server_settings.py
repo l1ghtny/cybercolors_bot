@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from api.routers.rbac import rbac_router
+from api.routers.bot_messages import bot_messages_router
 from api.routers.discord_command_visibility import discord_command_visibility_router
 from api.routers.server_ai import server_ai_router
 from api.routers.server_ai_settings import server_ai_settings_router
@@ -13,6 +14,7 @@ from api.routers.server_security import server_security_router
 
 server_settings = APIRouter()
 
+server_settings.include_router(bot_messages_router, tags=["servers:bot-messages"])
 server_settings.include_router(rbac_router, tags=["servers:rbac"])
 server_settings.include_router(discord_command_visibility_router, tags=["servers:discord-command-visibility"])
 server_settings.include_router(server_security_router, tags=["servers:security"])

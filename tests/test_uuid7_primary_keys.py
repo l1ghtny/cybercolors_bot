@@ -8,6 +8,7 @@ from src.db.models import (
     AIKnowledgeIndexJob,
     AIModerationDecision,
     AttachmentLog,
+    BotMessageAuditEvent,
     DeletedMessage,
     ModerationAction,
     ModerationActionDeletedMessageLink,
@@ -53,6 +54,7 @@ UUID7_MODELS = (
     TempVoiceLog,
     TempVoiceParticipant,
     AttachmentLog,
+    BotMessageAuditEvent,
     Triggers,
 )
 

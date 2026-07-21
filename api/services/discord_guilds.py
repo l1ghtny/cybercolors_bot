@@ -7,7 +7,7 @@ import httpx
 from fastapi import HTTPException, status
 
 DISCORD_API_BASE_URL = "https://discord.com/api/v10"
-TEXT_CHANNEL_TYPES = {0, 5}
+TEXT_CHANNEL_TYPES = {0, 5, 10, 11, 12}
 VOICE_CHANNEL_TYPE = 2
 
 
@@ -134,11 +134,15 @@ async def fetch_current_bot_user() -> dict:
 
 
 async def fetch_channel(server_id: int, channel_id: int) -> dict | None:
-    channels = await fetch_guild_channels(server_id)
-    for channel in channels:
-        if int(channel["id"]) == channel_id:
-            return channel
-    return None
+    try:
+        payload = await _discord_get(f"/channels/{channel_id}")
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_404_NOT_FOUND:
+            return None
+        raise
+    if not isinstance(payload, dict) or str(payload.get("guild_id")) != str(server_id):
+        return None
+    return payload
 
 
 async def fetch_guild_metadata(server_id: int) -> dict:
@@ -340,14 +344,25 @@ async def create_channel_message(
     content: str | None = None,
     embeds: list[dict] | None = None,
     components: list[dict] | None = None,
+    reply_to_message_id: int | None = None,
 ) -> dict:
-    message_payload: dict = {"allowed_mentions": {"parse": []}}
+    message_payload: dict = {
+        "allowed_mentions": {
+            "parse": [],
+            "replied_user": False,
+        }
+    }
     if content is not None:
         message_payload["content"] = content
     if embeds:
         message_payload["embeds"] = embeds
     if components:
         message_payload["components"] = components
+    if reply_to_message_id is not None:
+        message_payload["message_reference"] = {
+            "message_id": str(reply_to_message_id),
+            "fail_if_not_exists": True,
+        }
 
     payload = await _discord_post(
         f"/channels/{channel_id}/messages",

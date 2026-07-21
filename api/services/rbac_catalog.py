@@ -38,6 +38,12 @@ PERMISSIONS: tuple[PermissionDefinition, ...] = (
     PermissionDefinition("ai.suggestions.view", "read", "View AI suggestions", "View AI moderation suggestions."),
     PermissionDefinition("ai.decisions.view", "read", "View AI decisions", "View AI moderation decision logs."),
     PermissionDefinition("ai.knowledge.view", "read", "View AI knowledge", "View AI knowledge sources, indexing status, and retrieval previews."),
+    PermissionDefinition(
+        "communications.send_as_bot",
+        "moderation",
+        "Send messages as bot",
+        "Send audited text messages and replies from the bot account.",
+    ),
     PermissionDefinition("moderation.actions.apply.warn", "moderation", "Apply warns", "Warn members from the dashboard or bot."),
     PermissionDefinition("moderation.actions.apply.mute", "moderation", "Apply mutes", "Mute and unmute members."),
     PermissionDefinition("moderation.actions.apply.kick", "moderation", "Apply kicks", "Kick members."),
@@ -95,6 +101,7 @@ PRESETS: tuple[PresetDefinition, ...] = (
         "Can warn users and help with case notes and evidence.",
         VIEWER_PERMISSION_KEYS
         + (
+            "communications.send_as_bot",
             "moderation.actions.apply.warn",
             "moderation.actions.link_messages",
             "moderation.cases.manage",
@@ -107,6 +114,7 @@ PRESETS: tuple[PresetDefinition, ...] = (
         "Can mute users and manage cases and monitoring decisions.",
         VIEWER_PERMISSION_KEYS
         + (
+            "communications.send_as_bot",
             "moderation.actions.apply.warn",
             "moderation.actions.apply.mute",
             "moderation.actions.link_messages",
@@ -121,6 +129,7 @@ PRESETS: tuple[PresetDefinition, ...] = (
         "Can manage stronger moderation actions and moderation rules.",
         VIEWER_PERMISSION_KEYS
         + (
+            "communications.send_as_bot",
             "moderation.actions.apply.warn",
             "moderation.actions.apply.mute",
             "moderation.actions.apply.kick",

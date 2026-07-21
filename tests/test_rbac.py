@@ -53,6 +53,7 @@ def test_rbac_catalog_contains_presets_and_permission_keys():
     assert "birthdays.records.manage" in permission_keys
     assert "moderation.cases.view" in permission_keys
     assert "moderation.cases.manage" in permission_keys
+    assert "communications.send_as_bot" in permission_keys
     for action_type in ActionType:
         assert f"moderation.actions.apply.{action_type.value}" in permission_keys
     assert "admin" in preset_keys
@@ -61,6 +62,7 @@ def test_rbac_catalog_contains_presets_and_permission_keys():
     assert birthday_records.group == "birthdays"
     moderator = next(preset for preset in catalog.presets if preset.key == "moderator")
     assert "birthdays.records.manage" in moderator.permission_keys
+    assert "communications.send_as_bot" in moderator.permission_keys
     admin = next(preset for preset in catalog.presets if preset.key == "admin")
     assert "commands.visibility.manage" in admin.permission_keys
 
