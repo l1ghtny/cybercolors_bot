@@ -87,6 +87,14 @@ jobs:
           #!/bin/bash
           set -euo pipefail
 
+          FRONTEND_DIR="%teamcity.build.checkoutDir%/bot-command-center"
+          if [ ! -f "$FRONTEND_DIR/package.json" ]; then
+            echo "Frontend checkout is missing at $FRONTEND_DIR" >&2
+            exit 1
+          fi
+          cd "$FRONTEND_DIR"
+          echo "Building frontend revision $(git rev-parse HEAD) from $FRONTEND_DIR"
+
           if [ -n "${DOCKER_HOST:-}" ]; then
             PUSH_REGISTRY="registry.container-registry.svc.cluster.local:5000"
           else
