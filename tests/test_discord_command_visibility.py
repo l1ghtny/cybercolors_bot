@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 
 import httpx
 import pytest
@@ -6,6 +7,8 @@ from pydantic import ValidationError
 
 from api.models.discord_command_visibility import (
     DiscordCommandPermissionOverwriteModel,
+    DiscordCommandVisibilityCommandModel,
+    DiscordCommandVisibilityReadModel,
     DiscordCommandVisibilityTargetUpdateModel,
     DiscordCommandVisibilityWriteModel,
 )
@@ -37,7 +40,71 @@ def test_visibility_update_rejects_duplicate_subjects_and_overwrite_limit():
 def test_visibility_write_rejects_duplicate_targets():
     update = DiscordCommandVisibilityTargetUpdateModel(target_id="123", target_kind="command", permissions=[])
     with pytest.raises(ValidationError, match="Duplicate Discord command visibility targets"):
-        DiscordCommandVisibilityWriteModel(updates=[update, update])
+        DiscordCommandVisibilityWriteModel(snapshot_id="snapshot", updates=[update, update])
+
+
+def test_visibility_snapshot_is_order_independent_and_detects_changes():
+    allow_role = DiscordCommandPermissionOverwriteModel(id="456", type="role", permission=True)
+    deny_channel = DiscordCommandPermissionOverwriteModel(id="789", type="channel", permission=False)
+    command = DiscordCommandVisibilityCommandModel(
+        command_id="123",
+        name="mod",
+        discord_type="1",
+        source="global",
+        inherits_application_permissions=False,
+        permissions=[deny_channel, allow_role],
+    )
+
+    first = visibility._visibility_snapshot("999", [allow_role], [command])
+    reordered = visibility._visibility_snapshot(
+        "999",
+        [allow_role],
+        [command.model_copy(update={"permissions": [allow_role, deny_channel]})],
+    )
+    changed = visibility._visibility_snapshot(
+        "999",
+        [allow_role],
+        [command.model_copy(update={"permissions": [allow_role]})],
+    )
+
+    assert first == reordered
+    assert changed != first
+
+
+def test_permission_signatures_match_discord_defaults_regardless_of_order():
+    allow_role = DiscordCommandPermissionOverwriteModel(id="456", type="role", permission=True)
+    deny_channel = DiscordCommandPermissionOverwriteModel(id="789", type="channel", permission=False)
+
+    assert visibility._permissions_signature([allow_role, deny_channel]) == visibility._permissions_signature(
+        [deny_channel, allow_role]
+    )
+
+
+def test_visibility_write_rejects_stale_snapshot_before_updating_discord(monkeypatch):
+    current = DiscordCommandVisibilityReadModel(
+        application_id="999",
+        server_id="123",
+        snapshot_id="current-snapshot",
+        fetched_at=datetime.now(timezone.utc),
+        oauth_scope_granted=True,
+        native_permissions_sufficient=True,
+    )
+
+    async def fake_read_visibility(_server_id, _access_token):
+        return current
+
+    monkeypatch.setattr(visibility, "read_visibility", fake_read_visibility)
+    update = DiscordCommandVisibilityTargetUpdateModel(
+        target_id="999",
+        target_kind="application",
+        permissions=[],
+    )
+
+    with pytest.raises(visibility.DiscordVisibilityError) as captured:
+        asyncio.run(visibility.write_visibility(123, "token", "stale-snapshot", [update]))
+
+    assert captured.value.code == "discord_visibility_conflict"
+    assert captured.value.status_code == 409
 
 
 def test_nested_mod_commands_are_displayed_but_share_one_native_target():

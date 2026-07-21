@@ -1,7 +1,10 @@
 import asyncio
+import hashlib
+import json
 import logging
 import os
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -60,6 +63,48 @@ def _overwrites(payload: Any) -> list[DiscordCommandPermissionOverwriteModel]:
             id=str(item["id"]), type=permission_type, permission=bool(item.get("permission")),
         ))
     return result
+
+
+def _permissions_signature(
+    permissions: list[DiscordCommandPermissionOverwriteModel],
+) -> list[tuple[str, str, bool]]:
+    return sorted((item.type, item.id, item.permission) for item in permissions)
+
+
+def _visibility_snapshot(
+    application_id: str,
+    application_permissions: list[DiscordCommandPermissionOverwriteModel],
+    commands: list[DiscordCommandVisibilityCommandModel],
+) -> str:
+    def permissions_payload(
+        permissions: list[DiscordCommandPermissionOverwriteModel],
+    ) -> list[dict[str, str | bool]]:
+        return [
+            {"type": permission_type, "id": permission_id, "permission": allowed}
+            for permission_type, permission_id, allowed in _permissions_signature(permissions)
+        ]
+
+    payload = {
+        "application_id": application_id,
+        "application_permissions": permissions_payload(application_permissions),
+        "commands": sorted(
+            (
+                {
+                    "id": command.command_id,
+                    "name": command.name,
+                    "type": command.discord_type,
+                    "source": command.source,
+                    "default_member_permissions": command.default_member_permissions,
+                    "inherits_application_permissions": command.inherits_application_permissions,
+                    "permissions": permissions_payload(command.permissions),
+                }
+                for command in commands
+            ),
+            key=lambda item: (str(item["id"]), str(item["type"]), str(item["name"])),
+        ),
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _catalog_by_invoke() -> dict[str, list[str]]:
@@ -211,6 +256,7 @@ async def read_visibility(server_id: int, access_token: str) -> DiscordCommandVi
         str(item.get("id")): _overwrites(item.get("permissions"))
         for item in permissions_payload if isinstance(item, dict)
     } if isinstance(permissions_payload, list) else {}
+    application_permissions = permission_by_target.get(application_id, [])
     catalog = _catalog_by_invoke()
     returned: list[DiscordCommandVisibilityCommandModel] = []
     for command, source in commands:
@@ -218,6 +264,7 @@ async def read_visibility(server_id: int, access_token: str) -> DiscordCommandVi
         if not command_id.isdigit():
             continue
         invoke = str(command.get("name", ""))
+        command_permissions = permission_by_target.get(command_id, [])
         returned.append(DiscordCommandVisibilityCommandModel(
             command_id=command_id,
             name=invoke,
@@ -225,27 +272,45 @@ async def read_visibility(server_id: int, access_token: str) -> DiscordCommandVi
             source=source,
             description=command.get("description"),
             default_member_permissions=command.get("default_member_permissions"),
-            inherits_application_permissions=command_id not in permission_by_target,
-            permissions=permission_by_target.get(command_id, []),
+            inherits_application_permissions=(
+                command_id not in permission_by_target
+                or _permissions_signature(command_permissions)
+                == _permissions_signature(application_permissions)
+            ),
+            permissions=command_permissions,
             children=_children(command, command_id, catalog),
             uncatalogued=f"/{invoke}" not in catalog and invoke not in catalog,
         ))
+    sorted_commands = sorted(returned, key=lambda item: (item.name, item.discord_type))
     return DiscordCommandVisibilityReadModel(
         application_id=application_id,
         server_id=str(server_id),
+        snapshot_id=_visibility_snapshot(application_id, application_permissions, sorted_commands),
+        fetched_at=datetime.now(timezone.utc),
         oauth_scope_granted=scope_granted,
         native_permissions_sufficient=native_permissions_sufficient,
-        application_permissions=permission_by_target.get(application_id, []),
-        commands=sorted(returned, key=lambda item: (item.name, item.discord_type)),
+        application_permissions=application_permissions,
+        commands=sorted_commands,
     )
 
 
-async def write_visibility(server_id: int, access_token: str, updates: list[DiscordCommandVisibilityTargetUpdateModel]) -> DiscordCommandVisibilityWriteResponseModel:
+async def write_visibility(
+    server_id: int,
+    access_token: str,
+    snapshot_id: str | None,
+    updates: list[DiscordCommandVisibilityTargetUpdateModel],
+) -> DiscordCommandVisibilityWriteResponseModel:
     current = await read_visibility(server_id, access_token)
     if not current.oauth_scope_granted:
         raise DiscordVisibilityError("discord_oauth_scope_required", "Connect command management before changing Discord visibility", 403)
     if not current.native_permissions_sufficient:
         raise DiscordVisibilityError("discord_native_permissions_required", "Discord Manage Guild and Manage Roles permissions are required", 403)
+    if snapshot_id is not None and current.snapshot_id != snapshot_id:
+        raise DiscordVisibilityError(
+            "discord_visibility_conflict",
+            "Discord command visibility changed after this page was loaded. Refresh and review the latest settings before applying again.",
+            409,
+        )
     valid_command_ids = {command.command_id for command in current.commands}
     for update in updates:
         if update.target_kind == "application":

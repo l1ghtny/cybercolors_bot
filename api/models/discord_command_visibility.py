@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -43,6 +44,8 @@ class DiscordCommandVisibilityCommandModel(BaseModel):
 class DiscordCommandVisibilityReadModel(BaseModel):
     application_id: str
     server_id: str
+    snapshot_id: str
+    fetched_at: datetime
     oauth_scope_granted: bool
     native_permissions_sufficient: bool
     application_permissions: list[DiscordCommandPermissionOverwriteModel] = Field(default_factory=list)
@@ -73,6 +76,10 @@ class DiscordCommandVisibilityTargetUpdateModel(BaseModel):
 
 
 class DiscordCommandVisibilityWriteModel(BaseModel):
+    # Optional during the rolling frontend/backend deployment. The redesigned
+    # dashboard always sends it; older deployed clients can still save until
+    # the frontend rollout finishes.
+    snapshot_id: str | None = Field(default=None, min_length=1)
     updates: list[DiscordCommandVisibilityTargetUpdateModel] = Field(min_length=1)
 
     @model_validator(mode="after")

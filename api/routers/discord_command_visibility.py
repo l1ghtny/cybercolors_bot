@@ -38,6 +38,6 @@ async def put_discord_command_visibility(
     access_token: str = Depends(get_bearer_access_token),
 ):
     try:
-        return await write_visibility(server_id, access_token, body.updates)
+        return await write_visibility(server_id, access_token, body.snapshot_id, body.updates)
     except DiscordVisibilityError as error:
         _raise(error)
