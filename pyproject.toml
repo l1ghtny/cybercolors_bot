@@ -1,0 +1,52 @@
+[project]
+name = "modral-bot"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+    "aiohttp>=3.10.10",
+    "alembic>=1.13.1",
+    "asyncpg>=0.30.0",
+    "boto3>=1.35.0",
+    "cryptography>=44.0.0",
+    "demoji>=1.1.0",
+    "discord.py>=2.4.0",
+    "fastapi-swagger-dark>=0.0.7",
+    "fastapi[standard]>=0.119.0,<0.120",
+    "jinja2",
+    "modal>=1.0.0",
+    "numpy>=1.25.2",
+    "openai>=2.3.0",
+    "pgvector>=0.3.6",
+    "pydantic",
+    "pygithub>=2.4.0",
+    "pypdf>=5.0.0",
+    "python-dotenv>=1.0.1",
+    "pytz>=2024.2",
+    "requests>=2.32.3",
+    "sqlalchemy[asyncio]>=2.0.44",
+    "sqlmodel>=0.0.27",
+    "yt-dlp>=2026.6.9",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.0",
+]
+indexer = [
+    "sentence-transformers>=3.0.0",
+    "torch>=2.12.1",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

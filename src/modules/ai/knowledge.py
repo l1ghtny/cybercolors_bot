@@ -117,7 +117,8 @@ class LocalSentenceTransformerEmbedder:
         except ImportError as exc:
             raise RuntimeError(
                 "sentence-transformers is required for local AI knowledge embeddings. "
-                "Install project requirements or set AI_KNOWLEDGE_EMBEDDING_PROVIDER=openai."
+                "Install the embedding dependencies with `uv sync --group indexer` or set "
+                "AI_KNOWLEDGE_EMBEDDING_PROVIDER=openai."
             ) from exc
 
         self.model = model

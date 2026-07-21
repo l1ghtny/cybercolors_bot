@@ -1,6 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
 cd /home/discord-bot
-git pull
+git pull --ff-only
+mkdir -p logs
 
-pip install -r requirements.txt
+uv sync --locked --no-dev --group indexer
 
-python3 main.py
+exec uv run --frozen --no-dev --group indexer python main.py

@@ -28,5 +28,9 @@ Also, there is a check for users who deleted their accounts or left the server. 
 
 ## Development notes
 
+- Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and create the locked development environment with `uv sync --locked --group indexer`.
+- After configuring the existing environment variables, create the log directory with `mkdir -p logs`, run the bot with `uv run python main.py`, and run the test suite with `uv run pytest` (database-backed tests require a test PostgreSQL connection).
+- Add or update dependencies with `uv add <package>` (or `uv add --dev <package>`), then commit both `pyproject.toml` and `uv.lock`.
+- Local embedding workloads, including knowledge search and indexing, use the opt-in dependency group: `uv sync --locked --no-dev --group indexer`.
 - DB session usage guide: [docs/session-conventions.md](docs/session-conventions.md)
 - Moderation rules import format: [docs/moderation-rules-style-guide.md](docs/moderation-rules-style-guide.md)
