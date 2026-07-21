@@ -330,7 +330,7 @@ class StartActionFromMessageView(discord.ui.View):
         rule_select.callback = self._select_rule
         self.add_item(rule_select)
 
-        duration_select = discord.ui.Select(
+        self.duration_select = discord.ui.Select(
             placeholder=tr(locale, "action.message_start_duration_placeholder"),
             options=[
                 discord.SelectOption(
@@ -346,8 +346,8 @@ class StartActionFromMessageView(discord.ui.View):
             min_values=1,
             max_values=1,
         )
-        duration_select.callback = self._select_duration
-        self.add_item(duration_select)
+        self.duration_select.callback = self._select_duration
+        self.add_item(self.duration_select)
 
         self.continue_button = discord.ui.Button(
             label=tr(locale, "action.message_start_continue"),
@@ -368,6 +368,18 @@ class StartActionFromMessageView(discord.ui.View):
 
     async def _select_action_type(self, interaction: discord.Interaction) -> None:
         self.action_type = ActionType(interaction.data["values"][0])
+        warning_selected = self.action_type == ActionType.WARN
+        self.duration_select.disabled = warning_selected
+        self.duration_select.placeholder = tr(
+            self.locale,
+            "action.message_start_duration_not_applicable"
+            if warning_selected
+            else "action.message_start_duration_placeholder",
+        )
+        if warning_selected:
+            self.duration = "default"
+            for option in self.duration_select.options:
+                option.default = False
         self.continue_button.disabled = self.rule_id is None
         await interaction.response.edit_message(view=self)
 
@@ -377,6 +389,10 @@ class StartActionFromMessageView(discord.ui.View):
         await interaction.response.edit_message(view=self)
 
     async def _select_duration(self, interaction: discord.Interaction) -> None:
+        if self.action_type == ActionType.WARN:
+            self.duration = "default"
+            await interaction.response.defer()
+            return
         self.duration = interaction.data["values"][0]
         await interaction.response.defer()
 
