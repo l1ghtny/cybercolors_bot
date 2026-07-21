@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
@@ -12,6 +13,9 @@ class RbacPermissionModel(BaseModel):
     group: str
     label: str
     description: str
+    risk_level: Literal["read_only", "change", "high_impact", "administration"]
+    surfaces: list[Literal["dashboard", "discord"]]
+    related_command_ids: list[str] = Field(default_factory=list)
 
 
 class RbacPresetModel(BaseModel):

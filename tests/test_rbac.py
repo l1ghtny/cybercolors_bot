@@ -60,6 +60,14 @@ def test_rbac_catalog_contains_presets_and_permission_keys():
     assert "moderator" in preset_keys
     birthday_records = next(permission for permission in catalog.permissions if permission.key == "birthdays.records.manage")
     assert birthday_records.group == "birthdays"
+    assert birthday_records.risk_level == "change"
+    assert birthday_records.surfaces == ["dashboard"]
+    ban_members = next(permission for permission in catalog.permissions if permission.key == "moderation.actions.apply.ban")
+    assert ban_members.risk_level == "high_impact"
+    assert ban_members.surfaces == ["dashboard", "discord"]
+    assert ban_members.related_command_ids == ["mod.ban", "mod.unban"]
+    manage_access = next(permission for permission in catalog.permissions if permission.key == "rbac.manage")
+    assert manage_access.risk_level == "administration"
     moderator = next(preset for preset in catalog.presets if preset.key == "moderator")
     assert "birthdays.records.manage" in moderator.permission_keys
     assert "communications.send_as_bot" in moderator.permission_keys
