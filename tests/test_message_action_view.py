@@ -1,7 +1,13 @@
 import asyncio
 from types import SimpleNamespace
 
-from src.commands.moderation.message_actions import StartActionFromMessageView
+import discord
+from discord import app_commands
+
+from src.commands.moderation.message_actions import (
+    LinkMessageToActionView,
+    StartActionFromMessageView,
+)
 from src.db.models import ActionType
 
 
@@ -58,5 +64,32 @@ def test_warning_selection_disables_and_clears_duration() -> None:
         assert view.duration_select.disabled is False
         assert view.duration_select.placeholder == "Duration for mute or ban"
         assert response.edited_views == [view, view]
+
+    asyncio.run(run())
+
+
+def test_link_message_view_lists_recent_actions_and_search_button() -> None:
+    async def run() -> None:
+        view = LinkMessageToActionView(
+            source_message=SimpleNamespace(),
+            locale="en",
+            requesting_user_id=123,
+            choices=[
+                app_commands.Choice(
+                    name="WARN · Example User · #42 · 2026-07-21 12:30 · Rule 1",
+                    value="42",
+                )
+            ],
+        )
+
+        selects = [item for item in view.children if isinstance(item, discord.ui.Select)]
+        buttons = [item for item in view.children if isinstance(item, discord.ui.Button)]
+
+        assert len(selects) == 1
+        assert selects[0].placeholder == "Choose a recent action"
+        assert [(option.label, option.value) for option in selects[0].options] == [
+            ("WARN · Example User · #42 · 2026-07-21 12:30 · Rule 1", "42")
+        ]
+        assert [button.label for button in buttons] == ["Search actions"]
 
     asyncio.run(run())

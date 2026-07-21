@@ -7,12 +7,14 @@ from api.services.moderation_action_numbers import resolve_moderation_action_ref
 from api.services.moderation_actions_service import (
     _dashboard_action_url,
     link_message_to_action,
+    list_action_summaries,
 )
 from src.db.database import get_async_session
 from src.db.models import ActionType, ServerModerationSettings
 from src.modules.localization.service import get_server_locale, tr
 from src.modules.moderation.bot_rbac import ensure_bot_permission
 from src.modules.moderation.bot_services import (
+    action_choices,
     build_moderator_action_receipt,
     create_bot_moderation_action,
     fetch_active_rule_models,
@@ -62,21 +64,158 @@ async def _archive_source_message(
     await log_message(source_message, session)
 
 
-class LinkMessageToActionModal(discord.ui.Modal):
-    def __init__(self, *, source_message: discord.Message, locale: str):
-        super().__init__(title=tr(locale, "action.message_link_modal_title"))
+async def _link_source_message_to_action(
+    interaction: discord.Interaction,
+    *,
+    source_message: discord.Message,
+    locale: str,
+    action_reference: str,
+) -> bool:
+    if interaction.guild is None:
+        if interaction.response.is_done():
+            await interaction.followup.send(tr(None, "common.server_only"), ephemeral=True)
+        else:
+            await interaction.response.send_message(tr(None, "common.server_only"), ephemeral=True)
+        return False
+    if not interaction.response.is_done():
+        await interaction.response.defer(ephemeral=True)
+    if not await ensure_bot_permission(
+        interaction,
+        "moderation.actions.link_messages",
+        locale=locale,
+    ):
+        return False
+
+    try:
+        async with get_async_session() as session:
+            action = await resolve_moderation_action_reference(
+                session,
+                server_id=interaction.guild.id,
+                reference=action_reference,
+            )
+            if action is None:
+                await interaction.followup.send(tr(locale, "action.not_found"), ephemeral=True)
+                return False
+            await _archive_source_message(
+                session,
+                source_message=source_message,
+                moderator=interaction.user,
+            )
+            result = await link_message_to_action(
+                session,
+                action_id=action.id,
+                message_id=source_message.id,
+                linked_by_user_id=interaction.user.id,
+            )
+            await session.commit()
+    except Exception as error:
+        await interaction.followup.send(
+            tr(locale, "action.message_link_failed", error=error),
+            ephemeral=True,
+        )
+        return False
+
+    await interaction.followup.send(
+        tr(
+            locale,
+            "action.message_linked",
+            message_id=result.message_id,
+            action_number=action.action_number,
+            action_url=_dashboard_action_url(interaction.guild.id, action.id),
+        ),
+        ephemeral=True,
+    )
+    return True
+
+
+class LinkMessageToActionView(discord.ui.View):
+    def __init__(
+        self,
+        *,
+        source_message: discord.Message,
+        locale: str,
+        requesting_user_id: int,
+        choices: list[app_commands.Choice[str]],
+    ):
+        super().__init__(timeout=180)
         self.source_message = source_message
         self.locale = locale
-        self.action_reference = discord.ui.TextInput(
-            label=tr(locale, "action.message_link_reference_label"),
-            placeholder=tr(locale, "action.message_link_reference_placeholder"),
-            max_length=64,
+        self.requesting_user_id = requesting_user_id
+
+        if choices:
+            self.action_select = discord.ui.Select(
+                placeholder=tr(locale, "action.message_link_recent_placeholder"),
+                options=[
+                    discord.SelectOption(label=choice.name, value=choice.value)
+                    for choice in choices[:25]
+                ],
+                min_values=1,
+                max_values=1,
+            )
+            self.action_select.callback = self._select_action
+            self.add_item(self.action_select)
+
+        search_button = discord.ui.Button(
+            label=tr(locale, "action.message_link_search_button"),
+            style=discord.ButtonStyle.secondary,
+            emoji="🔎",
         )
-        self.add_item(self.action_reference)
+        search_button.callback = self._search
+        self.add_item(search_button)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id == self.requesting_user_id:
+            return True
+        await interaction.response.send_message(
+            tr(self.locale, "action.message_link_owner_only"),
+            ephemeral=True,
+        )
+        return False
+
+    async def _select_action(self, interaction: discord.Interaction) -> None:
+        await _link_source_message_to_action(
+            interaction,
+            source_message=self.source_message,
+            locale=self.locale,
+            action_reference=interaction.data["values"][0],
+        )
+
+    async def _search(self, interaction: discord.Interaction) -> None:
+        await interaction.response.send_modal(
+            SearchActionsForMessageModal(
+                source_message=self.source_message,
+                locale=self.locale,
+                requesting_user_id=self.requesting_user_id,
+            )
+        )
+
+
+class SearchActionsForMessageModal(discord.ui.Modal):
+    def __init__(
+        self,
+        *,
+        source_message: discord.Message,
+        locale: str,
+        requesting_user_id: int,
+    ):
+        super().__init__(title=tr(locale, "action.message_link_search_title"))
+        self.source_message = source_message
+        self.locale = locale
+        self.requesting_user_id = requesting_user_id
+        self.query = discord.ui.TextInput(
+            label=tr(locale, "action.message_link_search_label"),
+            placeholder=tr(locale, "action.message_link_search_placeholder"),
+            min_length=1,
+            max_length=100,
+        )
+        self.add_item(self.query)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        if interaction.guild is None:
-            await interaction.response.send_message(tr(None, "common.server_only"), ephemeral=True)
+        if interaction.user.id != self.requesting_user_id:
+            await interaction.response.send_message(
+                tr(self.locale, "action.message_link_owner_only"),
+                ephemeral=True,
+            )
             return
         await interaction.response.defer(ephemeral=True)
         if not await ensure_bot_permission(
@@ -86,42 +225,38 @@ class LinkMessageToActionModal(discord.ui.Modal):
         ):
             return
 
+        query = str(self.query.value).strip()
         try:
             async with get_async_session() as session:
-                action = await resolve_moderation_action_reference(
-                    session,
+                actions = await list_action_summaries(
+                    session=session,
                     server_id=interaction.guild.id,
-                    reference=str(self.action_reference.value),
+                    limit=500,
                 )
-                if action is None:
-                    await interaction.followup.send(tr(self.locale, "action.not_found"), ephemeral=True)
-                    return
-                await _archive_source_message(
-                    session,
-                    source_message=self.source_message,
-                    moderator=interaction.user,
-                )
-                result = await link_message_to_action(
-                    session,
-                    action_id=action.id,
-                    message_id=self.source_message.id,
-                    linked_by_user_id=interaction.user.id,
-                )
-                await session.commit()
         except Exception as error:
             await interaction.followup.send(
-                tr(self.locale, "action.message_link_failed", error=error),
+                tr(self.locale, "action.message_link_search_failed", error=error),
                 ephemeral=True,
             )
             return
 
+        choices = action_choices(actions, query)
+        if not choices:
+            await _link_source_message_to_action(
+                interaction,
+                source_message=self.source_message,
+                locale=self.locale,
+                action_reference=query,
+            )
+            return
+
         await interaction.followup.send(
-            tr(
-                self.locale,
-                "action.message_linked",
-                message_id=result.message_id,
-                action_number=action.action_number,
-                action_url=_dashboard_action_url(interaction.guild.id, action.id),
+            tr(self.locale, "action.message_link_search_results", query=query),
+            view=LinkMessageToActionView(
+                source_message=self.source_message,
+                locale=self.locale,
+                requesting_user_id=self.requesting_user_id,
+                choices=choices,
             ),
             ephemeral=True,
         )
@@ -134,6 +269,7 @@ async def link_message_to_action_context(
     if interaction.guild is None:
         await interaction.response.send_message(tr(None, "common.server_only"), ephemeral=True)
         return
+    await interaction.response.defer(ephemeral=True)
     locale = await get_server_locale(interaction.guild.id)
     if not await ensure_bot_permission(
         interaction,
@@ -141,8 +277,28 @@ async def link_message_to_action_context(
         locale=locale,
     ):
         return
-    await interaction.response.send_modal(
-        LinkMessageToActionModal(source_message=message, locale=locale)
+    try:
+        async with get_async_session() as session:
+            recent_actions = await list_action_summaries(
+                session=session,
+                server_id=interaction.guild.id,
+                limit=25,
+            )
+    except Exception as error:
+        await interaction.followup.send(
+            tr(locale, "action.message_link_search_failed", error=error),
+            ephemeral=True,
+        )
+        return
+    await interaction.followup.send(
+        tr(locale, "action.message_link_picker_prompt"),
+        view=LinkMessageToActionView(
+            source_message=message,
+            locale=locale,
+            requesting_user_id=interaction.user.id,
+            choices=action_choices(recent_actions, ""),
+        ),
+        ephemeral=True,
     )
 
 
