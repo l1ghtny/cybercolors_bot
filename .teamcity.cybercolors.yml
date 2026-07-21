@@ -143,9 +143,13 @@ jobs:
           #!/bin/bash
           set -euo pipefail
 
-          FRONTEND_DIR="%teamcity.build.checkoutDir%/bot-command-center"
-          if [ ! -f "$FRONTEND_DIR/package.json" ]; then
-            echo "Frontend checkout is missing at $FRONTEND_DIR" >&2
+          CHECKOUT_DIR="%teamcity.build.checkoutDir%"
+          if [ -f "$CHECKOUT_DIR/package.json" ]; then
+            FRONTEND_DIR="$CHECKOUT_DIR"
+          elif [ -f "$CHECKOUT_DIR/bot-command-center/package.json" ]; then
+            FRONTEND_DIR="$CHECKOUT_DIR/bot-command-center"
+          else
+            echo "Frontend checkout is missing from $CHECKOUT_DIR and $CHECKOUT_DIR/bot-command-center" >&2
             exit 1
           fi
           cd "$FRONTEND_DIR"
