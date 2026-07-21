@@ -21,6 +21,7 @@ from api.services.ai_knowledge import (
 )
 from src.db.database import engine, get_async_session
 from src.db.models import AIKnowledgeChunk, AIKnowledgeSource, GlobalUser, Server
+from src.modules.ai import embeddings as embeddings_module
 from src.modules.ai.knowledge import (
     KNOWLEDGE_EMBEDDING_DIMENSIONS,
     build_knowledge_chunks,
@@ -137,6 +138,27 @@ def test_default_tool_registry_exposes_server_knowledge_search():
     assert "search_server_knowledge" in specs
     assert specs["search_server_knowledge"]["requires_admin_context"] is False
     assert "approved public server/admin knowledge" in specs["search_server_knowledge"]["description"]
+
+
+def test_build_knowledge_embedder_reuses_the_loaded_local_model(monkeypatch):
+    created = []
+
+    class FakeLocalEmbedder:
+        def __init__(self, *, model, dimensions):
+            self.provider_name = "local"
+            self.model = model
+            self.dimensions = dimensions
+            created.append(self)
+
+    embeddings_module._build_knowledge_embedder_cached.cache_clear()
+    monkeypatch.setattr(embeddings_module, "LocalSentenceTransformerEmbedder", FakeLocalEmbedder)
+
+    first = embeddings_module.build_knowledge_embedder()
+    second = embeddings_module.build_knowledge_embedder()
+
+    assert first is second
+    assert created == [first]
+    embeddings_module._build_knowledge_embedder_cached.cache_clear()
 
 
 async def _knowledge_index_scenario() -> None:

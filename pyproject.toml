@@ -32,7 +32,7 @@ dependencies = [
 dev = [
     "pytest>=9.0.0",
 ]
-indexer = [
+embeddings = [
     "sentence-transformers>=3.0.0",
     "torch>=2.12.1",
 ]

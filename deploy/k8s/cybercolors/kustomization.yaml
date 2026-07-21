@@ -7,4 +7,5 @@ resources:
   - backend.yaml
   - frontend.yaml
   - workers.yaml
+  - embeddings.yaml
   - ingress.yaml

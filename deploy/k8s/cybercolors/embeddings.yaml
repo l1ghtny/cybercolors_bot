@@ -1,0 +1,104 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: cybercolors-embeddings
+  namespace: cybercolors
+spec:
+  selector:
+    app: cybercolors-embeddings
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cybercolors-embeddings
+  namespace: cybercolors
+spec:
+  replicas: 1
+  progressDeadlineSeconds: 1800
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: cybercolors-embeddings
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: cybercolors-embeddings
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: NotIn
+                    values:
+                      - main-server
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: workload.cybercolors.dev/high-memory
+                    operator: In
+                    values:
+                      - "true"
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app: cybercolors-embeddings
+      containers:
+        - name: embeddings
+          image: localhost:32000/cybercolors-embeddings:latest
+          imagePullPolicy: IfNotPresent
+          command: ["fastapi", "run", "src/modules/ai/embedding_service.py", "--host", "0.0.0.0", "--port", "8000"]
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: cybercolors-config
+          env:
+            - name: AI_KNOWLEDGE_EMBEDDING_PROVIDER
+              value: local
+            - name: PYTHONPATH
+              value: /home/discord-bot
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 180
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 500m
+              memory: 2Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi

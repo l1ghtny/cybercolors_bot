@@ -1,13 +1,11 @@
+import asyncio
 import hashlib
 import math
-import os
 import re
-import asyncio
 from datetime import timedelta
-from typing import Any, Protocol
+from typing import Any
 from uuid import UUID
 
-from openai import AsyncOpenAI
 from sqlalchemy import bindparam, delete, text
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -18,40 +16,14 @@ from src.modules.ai.knowledge_imports import (
     extract_text_from_file,
     extract_text_from_youtube_url,
 )
-
-DEFAULT_KNOWLEDGE_EMBEDDING_PROVIDER = "local"
-DEFAULT_LOCAL_KNOWLEDGE_EMBEDDING_MODEL = "BAAI/bge-m3"
-DEFAULT_OPENAI_KNOWLEDGE_EMBEDDING_MODEL = "text-embedding-3-small"
-DEFAULT_KNOWLEDGE_EMBEDDING_DIMENSIONS = 1024
-
-
-def _env_int(name: str, default: int) -> int:
-    raw_value = os.getenv(name)
-    if raw_value is None or not raw_value.strip():
-        return default
-    return int(raw_value)
-
-
-KNOWLEDGE_EMBEDDING_PROVIDER = (
-    os.getenv("AI_KNOWLEDGE_EMBEDDING_PROVIDER") or DEFAULT_KNOWLEDGE_EMBEDDING_PROVIDER
-).strip().lower()
-KNOWLEDGE_EMBEDDING_DIMENSIONS = _env_int(
-    "AI_KNOWLEDGE_EMBEDDING_DIMENSIONS",
-    DEFAULT_KNOWLEDGE_EMBEDDING_DIMENSIONS,
+from src.modules.ai.embeddings import (
+    KNOWLEDGE_EMBEDDING_DIMENSIONS,
+    KNOWLEDGE_EMBEDDING_MODEL,
+    KnowledgeEmbedder,
+    get_knowledge_embedder,
 )
-KNOWLEDGE_LOCAL_EMBEDDING_MODEL = (
-    os.getenv("AI_KNOWLEDGE_LOCAL_EMBEDDING_MODEL") or DEFAULT_LOCAL_KNOWLEDGE_EMBEDDING_MODEL
-)
-KNOWLEDGE_OPENAI_EMBEDDING_MODEL = (
-    os.getenv("AI_KNOWLEDGE_OPENAI_EMBEDDING_MODEL")
-    or os.getenv("AI_KNOWLEDGE_EMBEDDING_MODEL")
-    or DEFAULT_OPENAI_KNOWLEDGE_EMBEDDING_MODEL
-)
-KNOWLEDGE_EMBEDDING_MODEL = (
-    KNOWLEDGE_OPENAI_EMBEDDING_MODEL
-    if KNOWLEDGE_EMBEDDING_PROVIDER == "openai"
-    else os.getenv("AI_KNOWLEDGE_EMBEDDING_MODEL") or KNOWLEDGE_LOCAL_EMBEDDING_MODEL
-)
+
+
 KNOWLEDGE_CHUNK_TARGET_TOKENS = 350
 KNOWLEDGE_CHUNK_MAX_TOKENS = 450
 KNOWLEDGE_CHUNK_OVERLAP_WORDS = 45
@@ -61,98 +33,6 @@ PUBLIC_ANSWER_VISIBILITIES = {"public_answer"}
 ACTIVE_JOB_STATUSES = {"pending", "running"}
 
 _WORD_RE = re.compile(r"\S+")
-
-
-class KnowledgeEmbedder(Protocol):
-    provider_name: str
-    model: str
-    dimensions: int
-
-    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        ...
-
-
-class OpenAIKnowledgeEmbedder:
-    provider_name = "openai"
-
-    def __init__(
-        self,
-        *,
-        client: AsyncOpenAI | None = None,
-        model: str = KNOWLEDGE_OPENAI_EMBEDDING_MODEL,
-        dimensions: int = KNOWLEDGE_EMBEDDING_DIMENSIONS,
-    ) -> None:
-        self.client = client or AsyncOpenAI()
-        self.model = model
-        self.dimensions = dimensions
-
-    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        if not texts:
-            return []
-        response = await self.client.embeddings.create(
-            model=self.model,
-            input=texts,
-            dimensions=self.dimensions,
-        )
-        embeddings = [list(item.embedding) for item in response.data]
-        for embedding in embeddings:
-            if len(embedding) != self.dimensions:
-                raise ValueError(
-                    f"Embedding dimension mismatch: expected {self.dimensions}, got {len(embedding)}"
-                )
-        return embeddings
-
-
-class LocalSentenceTransformerEmbedder:
-    provider_name = "local"
-
-    def __init__(
-        self,
-        *,
-        model: str = KNOWLEDGE_LOCAL_EMBEDDING_MODEL,
-        dimensions: int = KNOWLEDGE_EMBEDDING_DIMENSIONS,
-    ) -> None:
-        try:
-            from sentence_transformers import SentenceTransformer
-        except ImportError as exc:
-            raise RuntimeError(
-                "sentence-transformers is required for local AI knowledge embeddings. "
-                "Install the embedding dependencies with `uv sync --group indexer` or set "
-                "AI_KNOWLEDGE_EMBEDDING_PROVIDER=openai."
-            ) from exc
-
-        self.model = model
-        self.dimensions = dimensions
-        self._model = SentenceTransformer(model)
-
-    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        if not texts:
-            return []
-        embeddings = await asyncio.to_thread(
-            self._model.encode,
-            texts,
-            normalize_embeddings=True,
-            convert_to_numpy=True,
-            show_progress_bar=False,
-        )
-        vectors = embeddings.tolist()
-        for vector in vectors:
-            if len(vector) != self.dimensions:
-                raise ValueError(
-                    f"Embedding dimension mismatch for {self.model}: expected {self.dimensions}, got {len(vector)}"
-                )
-        return [[float(item) for item in vector] for vector in vectors]
-
-
-def build_knowledge_embedder() -> KnowledgeEmbedder:
-    if KNOWLEDGE_EMBEDDING_PROVIDER == "openai":
-        return OpenAIKnowledgeEmbedder()
-    if KNOWLEDGE_EMBEDDING_PROVIDER == "local":
-        return LocalSentenceTransformerEmbedder()
-    raise ValueError(
-        "Unsupported AI knowledge embedding provider: "
-        f"{KNOWLEDGE_EMBEDDING_PROVIDER!r}. Expected 'local' or 'openai'."
-    )
 
 
 def vector_literal(values: list[float]) -> str:
@@ -388,7 +268,7 @@ async def process_knowledge_index_job_with_embedder(
         await session.flush()
         return
 
-    active_embedder = embedder or build_knowledge_embedder()
+    active_embedder = embedder or await get_knowledge_embedder()
     embeddings = await active_embedder.embed_texts([chunk["chunk_text"] for chunk in chunks])
     if len(embeddings) != len(chunks):
         raise ValueError(f"Embedding count mismatch: expected {len(chunks)}, got {len(embeddings)}")
@@ -492,7 +372,7 @@ async def search_server_knowledge(
         return []
 
     visibility_set = PUBLIC_ANSWER_VISIBILITIES if visibility == "public_answer" else {visibility}
-    active_embedder = embedder or build_knowledge_embedder()
+    active_embedder = embedder or await get_knowledge_embedder()
     query_embedding = (await active_embedder.embed_texts([normalized_query]))[0]
     query_vector = vector_literal(query_embedding)
     bounded_limit = min(max(int(limit), 1), 20)
