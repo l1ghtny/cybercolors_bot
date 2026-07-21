@@ -16,14 +16,14 @@ async def sync_application_commands(
     *,
     test_guild_id: str | None,
 ) -> CommandSyncResult:
-    """Sync globally, then mirror to the configured guild for immediate testing."""
+    """Sync globally and remove legacy guild-scoped command registrations."""
     global_commands = await tree.sync()
     if not test_guild_id:
         return CommandSyncResult(global_count=len(global_commands))
 
     guild_id = int(test_guild_id)
     guild = discord.Object(id=guild_id)
-    tree.copy_global_to(guild=guild)
+    tree.clear_commands(guild=guild)
     guild_commands = await tree.sync(guild=guild)
     return CommandSyncResult(
         global_count=len(global_commands),

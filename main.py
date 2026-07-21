@@ -226,7 +226,10 @@ class Aclient(discord.AutoShardedClient):
             synced = await sync_application_commands(tree, test_guild_id=TEST_GUILD_ID)
             print(f"Commands synced globally ({synced.global_count}).")
             if synced.guild_id is not None:
-                print(f"Commands synced to guild {synced.guild_id} ({synced.guild_count}).")
+                print(
+                    f"Guild-specific commands cleared for guild {synced.guild_id} "
+                    f"({synced.guild_count} remain)."
+                )
             self.synced = True
         if not self.added:
             self.added = True
