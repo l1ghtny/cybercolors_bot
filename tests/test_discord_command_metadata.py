@@ -204,6 +204,13 @@ def test_bot_command_catalog_exposes_moderation_command_details():
         "delete_message_channel",
     }.issubset({parameter.name for parameter in warn_command.parameters})
 
+    reply_command = get_bot_command("context.reply_as_modral")
+    assert reply_command is not None
+    assert {component.type for component in reply_command.components} == {
+        "modal",
+        "checkbox",
+    }
+
 
 def test_bot_command_catalog_endpoint_returns_filterable_contract():
     client = TestClient(app)

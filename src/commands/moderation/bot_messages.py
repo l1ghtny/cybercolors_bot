@@ -73,7 +73,6 @@ class ReplyAsBotModal(discord.ui.Modal):
         self.locale = locale
         self.bot_name = bot_name
         self.content_input = discord.ui.TextInput(
-            label=tr(locale, "bot_message.content_label"),
             placeholder=tr(
                 locale,
                 "bot_message.content_placeholder",
@@ -84,7 +83,23 @@ class ReplyAsBotModal(discord.ui.Modal):
             max_length=2000,
             required=True,
         )
-        self.add_item(self.content_input)
+        self.add_item(
+            discord.ui.Label(
+                text=tr(locale, "bot_message.content_label"),
+                component=self.content_input,
+            )
+        )
+        self.notify_replied_user_input = discord.ui.Checkbox(
+            custom_id="notify_replied_user",
+            default=False,
+        )
+        self.add_item(
+            discord.ui.Label(
+                text=tr(locale, "bot_message.notify_author_label"),
+                description=tr(locale, "bot_message.notify_author_description"),
+                component=self.notify_replied_user_input,
+            )
+        )
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         if interaction.user.id != self.requesting_user_id:
@@ -114,6 +129,7 @@ class ReplyAsBotModal(discord.ui.Modal):
                         channel_id=str(self.channel_id),
                         content=str(self.content_input.value),
                         reply_to_message_id=str(self.message_id),
+                        notify_replied_user=self.notify_replied_user_input.value,
                     ),
                     source="discord_context",
                 )

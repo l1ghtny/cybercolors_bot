@@ -8,6 +8,7 @@ from src.commands.moderation.message_actions import (
     start_action_from_message_ctx,
 )
 from src.commands.moderation.bot_messages import (
+    ReplyAsBotModal,
     StaticCommandTranslator,
     bot_display_name,
     reply_as_bot_ctx,
@@ -112,3 +113,38 @@ def test_bot_display_name_uses_test_guild_as_cybercolors(monkeypatch):
 
     assert bot_display_name(478278763239702538) == "CyberColors"
     assert bot_display_name(123456789012345678) == "Modral"
+
+
+def test_reply_modal_has_native_notification_checkbox_defaulting_off():
+    english = ReplyAsBotModal(
+        server_id=1,
+        channel_id=2,
+        message_id=3,
+        requesting_user_id=4,
+        locale="en",
+        bot_name="CyberColors",
+    )
+    russian = ReplyAsBotModal(
+        server_id=1,
+        channel_id=2,
+        message_id=3,
+        requesting_user_id=4,
+        locale="ru",
+        bot_name="CyberColors",
+    )
+
+    assert english.notify_replied_user_input.default is False
+    assert english.notify_replied_user_input.value is False
+    english_checkbox = english.to_components()[1]
+    russian_checkbox = russian.to_components()[1]
+    assert english_checkbox == {
+        "type": discord.ComponentType.label.value,
+        "label": "Notify the replied-to author",
+        "description": "Send Discord's reply notification to this user.",
+        "component": {
+            "type": discord.ComponentType.checkbox.value,
+            "custom_id": "notify_replied_user",
+            "default": False,
+        },
+    }
+    assert russian_checkbox["label"] == "Уведомить автора сообщения"

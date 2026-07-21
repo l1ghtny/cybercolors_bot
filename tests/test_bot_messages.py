@@ -38,6 +38,7 @@ async def _send_scenario(
     paused: bool = False,
     sender_error: Exception | None = None,
     session: FakeSession | None = None,
+    notify_replied_user: bool = False,
 ):
     session = session or FakeSession(paused=paused)
     sender_calls: list[dict] = []
@@ -62,6 +63,7 @@ async def _send_scenario(
             channel_id="789",
             content="Hello from Modral",
             reply_to_message_id="654",
+            notify_replied_user=notify_replied_user,
         ),
         source="dashboard",
         sender=sender,
@@ -79,6 +81,7 @@ def test_send_bot_message_replies_and_records_successful_audit():
             "channel_id": 789,
             "content": "Hello from Modral",
             "reply_to_message_id": 654,
+            "notify_replied_user": False,
         }
     ]
     audit = next(item for item in session.added if isinstance(item, BotMessageAuditEvent))
@@ -88,6 +91,12 @@ def test_send_bot_message_replies_and_records_successful_audit():
     assert audit.actor_user_id == 456
     assert session.commit_count == 2
     assert result.jump_url == "https://discord.com/channels/123/789/777"
+
+
+def test_send_bot_message_can_notify_replied_user():
+    _, sender_calls, _ = asyncio.run(_send_scenario(notify_replied_user=True))
+
+    assert sender_calls[0]["notify_replied_user"] is True
 
 
 def test_send_bot_message_records_discord_failure():
@@ -111,6 +120,7 @@ def test_send_bot_message_honors_public_response_pause():
 
 
 def test_bot_message_payload_rejects_blank_or_overlong_content():
+    assert BotMessageCreateModel(channel_id="123", content="Safe default").notify_replied_user is False
     with pytest.raises(ValueError):
         BotMessageCreateModel(channel_id="123", content="   ")
     with pytest.raises(ValueError):

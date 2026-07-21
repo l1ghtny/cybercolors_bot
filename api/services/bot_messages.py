@@ -109,6 +109,9 @@ async def send_bot_message(
             channel_id=channel_id,
             content=body.content,
             reply_to_message_id=reply_to_message_id,
+            notify_replied_user=(
+                body.notify_replied_user if reply_to_message_id is not None else False
+            ),
         )
         raw_message_id = discord_message.get("id")
         if raw_message_id is None or not str(raw_message_id).isdigit():

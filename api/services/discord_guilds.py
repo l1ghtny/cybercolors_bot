@@ -345,11 +345,12 @@ async def create_channel_message(
     embeds: list[dict] | None = None,
     components: list[dict] | None = None,
     reply_to_message_id: int | None = None,
+    notify_replied_user: bool = False,
 ) -> dict:
     message_payload: dict = {
         "allowed_mentions": {
             "parse": [],
-            "replied_user": False,
+            "replied_user": notify_replied_user,
         }
     }
     if content is not None:

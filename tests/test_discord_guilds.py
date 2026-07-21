@@ -64,7 +64,11 @@ def test_create_channel_message_sends_embed_payload_without_content():
     ]
 
 
-async def _create_channel_reply_scenario(captured: list[dict]) -> None:
+async def _create_channel_reply_scenario(
+    captured: list[dict],
+    *,
+    notify_replied_user: bool = False,
+) -> None:
     async def fake_discord_post(path: str, payload: dict) -> dict:
         captured.append({"path": path, "payload": payload})
         return {"id": "456"}
@@ -76,6 +80,7 @@ async def _create_channel_reply_scenario(captured: list[dict]) -> None:
             channel_id=123,
             content="A reply",
             reply_to_message_id=789,
+            notify_replied_user=notify_replied_user,
         )
     finally:
         discord_guilds._discord_post = original
@@ -98,6 +103,18 @@ def test_create_channel_message_can_reply_without_notifying_author():
             },
         }
     ]
+
+
+def test_create_channel_message_can_notify_replied_to_author():
+    captured: list[dict] = []
+    asyncio.run(
+        _create_channel_reply_scenario(captured, notify_replied_user=True)
+    )
+
+    assert captured[0]["payload"]["allowed_mentions"] == {
+        "parse": [],
+        "replied_user": True,
+    }
 
 
 async def _overwrite_rate_limit_scenario(monkeypatch) -> None:
