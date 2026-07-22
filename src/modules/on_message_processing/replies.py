@@ -1,20 +1,17 @@
-import string
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.db.database import engine
 from src.db.models import Triggers, Replies
-from src.modules.on_message_processing.processing_methods import em_replace, e_replace, string_found
+from src.modules.on_message_processing.processing_methods import (
+    normalize_reply_text,
+    normalized_reply_trigger_matches,
+)
 
 
 async def check_for_replies(message):
     database_found = False
-    message_content_base = message.content.lower()
-    message_content_e = em_replace(message_content_base)
-    message_content_punctuation = e_replace(message_content_e)
-
-    # Content without punctuation for matching
-    message_content = message_content_punctuation.translate(str.maketrans('', '', string.punctuation))
+    message_content = normalize_reply_text(message.content)
     server_id = message.guild.id
     
     async with AsyncSession(engine) as session:
@@ -25,25 +22,15 @@ async def check_for_replies(message):
     
     for trigger, reply in rows:
         trigger_text_raw = trigger.message
-        # Remove punctuation from trigger for better matching
-        trigger_text = trigger_text_raw.translate(str.maketrans('', '', string.punctuation))
         response_text = reply.bot_reply
         
         # Handle the f-string style response if it starts with f' or f"
         is_fstring = response_text.startswith("f'") or response_text.startswith('f"')
         
-        if trigger_text_raw.startswith('<'):
-            # Simple "contains" match
-            if trigger_text in message_content:
-                database_found = True
-                await send_reply(message, response_text, is_fstring)
-                break # Stop after first match? Or continue? Original code toggled database_found.
-        else:
-            # Word-boundary match
-            if string_found(trigger_text, message_content):
-                database_found = True
-                await send_reply(message, response_text, is_fstring)
-                break
+        if normalized_reply_trigger_matches(trigger_text_raw, message_content):
+            database_found = True
+            await send_reply(message, response_text, is_fstring)
+            break
                 
     return database_found, server_id
 
