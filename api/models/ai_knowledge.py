@@ -140,6 +140,11 @@ class AIKnowledgeJobReadModel(BaseModel):
     run_after: datetime
     locked_at: datetime | None = None
     error_message: str | None = None
+    source_title: str | None = None
+    source_type: str | None = None
+    subject_type: str | None = None
+    subject_user_id: str | None = None
+    visibility: str | None = None
     created_at: datetime
     updated_at: datetime
 

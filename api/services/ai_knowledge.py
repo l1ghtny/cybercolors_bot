@@ -76,7 +76,11 @@ def _source_to_model(source: AIKnowledgeSource, *, chunk_count: int = 0) -> AIKn
     )
 
 
-def _job_to_model(job: AIKnowledgeIndexJob) -> AIKnowledgeJobReadModel:
+def _job_to_model(
+    job: AIKnowledgeIndexJob,
+    *,
+    source: AIKnowledgeSource | None = None,
+) -> AIKnowledgeJobReadModel:
     return AIKnowledgeJobReadModel(
         id=str(job.id),
         server_id=str(job.server_id),
@@ -88,6 +92,15 @@ def _job_to_model(job: AIKnowledgeIndexJob) -> AIKnowledgeJobReadModel:
         run_after=job.run_after,
         locked_at=job.locked_at,
         error_message=job.error_message,
+        source_title=source.title if source is not None else None,
+        source_type=source.source_type if source is not None else None,
+        subject_type=source.subject_type if source is not None else None,
+        subject_user_id=(
+            str(source.subject_user_id)
+            if source is not None and source.subject_user_id is not None
+            else None
+        ),
+        visibility=source.visibility if source is not None else None,
         created_at=job.created_at,
         updated_at=job.updated_at,
     )
@@ -325,7 +338,7 @@ async def queue_knowledge_source_reindex(
         source_id=source.id,
         job_type="reindex_source",
     )
-    return _job_to_model(job)
+    return _job_to_model(job, source=source)
 
 
 async def list_knowledge_jobs(
@@ -343,7 +356,25 @@ async def list_knowledge_jobs(
         statement = statement.where(AIKnowledgeIndexJob.source_id == source_id)
     statement = statement.order_by(AIKnowledgeIndexJob.created_at.desc()).limit(limit)
     jobs = (await session.exec(statement)).all()
-    return AIKnowledgeJobListModel(items=[_job_to_model(job) for job in jobs])
+    source_ids = {job.source_id for job in jobs if job.source_id is not None}
+    sources_by_id: dict[UUID, AIKnowledgeSource] = {}
+    if source_ids:
+        sources = (
+            await session.exec(
+                select(AIKnowledgeSource).where(AIKnowledgeSource.id.in_(list(source_ids)))
+            )
+        ).all()
+        sources_by_id = {source.id: source for source in sources if source.id is not None}
+
+    return AIKnowledgeJobListModel(
+        items=[
+            _job_to_model(
+                job,
+                source=sources_by_id.get(job.source_id) if job.source_id is not None else None,
+            )
+            for job in jobs
+        ]
+    )
 
 
 async def search_knowledge_sources(

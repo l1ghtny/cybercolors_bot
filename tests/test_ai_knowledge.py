@@ -348,6 +348,11 @@ async def _knowledge_api_service_scenario() -> None:
 
         jobs = await list_knowledge_jobs(session=session, server_id=server_id)
         assert jobs.items[0].id == job.id
+        assert jobs.items[0].source_title == "Welcome info"
+        assert jobs.items[0].source_type == "text"
+        assert jobs.items[0].subject_type == "server"
+        assert jobs.items[0].subject_user_id is None
+        assert jobs.items[0].visibility == "public_answer"
 
         detail = await get_knowledge_source(
             session=session,
