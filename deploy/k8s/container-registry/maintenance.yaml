@@ -1,0 +1,484 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: registry-retention-script
+  namespace: container-registry
+data:
+  retain.py: |
+    import json
+    import os
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+
+    registry_url = os.environ.get(
+        "REGISTRY_URL",
+        "http://registry.container-registry.svc.cluster.local:5000",
+    ).rstrip("/")
+    repository = os.environ.get("REGISTRY_REPOSITORY", "cybercolors-indexer")
+    keep_numeric = int(os.environ.get("KEEP_NUMERIC_TAGS", "1"))
+    accept = ", ".join(
+        (
+            "application/vnd.oci.image.index.v1+json",
+            "application/vnd.oci.image.manifest.v1+json",
+            "application/vnd.docker.distribution.manifest.list.v2+json",
+            "application/vnd.docker.distribution.manifest.v2+json",
+        )
+    )
+
+
+    def request(path, method="GET"):
+        req = urllib.request.Request(
+            f"{registry_url}{path}",
+            method=method,
+            headers={"Accept": accept},
+        )
+        return urllib.request.urlopen(req, timeout=60)
+
+
+    encoded_repository = urllib.parse.quote(repository, safe="/")
+    with request(f"/v2/{encoded_repository}/tags/list") as response:
+        tags = json.load(response).get("tags") or []
+
+    numeric_tags = sorted(
+        (tag for tag in tags if tag.isdigit()),
+        key=int,
+        reverse=True,
+    )
+    protected_tags = {"latest", *numeric_tags[:keep_numeric]}
+
+    digests = {}
+    for tag in tags:
+        encoded_tag = urllib.parse.quote(tag, safe="")
+        try:
+            with request(
+                f"/v2/{encoded_repository}/manifests/{encoded_tag}",
+                method="HEAD",
+            ) as response:
+                digest = response.headers["Docker-Content-Digest"]
+        except urllib.error.HTTPError as error:
+            print(f"Unable to resolve {tag}: HTTP {error.code}")
+            continue
+        digests.setdefault(digest, []).append(tag)
+
+    deleted = 0
+    for digest, digest_tags in sorted(digests.items()):
+        if protected_tags.intersection(digest_tags):
+            print(f"Keeping {digest}: {', '.join(sorted(digest_tags))}")
+            continue
+        encoded_digest = urllib.parse.quote(digest, safe=":")
+        try:
+            with request(
+                f"/v2/{encoded_repository}/manifests/{encoded_digest}",
+                method="DELETE",
+            ) as response:
+                print(
+                    f"Deleted {digest} ({response.status}): "
+                    f"{', '.join(sorted(digest_tags))}"
+                )
+                deleted += 1
+        except urllib.error.HTTPError as error:
+            if error.code == 404:
+                print(f"Already absent {digest}: {', '.join(sorted(digest_tags))}")
+                continue
+            raise
+
+    print(
+        f"Retention complete for {repository}: deleted {deleted} manifests; "
+        f"protected tags: {', '.join(sorted(protected_tags))}"
+    )
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: registry-retention
+  namespace: container-registry
+spec:
+  schedule: "0 3 * * 0"
+  timeZone: Europe/Bratislava
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      ttlSecondsAfterFinished: 86400
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: retention
+              image: python:3.12-alpine
+              imagePullPolicy: IfNotPresent
+              command: ["python", "/scripts/retain.py"]
+              env:
+                - name: REGISTRY_URL
+                  value: http://registry.container-registry.svc.cluster.local:5000
+                - name: REGISTRY_REPOSITORY
+                  value: cybercolors-indexer
+                - name: KEEP_NUMERIC_TAGS
+                  value: "1"
+              resources:
+                requests:
+                  cpu: 25m
+                  memory: 32Mi
+                limits:
+                  cpu: 250m
+                  memory: 128Mi
+              volumeMounts:
+                - name: script
+                  mountPath: /scripts
+                  readOnly: true
+          volumes:
+            - name: script
+              configMap:
+                name: registry-retention-script
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: registry-gc-config
+  namespace: container-registry
+data:
+  config.yml: |
+    version: 0.1
+    storage:
+      filesystem:
+        rootdirectory: /var/lib/registry
+      delete:
+        enabled: true
+    http:
+      addr: :5000
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: registry-maintenance
+  namespace: container-registry
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: registry-gc-orchestrator-script
+  namespace: container-registry
+data:
+  orchestrate.py: |
+    import json
+    import os
+    import ssl
+    import time
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+
+    namespace = "container-registry"
+    api_url = "https://kubernetes.default.svc"
+    token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+    ca_path = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+    with open(token_path, encoding="utf-8") as token_file:
+        token = token_file.read().strip()
+    ssl_context = ssl.create_default_context(cafile=ca_path)
+
+
+    def request(path, method="GET", body=None, content_type="application/json"):
+        data = None if body is None else json.dumps(body).encode()
+        req = urllib.request.Request(
+            f"{api_url}{path}",
+            method=method,
+            data=data,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+                "Content-Type": content_type,
+            },
+        )
+        return urllib.request.urlopen(req, context=ssl_context, timeout=60)
+
+
+    def request_json(path, method="GET", body=None, content_type="application/json"):
+        with request(path, method, body, content_type) as response:
+            return json.load(response)
+
+
+    def scale_registry(replicas):
+        request_json(
+            f"/apis/apps/v1/namespaces/{namespace}/deployments/registry/scale",
+            method="PATCH",
+            body={"spec": {"replicas": replicas}},
+            content_type="application/merge-patch+json",
+        )
+        print(f"Scaled registry deployment to {replicas}")
+
+
+    def wait_for_registry_shutdown(timeout=300):
+        selector = urllib.parse.urlencode({"labelSelector": "app=registry"})
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            pods = request_json(
+                f"/api/v1/namespaces/{namespace}/pods?{selector}"
+            ).get("items", [])
+            if not pods:
+                print("Registry pod stopped")
+                return
+            time.sleep(3)
+        raise TimeoutError("Timed out waiting for the registry pod to stop")
+
+
+    def delete_job(name):
+        path = f"/apis/batch/v1/namespaces/{namespace}/jobs/{name}"
+        try:
+            request_json(
+                path,
+                method="DELETE",
+                body={"propagationPolicy": "Foreground"},
+            )
+        except urllib.error.HTTPError as error:
+            if error.code != 404:
+                raise
+            return
+
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            try:
+                request_json(path)
+            except urllib.error.HTTPError as error:
+                if error.code == 404:
+                    return
+                raise
+            time.sleep(2)
+        raise TimeoutError(f"Timed out deleting job {name}")
+
+
+    def create_gc_job():
+        job = {
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {"name": "registry-gc", "namespace": namespace},
+            "spec": {
+                "backoffLimit": 0,
+                "template": {
+                    "metadata": {"labels": {"maintenance": "registry-gc"}},
+                    "spec": {
+                        "restartPolicy": "Never",
+                        "nodeSelector": {"kubernetes.io/hostname": "new-node"},
+                        "containers": [
+                            {
+                                "name": "garbage-collection",
+                                "image": "registry:2.8.1",
+                                "imagePullPolicy": "IfNotPresent",
+                                "command": [
+                                    "/bin/registry",
+                                    "garbage-collect",
+                                    "/etc/distribution/config.yml",
+                                    "--delete-untagged",
+                                ],
+                                "volumeMounts": [
+                                    {
+                                        "name": "registry-data",
+                                        "mountPath": "/var/lib/registry",
+                                    },
+                                    {
+                                        "name": "config",
+                                        "mountPath": "/etc/distribution",
+                                        "readOnly": True,
+                                    },
+                                ],
+                            }
+                        ],
+                        "volumes": [
+                            {
+                                "name": "registry-data",
+                                "persistentVolumeClaim": {
+                                    "claimName": "registry-claim-longhorn-v2"
+                                },
+                            },
+                            {
+                                "name": "config",
+                                "configMap": {"name": "registry-gc-config"},
+                            },
+                        ],
+                    },
+                },
+            },
+        }
+        request_json(
+            f"/apis/batch/v1/namespaces/{namespace}/jobs",
+            method="POST",
+            body=job,
+        )
+        print("Created offline registry GC job")
+
+
+    def create_trim_job():
+        job = {
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {"name": "registry-trim", "namespace": namespace},
+            "spec": {
+                "backoffLimit": 0,
+                "template": {
+                    "metadata": {"labels": {"maintenance": "registry-trim"}},
+                    "spec": {
+                        "restartPolicy": "Never",
+                        "nodeSelector": {"kubernetes.io/hostname": "new-node"},
+                        "containers": [
+                            {
+                                "name": "trim",
+                                "image": "registry:2.8.1",
+                                "imagePullPolicy": "IfNotPresent",
+                                "command": [
+                                    "fstrim",
+                                    "-v",
+                                    "/var/lib/registry",
+                                ],
+                                "securityContext": {"privileged": True},
+                                "volumeMounts": [
+                                    {
+                                        "name": "registry-data",
+                                        "mountPath": "/var/lib/registry",
+                                    }
+                                ],
+                            }
+                        ],
+                        "volumes": [
+                            {
+                                "name": "registry-data",
+                                "persistentVolumeClaim": {
+                                    "claimName": "registry-claim-longhorn-v2"
+                                },
+                            }
+                        ],
+                    },
+                },
+            },
+        }
+        request_json(
+            f"/apis/batch/v1/namespaces/{namespace}/jobs",
+            method="POST",
+            body=job,
+        )
+        print("Created registry filesystem trim job")
+
+
+    def wait_for_job(name, timeout):
+        path = f"/apis/batch/v1/namespaces/{namespace}/jobs/{name}"
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            job = request_json(path)
+            conditions = {
+                condition.get("type"): condition.get("status")
+                for condition in job.get("status", {}).get("conditions", [])
+            }
+            if conditions.get("Complete") == "True":
+                return
+            if conditions.get("Failed") == "True":
+                raise RuntimeError(f"Registry maintenance job {name} failed")
+            time.sleep(5)
+        raise TimeoutError(f"Timed out waiting for registry job {name}")
+
+
+    def print_job_logs(name):
+        selector = urllib.parse.urlencode({"labelSelector": f"job-name={name}"})
+        pods = request_json(
+            f"/api/v1/namespaces/{namespace}/pods?{selector}"
+        ).get("items", [])
+        if not pods:
+            print(f"No pod found for registry job {name}")
+            return
+        pod_name = pods[0]["metadata"]["name"]
+        with request(
+            f"/api/v1/namespaces/{namespace}/pods/{pod_name}/log"
+        ) as response:
+            print(response.read().decode())
+
+
+    try:
+        scale_registry(0)
+        wait_for_registry_shutdown()
+        delete_job("registry-gc")
+        create_gc_job()
+        wait_for_job("registry-gc", 3600)
+        print_job_logs("registry-gc")
+        delete_job("registry-gc")
+        delete_job("registry-trim")
+        create_trim_job()
+        wait_for_job("registry-trim", 600)
+        print_job_logs("registry-trim")
+        delete_job("registry-trim")
+    finally:
+        scale_registry(1)
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: registry-maintenance
+  namespace: container-registry
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "deployments/scale"]
+    verbs: ["get", "patch", "update"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "delete", "get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: registry-maintenance
+  namespace: container-registry
+subjects:
+  - kind: ServiceAccount
+    name: registry-maintenance
+    namespace: container-registry
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: registry-maintenance
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: registry-garbage-collection
+  namespace: container-registry
+spec:
+  schedule: "30 3 * * 0"
+  timeZone: Europe/Bratislava
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      ttlSecondsAfterFinished: 86400
+      template:
+        spec:
+          serviceAccountName: registry-maintenance
+          restartPolicy: Never
+          containers:
+            - name: orchestrator
+              image: python:3.12-alpine
+              imagePullPolicy: IfNotPresent
+              command: ["python", "/scripts/orchestrate.py"]
+              resources:
+                requests:
+                  cpu: 25m
+                  memory: 64Mi
+                limits:
+                  cpu: 250m
+                  memory: 256Mi
+              volumeMounts:
+                - name: orchestrator-script
+                  mountPath: /scripts
+                  readOnly: true
+          volumes:
+            - name: orchestrator-script
+              configMap:
+                name: registry-gc-orchestrator-script

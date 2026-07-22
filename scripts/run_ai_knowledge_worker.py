@@ -3,7 +3,8 @@ import asyncio
 import os
 
 from src.db.database import get_async_session
-from src.modules.ai.knowledge import KnowledgeEmbedder, build_knowledge_embedder, run_knowledge_index_job_once
+from src.modules.ai.embeddings import KnowledgeEmbedder, build_knowledge_embedder
+from src.modules.ai.knowledge import run_knowledge_index_job_once
 
 
 def _env_int(name: str, default: int) -> int:
