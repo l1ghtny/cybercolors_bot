@@ -74,11 +74,18 @@ async def send_bot_message(
     sender: DiscordSender = create_channel_message,
     channel_fetcher: ChannelFetcher = fetch_channel,
     message_fetcher: MessageFetcher = fetch_channel_message,
+    attachments: list[tuple[str, bytes, str]] | None = None,
 ) -> BotMessageAuditReadModel:
     if source not in {"dashboard", "discord_context"}:
         raise ValueError(f"Unsupported bot message source: {source}")
 
     await _assert_public_responses_enabled(session, server_id)
+    attachments = attachments or []
+    if not body.content.strip() and not attachments:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Add message text or at least one image",
+        )
     channel_id = int(body.channel_id)
     channel = await channel_fetcher(server_id, channel_id)
     if channel is None or int(channel.get("type", -1)) not in TEXT_CHANNEL_TYPES:
@@ -92,6 +99,11 @@ async def send_bot_message(
         await message_fetcher(channel_id, reply_to_message_id)
 
     await _ensure_actor_exists(session, actor_user_id)
+    audit_content = body.content
+    if attachments:
+        attachment_summary = ", ".join(filename for filename, _, _ in attachments)
+        audit_content = f"{body.content}\n\n[Attachments: {attachment_summary}]".strip()
+
     audit = BotMessageAuditEvent(
         server_id=server_id,
         channel_id=channel_id,
@@ -99,19 +111,24 @@ async def send_bot_message(
         actor_user_id=actor_user_id,
         source=source,
         status="pending",
-        content=body.content,
+        content=audit_content,
     )
     session.add(audit)
     await session.commit()
 
     try:
-        discord_message = await sender(
-            channel_id=channel_id,
-            content=body.content,
-            reply_to_message_id=reply_to_message_id,
-            notify_replied_user=(
+        sender_kwargs = {
+            "channel_id": channel_id,
+            "content": body.content or None,
+            "reply_to_message_id": reply_to_message_id,
+            "notify_replied_user": (
                 body.notify_replied_user if reply_to_message_id is not None else False
             ),
+        }
+        if attachments:
+            sender_kwargs["files"] = attachments
+        discord_message = await sender(
+            **sender_kwargs,
         )
         raw_message_id = discord_message.get("id")
         if raw_message_id is None or not str(raw_message_id).isdigit():

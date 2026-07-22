@@ -117,6 +117,35 @@ def test_create_channel_message_can_notify_replied_to_author():
     }
 
 
+def test_create_channel_message_uses_multipart_for_media(monkeypatch):
+    captured: list[dict] = []
+
+    async def fake_discord_post_multipart(path: str, payload: dict, files: list[tuple[str, bytes, str]]):
+        captured.append({"path": path, "payload": payload, "files": files})
+        return {"id": "media-message"}
+
+    monkeypatch.setattr(discord_guilds, "_discord_post_multipart", fake_discord_post_multipart)
+    result = asyncio.run(
+        discord_guilds.create_channel_message(
+            channel_id=123,
+            content="Announcement",
+            files=[("banner.png", b"png-data", "image/png")],
+        )
+    )
+
+    assert result == {"id": "media-message"}
+    assert captured == [
+        {
+            "path": "/channels/123/messages",
+            "payload": {
+                "allowed_mentions": {"parse": [], "replied_user": False},
+                "content": "Announcement",
+            },
+            "files": [("banner.png", b"png-data", "image/png")],
+        }
+    ]
+
+
 async def _overwrite_rate_limit_scenario(monkeypatch) -> None:
     calls: list[tuple[str, dict]] = []
     sleeps: list[float] = []

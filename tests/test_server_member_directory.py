@@ -196,3 +196,19 @@ def test_query_server_members_respects_configured_role_order(monkeypatch):
     )
 
     assert [item.user_id for item in page.items] == ["2", "1"]
+
+
+def test_list_server_emojis_sorts_available_items_by_name(monkeypatch):
+    async def fake_emojis(server_id: int):
+        assert server_id == 123
+        return [
+            {"id": "2", "name": "zeta", "animated": True, "available": False},
+            {"id": "1", "name": "Alpha", "animated": False, "available": True},
+        ]
+
+    monkeypatch.setattr(server_directory, "fetch_guild_emojis", fake_emojis)
+    emojis = asyncio.run(server_directory.list_server_emojis(123))
+
+    assert [emoji.id for emoji in emojis] == ["1", "2"]
+    assert emojis[0].name == "Alpha"
+    assert emojis[1].animated is True

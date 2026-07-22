@@ -39,6 +39,8 @@ async def _send_scenario(
     sender_error: Exception | None = None,
     session: FakeSession | None = None,
     notify_replied_user: bool = False,
+    content: str = "Hello from Modral",
+    attachments: list[tuple[str, bytes, str]] | None = None,
 ):
     session = session or FakeSession(paused=paused)
     sender_calls: list[dict] = []
@@ -61,7 +63,7 @@ async def _send_scenario(
         actor_user_id=456,
         body=BotMessageCreateModel(
             channel_id="789",
-            content="Hello from Modral",
+            content=content,
             reply_to_message_id="654",
             notify_replied_user=notify_replied_user,
         ),
@@ -69,6 +71,7 @@ async def _send_scenario(
         sender=sender,
         channel_fetcher=channel_fetcher,
         message_fetcher=message_fetcher,
+        attachments=attachments,
     )
     return session, sender_calls, result
 
@@ -99,6 +102,21 @@ def test_send_bot_message_can_notify_replied_user():
     assert sender_calls[0]["notify_replied_user"] is True
 
 
+def test_send_bot_message_can_send_image_without_text():
+    session, sender_calls, result = asyncio.run(
+        _send_scenario(
+            content="",
+            attachments=[("announcement.gif", b"gif-data", "image/gif")],
+        )
+    )
+
+    assert sender_calls[0]["content"] is None
+    assert sender_calls[0]["files"] == [("announcement.gif", b"gif-data", "image/gif")]
+    audit = next(item for item in session.added if isinstance(item, BotMessageAuditEvent))
+    assert audit.content == "[Attachments: announcement.gif]"
+    assert result.status == "sent"
+
+
 def test_send_bot_message_records_discord_failure():
     error = HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Missing Access")
     session = FakeSession()
@@ -121,8 +139,18 @@ def test_send_bot_message_honors_public_response_pause():
 
 def test_bot_message_payload_rejects_blank_or_overlong_content():
     assert BotMessageCreateModel(channel_id="123", content="Safe default").notify_replied_user is False
-    with pytest.raises(ValueError):
-        BotMessageCreateModel(channel_id="123", content="   ")
+    blank_body = BotMessageCreateModel(channel_id="123", content="   ")
+    with pytest.raises(HTTPException) as raised:
+        asyncio.run(
+            send_bot_message(
+                FakeSession(),
+                server_id=123,
+                actor_user_id=456,
+                body=blank_body,
+                source="dashboard",
+            )
+        )
+    assert raised.value.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
     with pytest.raises(ValueError):
         BotMessageCreateModel(channel_id="123", content="x" * 2001)
 
@@ -142,3 +170,4 @@ def test_bot_message_routes_require_explicit_permissions():
     path = "/servers/{server_id}/bot-messages"
     assert _route_permissions(path, "POST") == {"communications.send_as_bot"}
     assert _route_permissions(path, "GET") == {"audit.timeline.view"}
+    assert _route_permissions(f"{path}/media", "POST") == {"communications.send_as_bot"}

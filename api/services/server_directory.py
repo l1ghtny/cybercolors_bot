@@ -9,6 +9,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.models.server_directory import (
     ServerChannelModel,
+    ServerEmojiModel,
     ServerMemberPageModel,
     ServerMetadataModel,
     ServerRoleModel,
@@ -18,6 +19,7 @@ from api.services.discord_guilds import (
     TEXT_CHANNEL_TYPES,
     fetch_channel,
     fetch_guild_channels,
+    fetch_guild_emojis,
     fetch_guild_metadata,
     fetch_guild_roles,
     fetch_all_guild_members,
@@ -382,4 +384,21 @@ async def list_server_roles(server_id: int) -> list[ServerRoleModel]:
         for role in roles
     ]
     payload.sort(key=lambda r: r.position, reverse=True)
+    return payload
+
+
+async def list_server_emojis(server_id: int) -> list[ServerEmojiModel]:
+    emojis = await fetch_guild_emojis(server_id)
+    payload = [
+        ServerEmojiModel(
+            id=str(emoji["id"]),
+            name=str(emoji.get("name") or emoji["id"]),
+            animated=bool(emoji.get("animated", False)),
+            available=bool(emoji.get("available", True)),
+            managed=bool(emoji.get("managed", False)),
+        )
+        for emoji in emojis
+        if emoji.get("id") is not None
+    ]
+    payload.sort(key=lambda emoji: (not emoji.available, emoji.name.casefold(), emoji.id))
     return payload

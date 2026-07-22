@@ -2,21 +2,14 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 
 class BotMessageCreateModel(BaseModel):
     channel_id: str = Field(pattern=r"^\d+$")
-    content: str = Field(min_length=1, max_length=2000)
+    content: str = Field(default="", max_length=2000)
     reply_to_message_id: str | None = Field(default=None, pattern=r"^\d+$")
     notify_replied_user: bool = False
-
-    @field_validator("content")
-    @classmethod
-    def content_must_not_be_blank(cls, value: str) -> str:
-        if not value.strip():
-            raise ValueError("Message content cannot be blank")
-        return value
 
 
 class BotMessageAuditReadModel(BaseModel):

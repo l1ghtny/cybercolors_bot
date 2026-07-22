@@ -21,6 +21,7 @@ from api.services.dashboard_access_service import (
 from api.models.server_overview import ServerOverviewModel, ServerTimelineModel
 from api.models.server_directory import (
     ServerChannelModel,
+    ServerEmojiModel,
     ServerMetadataModel,
     ServerRoleModel,
     ServerMemberPageModel,
@@ -33,6 +34,7 @@ from api.services.server_directory import (
     build_server_metadata,
     get_server_channel_payload,
     list_server_channels,
+    list_server_emojis,
     list_server_roles,
     lookup_server_users_by_ids,
     query_server_members,
@@ -89,6 +91,15 @@ async def get_server_channels(
     text_only: bool = Query(default=True),
 ):
     return await list_server_channels(server_id, text_only=text_only)
+
+
+@servers.get(
+    "/{server_id}/emojis",
+    response_model=list[ServerEmojiModel],
+    dependencies=[Depends(require_server_dashboard_access)],
+)
+async def get_server_emojis(server_id: int):
+    return await list_server_emojis(server_id)
 
 
 @servers.get("/{server_id}/channels/{channel_id}", response_model=ServerChannelModel, dependencies=[Depends(require_server_dashboard_access)])

@@ -20,6 +20,14 @@ class ServerRoleModel(BaseModel):
     permissions: str = "0"
 
 
+class ServerEmojiModel(BaseModel):
+    id: str
+    name: str
+    animated: bool = False
+    available: bool = True
+    managed: bool = False
+
+
 class ServerUserModel(BaseModel):
     user_id: str
     display_name: str

@@ -57,6 +57,31 @@ async def _discord_post(path: str, payload: dict) -> list[dict] | dict:
     return response.json()
 
 
+async def _discord_post_multipart(
+    path: str,
+    payload: dict,
+    files: list[tuple[str, bytes, str]],
+) -> list[dict] | dict:
+    headers = {"Authorization": f"Bot {_get_bot_token()}"}
+    multipart_files = [
+        (f"files[{index}]", (filename, data, content_type))
+        for index, (filename, data, content_type) in enumerate(files)
+    ]
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"{DISCORD_API_BASE_URL}{path}",
+            headers=headers,
+            data={"payload_json": json.dumps(payload)},
+            files=multipart_files,
+        )
+    if response.status_code >= 400:
+        raise HTTPException(
+            status_code=response.status_code,
+            detail=f"Discord API error: {response.text}",
+        )
+    return response.json()
+
+
 
 async def _discord_put(path: str, payload: dict | None = None) -> list[dict] | dict:
     headers = {"Authorization": f"Bot {_get_bot_token()}"}
@@ -123,6 +148,13 @@ async def fetch_guild_roles(server_id: int) -> list[dict]:
     roles = await _discord_get(f"/guilds/{server_id}/roles")
     if isinstance(roles, list):
         return roles
+    return []
+
+
+async def fetch_guild_emojis(server_id: int) -> list[dict]:
+    emojis = await _discord_get(f"/guilds/{server_id}/emojis")
+    if isinstance(emojis, list):
+        return emojis
     return []
 
 
@@ -346,6 +378,7 @@ async def create_channel_message(
     components: list[dict] | None = None,
     reply_to_message_id: int | None = None,
     notify_replied_user: bool = False,
+    files: list[tuple[str, bytes, str]] | None = None,
 ) -> dict:
     message_payload: dict = {
         "allowed_mentions": {
@@ -365,10 +398,17 @@ async def create_channel_message(
             "fail_if_not_exists": True,
         }
 
-    payload = await _discord_post(
-        f"/channels/{channel_id}/messages",
-        message_payload,
-    )
+    if files:
+        payload = await _discord_post_multipart(
+            f"/channels/{channel_id}/messages",
+            message_payload,
+            files,
+        )
+    else:
+        payload = await _discord_post(
+            f"/channels/{channel_id}/messages",
+            message_payload,
+        )
     if isinstance(payload, dict):
         return payload
     return {}
