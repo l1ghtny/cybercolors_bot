@@ -53,6 +53,7 @@ class ServerAISettingsReadModel(BaseModel):
     moderation_provider_timeout_seconds: int = Field(default=20, ge=1, le=120)
     answer_persona: str | None = Field(default=None, max_length=1200)
     server_brief: str | None = Field(default=None, max_length=600)
+    knowledge_subject_priority_role_ids: list[str] = Field(default_factory=list)
     updated_at: datetime
     permissions: ServerAISettingsPermissionsModel = Field(default_factory=ServerAISettingsPermissionsModel)
 
@@ -77,6 +78,7 @@ class ServerAISettingsUpdateModel(BaseModel):
     moderation_provider_timeout_seconds: int | None = Field(default=None, ge=1, le=120)
     answer_persona: str | None = Field(default=None, max_length=1200)
     server_brief: str | None = Field(default=None, max_length=600)
+    knowledge_subject_priority_role_ids: list[str] | None = None
 
     @field_validator("answer_allowed_channel_ids")
     @classmethod
@@ -87,6 +89,11 @@ class ServerAISettingsUpdateModel(BaseModel):
     @classmethod
     def validate_answer_role_ids(cls, value: list[str] | None) -> list[str] | None:
         return _normalize_discord_ids(value, "answer_allowed_role_ids")
+
+    @field_validator("knowledge_subject_priority_role_ids")
+    @classmethod
+    def validate_knowledge_priority_role_ids(cls, value: list[str] | None) -> list[str] | None:
+        return _normalize_discord_ids(value, "knowledge_subject_priority_role_ids")
 
     @field_validator("moderation_included_channel_ids")
     @classmethod

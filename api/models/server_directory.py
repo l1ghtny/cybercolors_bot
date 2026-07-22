@@ -17,6 +17,7 @@ class ServerRoleModel(BaseModel):
     color: int
     position: int
     managed: bool
+    permissions: str = "0"
 
 
 class ServerUserModel(BaseModel):
@@ -29,6 +30,8 @@ class ServerUserModel(BaseModel):
     role_ids: list[str] = Field(default_factory=list)
     joined_at: str | None = None
     is_bot: bool = False
+    is_owner: bool = False
+    priority_role_id: str | None = None
 
 
 class ServerMemberPageModel(BaseModel):

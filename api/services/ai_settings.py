@@ -76,6 +76,7 @@ def to_server_ai_settings_read_model(settings: ServerAISettings) -> ServerAISett
         moderation_provider_timeout_seconds=settings.moderation_provider_timeout_seconds,
         answer_persona=settings.answer_persona,
         server_brief=settings.server_brief,
+        knowledge_subject_priority_role_ids=list(settings.knowledge_subject_priority_role_ids or []),
         updated_at=settings.updated_at,
     )
 
@@ -131,6 +132,8 @@ async def update_server_ai_settings(
         settings.answer_persona = body.answer_persona
     if "server_brief" in body.model_fields_set:
         settings.server_brief = body.server_brief
+    if body.knowledge_subject_priority_role_ids is not None:
+        settings.knowledge_subject_priority_role_ids = body.knowledge_subject_priority_role_ids
 
     _validate_selected_mode(
         settings.answer_channel_mode,

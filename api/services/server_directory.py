@@ -56,6 +56,16 @@ _MEMBER_DIRECTORY_CACHE_SECONDS = max(
 _member_directory_cache: dict[int, _GuildMembersCacheEntry] = {}
 _member_directory_locks: dict[int, asyncio.Lock] = {}
 
+_ADMINISTRATOR_PERMISSION = 1 << 3
+_MODERATOR_PERMISSIONS = (
+    (1 << 1)  # Kick members
+    | (1 << 2)  # Ban members
+    | (1 << 5)  # Manage guild
+    | (1 << 13)  # Manage messages
+    | (1 << 28)  # Manage roles
+    | (1 << 40)  # Moderate members
+)
+
 
 async def _cached_guild_members(server_id: int) -> list[dict]:
     now = time.monotonic()
@@ -108,6 +118,7 @@ async def query_server_members(
     search: str | None = None,
     role_ids: list[int] | None = None,
     sort: str = "name_asc",
+    priority_role_ids: list[int] | None = None,
     offset: int = 0,
     limit: int = 50,
 ) -> ServerMemberPageModel:
@@ -136,7 +147,65 @@ async def query_server_members(
             if selected_role_ids.intersection(member.role_ids)
         ]
 
-    if sort == "name_desc":
+    if sort == "staff_first":
+        metadata_result, roles_result = await asyncio.gather(
+            fetch_guild_metadata(server_id),
+            fetch_guild_roles(server_id),
+            return_exceptions=True,
+        )
+        metadata = metadata_result if isinstance(metadata_result, dict) else {}
+        raw_roles = roles_result if isinstance(roles_result, list) else []
+        roles_by_id = {str(role.get("id")): role for role in raw_roles if role.get("id") is not None}
+        configured_role_ids = [str(role_id) for role_id in (priority_role_ids or [])]
+        owner_id = str(metadata.get("owner_id")) if metadata.get("owner_id") is not None else None
+
+        def staff_priority(member: ServerUserModel) -> tuple[int, int, str, str]:
+            member_role_ids = set(member.role_ids)
+            if owner_id is not None and member.user_id == owner_id:
+                member.is_owner = True
+                return (0, 0, member.display_name.casefold(), member.user_id)
+
+            if configured_role_ids:
+                for index, role_id in enumerate(configured_role_ids):
+                    if role_id in member_role_ids:
+                        member.priority_role_id = role_id
+                        position = int(roles_by_id.get(role_id, {}).get("position") or 0)
+                        return (index + 1, -position, member.display_name.casefold(), member.user_id)
+                return (
+                    len(configured_role_ids) + 1,
+                    0,
+                    member.display_name.casefold(),
+                    member.user_id,
+                )
+
+            best_admin_role: tuple[int, str] | None = None
+            best_moderator_role: tuple[int, str] | None = None
+            for role_id in member_role_ids:
+                role = roles_by_id.get(role_id)
+                if role is None or bool(role.get("managed", False)):
+                    continue
+                try:
+                    permissions = int(role.get("permissions") or 0)
+                except (TypeError, ValueError):
+                    permissions = 0
+                position = int(role.get("position") or 0)
+                if permissions & _ADMINISTRATOR_PERMISSION:
+                    if best_admin_role is None or position > best_admin_role[0]:
+                        best_admin_role = (position, role_id)
+                elif permissions & _MODERATOR_PERMISSIONS:
+                    if best_moderator_role is None or position > best_moderator_role[0]:
+                        best_moderator_role = (position, role_id)
+
+            if best_admin_role is not None:
+                member.priority_role_id = best_admin_role[1]
+                return (1, -best_admin_role[0], member.display_name.casefold(), member.user_id)
+            if best_moderator_role is not None:
+                member.priority_role_id = best_moderator_role[1]
+                return (2, -best_moderator_role[0], member.display_name.casefold(), member.user_id)
+            return (3, 1 if member.is_bot else 0, member.display_name.casefold(), member.user_id)
+
+        members.sort(key=staff_priority)
+    elif sort == "name_desc":
         members.sort(
             key=lambda member: (member.display_name.casefold(), member.user_id),
             reverse=True,
@@ -308,6 +377,7 @@ async def list_server_roles(server_id: int) -> list[ServerRoleModel]:
             color=int(role.get("color", 0)),
             position=int(role.get("position", 0)),
             managed=bool(role.get("managed", False)),
+            permissions=str(role.get("permissions") or "0"),
         )
         for role in roles
     ]

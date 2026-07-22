@@ -16,12 +16,14 @@ def test_ai_settings_update_normalizes_ids_and_deduplicates():
         answer_allowed_role_ids=["777", "777", "888"],
         moderation_included_channel_ids=["999", " 111 "],
         moderation_excluded_channel_ids=["222", "999", "222"],
+        knowledge_subject_priority_role_ids=["555", " 666 ", "555"],
     )
 
     assert body.answer_allowed_channel_ids == ["123", "456"]
     assert body.answer_allowed_role_ids == ["777", "888"]
     assert body.moderation_included_channel_ids == ["999", "111"]
     assert body.moderation_excluded_channel_ids == ["222", "999"]
+    assert body.knowledge_subject_priority_role_ids == ["555", "666"]
 
 
 def test_ai_settings_update_rejects_invalid_ids():
@@ -72,6 +74,7 @@ def test_ai_settings_read_model_defaults_to_read_only_permission():
     assert payload.moderation_kill_switch_enabled is False
     assert payload.moderation_daily_token_limit is None
     assert payload.moderation_provider_timeout_seconds == 20
+    assert payload.knowledge_subject_priority_role_ids == []
 
 
 def test_ai_settings_read_model_includes_review_channel():

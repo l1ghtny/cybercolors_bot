@@ -408,6 +408,10 @@ class ServerAISettings(SQLModel, table=True):
     moderation_provider_timeout_seconds: int = Field(default=20, nullable=False)
     answer_persona: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     server_brief: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    knowledge_subject_priority_role_ids: list[str] = Field(
+        default_factory=list,
+        sa_column=Column(sa.JSON, nullable=False),
+    )
     updated_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
 
     server: Server = Relationship(back_populates="ai_settings")

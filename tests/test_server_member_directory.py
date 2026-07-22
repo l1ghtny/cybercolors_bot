@@ -131,3 +131,68 @@ def test_query_server_members_sorts_by_name_and_join_date(monkeypatch):
     assert [item.user_id for item in name_desc.items] == ["1", "3", "2"]
     assert [item.user_id for item in joined_newest.items] == ["2", "1", "3"]
     assert [item.user_id for item in joined_oldest.items] == ["1", "2", "3"]
+
+
+def test_query_server_members_sorts_owner_and_staff_first(monkeypatch):
+    members = [
+        _member(1, username="regular"),
+        _member(2, username="moderator", roles=[20]),
+        _member(3, username="owner"),
+        _member(4, username="admin", roles=[10]),
+    ]
+
+    async def fake_cached_members(server_id: int):
+        return members
+
+    async def fake_metadata(server_id: int):
+        return {"owner_id": "3"}
+
+    async def fake_roles(server_id: int):
+        return [
+            {"id": "10", "name": "Admin", "position": 10, "permissions": str(1 << 3), "managed": False},
+            {"id": "20", "name": "Moderator", "position": 5, "permissions": str(1 << 40), "managed": False},
+        ]
+
+    monkeypatch.setattr(server_directory, "_cached_guild_members", fake_cached_members)
+    monkeypatch.setattr(server_directory, "fetch_guild_metadata", fake_metadata)
+    monkeypatch.setattr(server_directory, "fetch_guild_roles", fake_roles)
+
+    page = asyncio.run(server_directory.query_server_members(123, sort="staff_first"))
+
+    assert [item.user_id for item in page.items] == ["3", "4", "2", "1"]
+    assert page.items[0].is_owner is True
+    assert page.items[1].priority_role_id == "10"
+    assert page.items[2].priority_role_id == "20"
+
+
+def test_query_server_members_respects_configured_role_order(monkeypatch):
+    members = [
+        _member(1, username="first-role", roles=[10]),
+        _member(2, username="second-role", roles=[20]),
+    ]
+
+    async def fake_cached_members(server_id: int):
+        return members
+
+    async def fake_metadata(server_id: int):
+        return {}
+
+    async def fake_roles(server_id: int):
+        return [
+            {"id": "10", "name": "First", "position": 10, "permissions": "0", "managed": False},
+            {"id": "20", "name": "Second", "position": 5, "permissions": "0", "managed": False},
+        ]
+
+    monkeypatch.setattr(server_directory, "_cached_guild_members", fake_cached_members)
+    monkeypatch.setattr(server_directory, "fetch_guild_metadata", fake_metadata)
+    monkeypatch.setattr(server_directory, "fetch_guild_roles", fake_roles)
+
+    page = asyncio.run(
+        server_directory.query_server_members(
+            123,
+            sort="staff_first",
+            priority_role_ids=[20, 10],
+        )
+    )
+
+    assert [item.user_id for item in page.items] == ["2", "1"]
