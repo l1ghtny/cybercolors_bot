@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import math
+import os
 import re
 from datetime import timedelta
 from typing import Any
@@ -31,6 +32,21 @@ KNOWLEDGE_JOB_MAX_ATTEMPTS = 3
 READY_SOURCE_STATUSES = {"ready"}
 PUBLIC_ANSWER_VISIBILITIES = {"public_answer"}
 ACTIVE_JOB_STATUSES = {"pending", "running"}
+DEFAULT_KNOWLEDGE_MIN_RELEVANCE_SCORE = 0.45
+
+
+def _env_relevance_score(name: str, default: float) -> float:
+    raw_value = os.getenv(name)
+    value = default if raw_value is None or not raw_value.strip() else float(raw_value)
+    if not math.isfinite(value) or not 0.0 <= value <= 1.0:
+        raise ValueError(f"{name} must be between 0 and 1")
+    return value
+
+
+KNOWLEDGE_MIN_RELEVANCE_SCORE = _env_relevance_score(
+    "AI_KNOWLEDGE_MIN_RELEVANCE_SCORE",
+    DEFAULT_KNOWLEDGE_MIN_RELEVANCE_SCORE,
+)
 
 _WORD_RE = re.compile(r"\S+")
 
@@ -366,6 +382,7 @@ async def search_server_knowledge(
     visibility: str = "public_answer",
     limit: int = 5,
     embedder: KnowledgeEmbedder | None = None,
+    min_score: float | None = None,
 ) -> list[dict[str, Any]]:
     normalized_query = normalize_knowledge_text(query)
     if not normalized_query:
@@ -376,6 +393,11 @@ async def search_server_knowledge(
     query_embedding = (await active_embedder.embed_texts([normalized_query]))[0]
     query_vector = vector_literal(query_embedding)
     bounded_limit = min(max(int(limit), 1), 20)
+    effective_min_score = (
+        KNOWLEDGE_MIN_RELEVANCE_SCORE if min_score is None else float(min_score)
+    )
+    if not math.isfinite(effective_min_score) or not 0.0 <= effective_min_score <= 1.0:
+        raise ValueError("min_score must be between 0 and 1")
     statement = text(
         """
         SELECT
@@ -422,6 +444,9 @@ async def search_server_knowledge(
     results: list[dict[str, Any]] = []
     for row in rows:
         distance = float(row.distance)
+        score = 1 - distance
+        if score < effective_min_score:
+            continue
         results.append(
             {
                 "source_id": str(row.source_id),
@@ -433,7 +458,7 @@ async def search_server_knowledge(
                 "chunk_id": str(row.chunk_id),
                 "chunk_ordinal": row.chunk_ordinal,
                 "text": row.chunk_text,
-                "score": 1 - distance,
+                "score": score,
                 "distance": distance,
                 "source_url": row.source_url,
                 "indexed_at": row.indexed_at.isoformat() if row.indexed_at else None,

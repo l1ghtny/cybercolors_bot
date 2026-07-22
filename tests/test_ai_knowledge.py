@@ -1,6 +1,7 @@
 import asyncio
 import shutil
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import UUID
 from uuid import uuid4
 
@@ -114,6 +115,70 @@ def test_build_knowledge_chunks_normalizes_text_and_hashes_chunks():
     assert "\n" not in chunks[0]["chunk_text"]
     assert len(chunks[0]["text_hash"]) == 64
     assert chunks[0]["token_count"] > 0
+
+
+def test_knowledge_search_filters_results_below_the_relevance_threshold():
+    class FakeResult:
+        def all(self):
+            return [
+                SimpleNamespace(
+                    source_id="source-denis",
+                    source_type="text",
+                    subject_type="server",
+                    subject_user_id=None,
+                    title="Денис Бэйлин",
+                    visibility="public_answer",
+                    chunk_id="chunk-denis",
+                    chunk_ordinal=0,
+                    chunk_text="Денис Бэйлин — администратор сервера.",
+                    source_url=None,
+                    indexed_at=None,
+                    distance=0.482,
+                ),
+                SimpleNamespace(
+                    source_id="source-neyt",
+                    source_type="text",
+                    subject_type="server",
+                    subject_user_id=None,
+                    title="Кто такой Neyt",
+                    visibility="public_answer",
+                    chunk_id="chunk-neyt",
+                    chunk_ordinal=0,
+                    chunk_text="Neyt — модератор сервера.",
+                    source_url=None,
+                    indexed_at=None,
+                    distance=0.621,
+                ),
+            ]
+
+    class FakeSession:
+        async def exec(self, *_args, **_kwargs):
+            return FakeResult()
+
+    results = asyncio.run(
+        search_server_knowledge(
+            FakeSession(),
+            server_id=123,
+            query="Денис",
+            limit=5,
+            embedder=FakeKnowledgeEmbedder(),
+            min_score=0.45,
+        )
+    )
+    all_weak_results = asyncio.run(
+        search_server_knowledge(
+            FakeSession(),
+            server_id=123,
+            query="unrelated query",
+            limit=5,
+            embedder=FakeKnowledgeEmbedder(),
+            min_score=0.6,
+        )
+    )
+
+    assert [result["title"] for result in results] == ["Денис Бэйлин"]
+    assert results[0]["score"] == 0.518
+    assert all_weak_results == []
 
 
 def test_knowledge_source_index_text_includes_title_for_retrieval():
