@@ -408,6 +408,7 @@ async def search_server_knowledge(
     limit: int = 5,
     embedder: KnowledgeEmbedder | None = None,
     min_score: float | None = None,
+    source_id: str | None = None,
 ) -> list[dict[str, Any]]:
     normalized_query = normalize_knowledge_text(query)
     if not normalized_query:
@@ -423,8 +424,9 @@ async def search_server_knowledge(
     )
     if not math.isfinite(effective_min_score) or not 0.0 <= effective_min_score <= 1.0:
         raise ValueError("min_score must be between 0 and 1")
+    source_filter = "AND source.id = CAST(:source_id AS uuid)" if source_id else ""
     statement = text(
-        """
+        f"""
         SELECT
             chunk.id AS chunk_id,
             chunk.source_id AS source_id,
@@ -446,6 +448,7 @@ async def search_server_knowledge(
           AND source.visibility IN :visibility_values
           AND source.deleted_at IS NULL
           AND chunk.embedding IS NOT NULL
+          {source_filter}
         ORDER BY chunk.embedding <=> CAST(:query_embedding AS vector)
         LIMIT :limit
         """
@@ -453,16 +456,19 @@ async def search_server_knowledge(
         bindparam("ready_statuses", expanding=True),
         bindparam("visibility_values", expanding=True),
     )
+    params: dict[str, Any] = {
+        "server_id": server_id,
+        "ready_statuses": list(READY_SOURCE_STATUSES),
+        "visibility_values": list(visibility_set),
+        "query_embedding": query_vector,
+        "limit": bounded_limit,
+    }
+    if source_id:
+        params["source_id"] = source_id
     rows = (
         await session.exec(
             statement,
-            params={
-                "server_id": server_id,
-                "ready_statuses": list(READY_SOURCE_STATUSES),
-                "visibility_values": list(visibility_set),
-                "query_embedding": query_vector,
-                "limit": bounded_limit,
-            },
+            params=params,
         )
     ).all()
 

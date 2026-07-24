@@ -274,5 +274,5 @@ def _parse_provider_datetime(value: str | None) -> datetime | None:
     except ValueError:
         return None
     if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+        return parsed
+    return parsed.astimezone(timezone.utc).replace(tzinfo=None)

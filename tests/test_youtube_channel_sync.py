@@ -112,7 +112,8 @@ def test_initial_channel_sync_catalogues_and_links_without_auto_indexing():
     assert succeeded is True
     assert len(catalogued) == 1
     assert catalogued[0].knowledge_source_id == source.id
-    assert catalogued[0].published_at.isoformat() == "2026-07-20T12:00:00+00:00"
+    assert catalogued[0].published_at.isoformat() == "2026-07-20T12:00:00"
+    assert catalogued[0].published_at.tzinfo is None
     assert created_sources == []
     assert subscription.status == "enabled"
     assert subscription.last_synced_at is not None

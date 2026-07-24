@@ -218,6 +218,7 @@ def test_default_tool_registry_exposes_server_knowledge_search():
     assert "search_server_knowledge" in specs
     assert specs["search_server_knowledge"]["requires_admin_context"] is False
     assert "approved public server/admin knowledge" in specs["search_server_knowledge"]["description"]
+    assert "source_id" in specs["search_server_knowledge"]["parameters"]["properties"]
 
 
 def test_build_knowledge_embedder_reuses_the_loaded_local_model(monkeypatch):
