@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import logging
 import math
 import os
 import re
@@ -25,6 +26,9 @@ from src.modules.ai.embeddings import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 KNOWLEDGE_CHUNK_TARGET_TOKENS = 350
 KNOWLEDGE_CHUNK_MAX_TOKENS = 450
 KNOWLEDGE_CHUNK_OVERLAP_WORDS = 45
@@ -32,6 +36,12 @@ KNOWLEDGE_JOB_MAX_ATTEMPTS = 3
 READY_SOURCE_STATUSES = {"ready"}
 PUBLIC_ANSWER_VISIBILITIES = {"public_answer"}
 ACTIVE_JOB_STATUSES = {"pending", "running"}
+RETRYABLE_KNOWLEDGE_IMPORT_ERRORS = {
+    "youtube_access_challenge",
+    "youtube_fetch_failed",
+    "youtube_audio_download_failed",
+    "modal_transcription_failed",
+}
 DEFAULT_KNOWLEDGE_MIN_RELEVANCE_SCORE = 0.45
 
 
@@ -261,12 +271,21 @@ async def process_knowledge_index_job_with_embedder(
     try:
         index_text = await _prepare_source_index_text(source)
     except KnowledgeImportError as exc:
-        source.status = "failed"
+        retry = exc.code in RETRYABLE_KNOWLEDGE_IMPORT_ERRORS
         source.error_code = exc.code
         source.error_message = str(exc)
         source.indexed_at = None
         source.updated_at = now
-        await _mark_job_failed(session, job, str(exc), retry=False)
+        logger.exception(
+            "knowledge_import_failed server_id=%s source_id=%s job_id=%s error_code=%s retry=%s",
+            source.server_id,
+            source.id,
+            job.id,
+            exc.code,
+            retry,
+        )
+        await _mark_job_failed(session, job, str(exc), retry=retry)
+        source.status = "queued" if job.status == "pending" else "failed"
         await session.flush()
         return
 
@@ -332,6 +351,12 @@ async def run_knowledge_index_job_once(
         else:
             await process_knowledge_index_job_with_embedder(session, job, embedder=embedder)
     except Exception as exc:
+        logger.exception(
+            "knowledge_index_job_failed server_id=%s source_id=%s job_id=%s",
+            job.server_id,
+            job.source_id,
+            job.id,
+        )
         await _mark_job_failed(session, job, str(exc))
     return True
 

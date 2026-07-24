@@ -5,7 +5,7 @@ from datetime import date, datetime, UTC, timezone
 
 import sqlalchemy as sa
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import BigInteger, Column, ForeignKey, JSON, String, TIMESTAMP, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Column, ForeignKey, Index, JSON, String, TIMESTAMP, Text, UniqueConstraint
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -75,6 +75,8 @@ class Server(SQLModel, table=True):
     ai_knowledge_sources: List["AIKnowledgeSource"] = Relationship(back_populates="server")
     ai_knowledge_chunks: List["AIKnowledgeChunk"] = Relationship(back_populates="server")
     ai_knowledge_index_jobs: List["AIKnowledgeIndexJob"] = Relationship(back_populates="server")
+    youtube_channel_subscriptions: List["YouTubeChannelSubscription"] = Relationship(back_populates="server")
+    youtube_channel_videos: List["YouTubeChannelVideo"] = Relationship(back_populates="server")
     security_settings: Optional["ServerSecuritySettings"] = Relationship(
         back_populates="server",
         sa_relationship_kwargs={"uselist": False},
@@ -519,6 +521,123 @@ class AIKnowledgeSource(SQLModel, table=True):
     )
     chunks: List["AIKnowledgeChunk"] = Relationship(back_populates="source")
     index_jobs: List["AIKnowledgeIndexJob"] = Relationship(back_populates="source")
+    youtube_channel_video: Optional["YouTubeChannelVideo"] = Relationship(
+        back_populates="knowledge_source",
+        sa_relationship_kwargs={"uselist": False},
+    )
+
+
+class YouTubeChannelSubscription(SQLModel, table=True):
+    __tablename__ = "youtube_channel_subscriptions"
+    __table_args__ = (
+        UniqueConstraint(
+            "server_id",
+            "channel_id",
+            name="uq_youtube_channel_subscriptions_server_channel",
+        ),
+    )
+
+    id: Optional[UUID] = uuid7_primary_key_field()
+    server_id: int = Field(
+        sa_column=Column(
+            BigInteger,
+            ForeignKey("servers.server_id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        )
+    )
+    channel_id: str = Field(sa_column=Column(String(length=64), nullable=False))
+    handle: Optional[str] = Field(default=None, sa_column=Column(String(length=100), nullable=True))
+    canonical_url: str = Field(sa_column=Column(Text, nullable=False))
+    title: str = Field(sa_column=Column(String(length=255), nullable=False))
+    description: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    thumbnail_url: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    uploads_playlist_id: str = Field(sa_column=Column(String(length=64), nullable=False))
+    status: str = Field(
+        default="enabled",
+        sa_column=Column(String(length=30), nullable=False, index=True, server_default="enabled"),
+    )
+    auto_index_new_videos: bool = Field(
+        default=False,
+        sa_column=Column(sa.Boolean(), nullable=False, server_default=sa.false()),
+    )
+    last_synced_at: Optional[datetime] = Field(default=None, nullable=True)
+    next_sync_at: Optional[datetime] = Field(default=None, nullable=True, index=True)
+    error_code: Optional[str] = Field(default=None, sa_column=Column(String(length=80), nullable=True))
+    error_message: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    created_by_user_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(
+            BigInteger,
+            ForeignKey("global_users.discord_id", ondelete="SET NULL"),
+            nullable=True,
+        ),
+    )
+    created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+    updated_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+
+    server: Server = Relationship(back_populates="youtube_channel_subscriptions")
+    videos: List["YouTubeChannelVideo"] = Relationship(back_populates="subscription")
+
+
+class YouTubeChannelVideo(SQLModel, table=True):
+    __tablename__ = "youtube_channel_videos"
+    __table_args__ = (
+        UniqueConstraint(
+            "subscription_id",
+            "video_id",
+            name="uq_youtube_channel_videos_subscription_video",
+        ),
+        Index(
+            "uq_youtube_channel_videos_knowledge_source_id",
+            "knowledge_source_id",
+            unique=True,
+            postgresql_where=sa.text("knowledge_source_id IS NOT NULL"),
+        ),
+    )
+
+    id: Optional[UUID] = uuid7_primary_key_field()
+    subscription_id: UUID = Field(
+        sa_column=Column(
+            sa.Uuid(),
+            ForeignKey("youtube_channel_subscriptions.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        )
+    )
+    server_id: int = Field(
+        sa_column=Column(
+            BigInteger,
+            ForeignKey("servers.server_id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        )
+    )
+    video_id: str = Field(sa_column=Column(String(length=32), nullable=False))
+    title: str = Field(sa_column=Column(String(length=500), nullable=False))
+    description: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    published_at: Optional[datetime] = Field(default=None, nullable=True, index=True)
+    duration_seconds: Optional[int] = Field(default=None, nullable=True)
+    thumbnail_url: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    availability: str = Field(
+        default="public",
+        sa_column=Column(String(length=30), nullable=False, server_default="public"),
+    )
+    captions_available: Optional[bool] = Field(default=None, nullable=True)
+    knowledge_source_id: Optional[UUID] = Field(
+        default=None,
+        sa_column=Column(
+            sa.Uuid(),
+            ForeignKey("ai_knowledge_sources.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
+    )
+    discovered_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+    updated_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+
+    subscription: YouTubeChannelSubscription = Relationship(back_populates="videos")
+    server: Server = Relationship(back_populates="youtube_channel_videos")
+    knowledge_source: Optional[AIKnowledgeSource] = Relationship(back_populates="youtube_channel_video")
 
 
 class AIKnowledgeChunk(SQLModel, table=True):

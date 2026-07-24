@@ -18,7 +18,9 @@ from api.models.ai_knowledge import (
 )
 from src.db.models import AIKnowledgeChunk, AIKnowledgeIndexJob, AIKnowledgeSource, GlobalUser, Server, utcnow_utc_tz
 from src.modules.ai.knowledge import queue_knowledge_index_job, run_knowledge_index_job_once, search_server_knowledge
+from src.modules.ai.knowledge_errors import public_knowledge_error
 from src.modules.ai.knowledge_imports import KnowledgeImportError, store_knowledge_upload
+from src.modules.ai.youtube_urls import YouTubeUrlError, normalize_youtube_video_url
 
 
 async def _ensure_server(session: AsyncSession, server_id: int) -> None:
@@ -67,7 +69,7 @@ def _source_to_model(source: AIKnowledgeSource, *, chunk_count: int = 0) -> AIKn
         metadata_json=dict(source.metadata_json or {}),
         created_by_user_id=str(source.created_by_user_id) if source.created_by_user_id is not None else None,
         error_code=source.error_code,
-        error_message=source.error_message,
+        error_message=public_knowledge_error(source.error_code, source.error_message),
         chunk_count=chunk_count,
         created_at=source.created_at,
         updated_at=source.updated_at,
@@ -91,7 +93,11 @@ def _job_to_model(
         attempt_count=job.attempt_count,
         run_after=job.run_after,
         locked_at=job.locked_at,
-        error_message=job.error_message,
+        error_code=source.error_code if source is not None else None,
+        error_message=public_knowledge_error(
+            source.error_code if source is not None else None,
+            job.error_message,
+        ),
         source_title=source.title if source is not None else None,
         source_type=source.source_type if source is not None else None,
         subject_type=source.subject_type if source is not None else None,
@@ -269,6 +275,21 @@ async def update_knowledge_source(
     if source.status == "deleted":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Deleted knowledge sources cannot be updated")
 
+    next_source_type = body.source_type or source.source_type
+    next_source_url = body.source_url if "source_url" in body.model_fields_set else source.source_url
+    if next_source_type == "youtube" and (
+        "source_type" in body.model_fields_set or "source_url" in body.model_fields_set
+    ):
+        try:
+            if not next_source_url:
+                raise YouTubeUrlError("youtube_url_missing", "A YouTube video URL is required.")
+            next_source_url = normalize_youtube_video_url(next_source_url).canonical_url
+        except YouTubeUrlError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": exc.code, "message": str(exc)},
+            ) from exc
+
     if body.source_type is not None:
         source.source_type = body.source_type
         if source.status == "ready":
@@ -296,8 +317,8 @@ async def update_knowledge_source(
         source.content_text = body.content_text
         if source.status == "ready":
             source.status = "draft"
-    if "source_url" in body.model_fields_set:
-        source.source_url = body.source_url
+    if "source_url" in body.model_fields_set or body.source_type == "youtube":
+        source.source_url = next_source_url
     if body.metadata_json is not None:
         source.metadata_json = body.metadata_json
     source.updated_at = utcnow_utc_tz()

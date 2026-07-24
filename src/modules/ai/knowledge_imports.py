@@ -1,11 +1,20 @@
 import hashlib
 import html
+import logging
 import os
 import re
+import shutil
 import tempfile
 import zipfile
+from functools import lru_cache
+from importlib import metadata as importlib_metadata
 from pathlib import Path
 from typing import Any
+
+from src.modules.ai.youtube_urls import YouTubeUrlError, normalize_youtube_video_url
+
+
+logger = logging.getLogger(__name__)
 
 KNOWLEDGE_UPLOAD_ROOT = Path(os.getenv("AI_KNOWLEDGE_UPLOAD_ROOT") or Path("logs") / "ai_knowledge_uploads")
 MAX_KNOWLEDGE_UPLOAD_BYTES = int(os.getenv("AI_KNOWLEDGE_MAX_UPLOAD_BYTES") or str(10 * 1024 * 1024))
@@ -60,6 +69,61 @@ class KnowledgeImportError(RuntimeError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
+
+
+@lru_cache(maxsize=1)
+def youtube_runtime_diagnostics() -> dict[str, str | bool | None]:
+    try:
+        ejs_version = importlib_metadata.version("yt-dlp-ejs")
+    except importlib_metadata.PackageNotFoundError:
+        ejs_version = None
+    try:
+        yt_dlp_version = importlib_metadata.version("yt-dlp")
+    except importlib_metadata.PackageNotFoundError:
+        yt_dlp_version = None
+    return {
+        "yt_dlp_version": yt_dlp_version,
+        "yt_dlp_ejs_version": ejs_version,
+        "deno_available": shutil.which("deno") is not None,
+    }
+
+
+class _YtDlpDiagnosticLogger:
+    def __init__(self, *, video_id: str) -> None:
+        self.video_id = video_id
+
+    def debug(self, message: str) -> None:
+        logger.debug("yt_dlp video_id=%s %s", self.video_id, message)
+
+    def info(self, message: str) -> None:
+        logger.info("yt_dlp video_id=%s %s", self.video_id, message)
+
+    def warning(self, message: str) -> None:
+        logger.warning("yt_dlp video_id=%s %s", self.video_id, message)
+
+    def error(self, message: str) -> None:
+        logger.error("yt_dlp video_id=%s %s", self.video_id, message)
+
+
+def _youtube_import_error(exc: Exception, *, action: str) -> KnowledgeImportError:
+    message = str(exc).lower()
+    if any(marker in message for marker in ("not a bot", "confirm you", "cookies", "ip has been blocked")):
+        return KnowledgeImportError(
+            "youtube_access_challenge",
+            "YouTube temporarily rejected the request. Please try again later.",
+        )
+    if any(
+        marker in message
+        for marker in ("private video", "members-only", "video unavailable", "has been removed", "not available")
+    ):
+        return KnowledgeImportError(
+            "youtube_unavailable",
+            "This YouTube video is unavailable or cannot be accessed.",
+        )
+    return KnowledgeImportError(
+        "youtube_fetch_failed" if action == "metadata" else "youtube_audio_download_failed",
+        "YouTube could not be reached while reading this video.",
+    )
 
 
 def safe_knowledge_upload_key(server_id: int, source_id: Any, filename: str) -> str:
@@ -143,14 +207,30 @@ def extract_text_from_file(
 
 def extract_text_from_youtube_url(url: str) -> tuple[str, dict[str, Any]]:
     try:
+        normalized = normalize_youtube_video_url(url)
+    except YouTubeUrlError as exc:
+        raise KnowledgeImportError(exc.code, str(exc)) from exc
+
+    try:
         import yt_dlp
     except ImportError as exc:
         raise KnowledgeImportError("yt_dlp_missing", "yt-dlp is required for YouTube imports.") from exc
 
     with tempfile.TemporaryDirectory(prefix="cybercolors_youtube_") as temp_dir:
+        diagnostics = youtube_runtime_diagnostics()
+        logger.info(
+            "youtube_extract_started video_id=%s yt_dlp_version=%s yt_dlp_ejs_version=%s deno_available=%s",
+            normalized.video_id,
+            diagnostics["yt_dlp_version"],
+            diagnostics["yt_dlp_ejs_version"],
+            diagnostics["deno_available"],
+        )
+        if not diagnostics["yt_dlp_ejs_version"] or not diagnostics["deno_available"]:
+            logger.warning("youtube_runtime_incomplete video_id=%s diagnostics=%s", normalized.video_id, diagnostics)
         output_template = str(Path(temp_dir) / "%(id)s.%(ext)s")
         options = {
             "skip_download": True,
+            "noplaylist": True,
             "writesubtitles": True,
             "writeautomaticsub": True,
             "subtitleslangs": YOUTUBE_CAPTION_LANGUAGES,
@@ -158,17 +238,35 @@ def extract_text_from_youtube_url(url: str) -> tuple[str, dict[str, Any]]:
             "outtmpl": output_template,
             "quiet": True,
             "noprogress": True,
-            "no_warnings": True,
+            "no_warnings": False,
+            "logger": _YtDlpDiagnosticLogger(video_id=normalized.video_id),
         }
         try:
             with yt_dlp.YoutubeDL(options) as downloader:
-                info = downloader.extract_info(url, download=True)
+                info = downloader.extract_info(normalized.canonical_url, download=True)
         except Exception as exc:
-            raise KnowledgeImportError("youtube_fetch_failed", f"Could not fetch YouTube metadata/captions: {exc}") from exc
+            logger.exception(
+                "youtube_extract_failed video_id=%s exception_type=%s",
+                normalized.video_id,
+                type(exc).__name__,
+            )
+            raise _youtube_import_error(exc, action="metadata") from exc
+
+        if not isinstance(info, dict) or info.get("_type") in {"playlist", "multi_video"} or "entries" in info:
+            logger.error("youtube_extract_rejected_collection video_id=%s", normalized.video_id)
+            raise KnowledgeImportError(
+                "youtube_playlist_url",
+                "This is a YouTube playlist link. Enter a link to an individual video.",
+            )
 
         caption_files = _select_caption_files(Path(temp_dir))
         if not caption_files:
-            return _extract_youtube_audio_and_transcribe(url=url, info=info, temp_dir=Path(temp_dir))
+            logger.info("youtube_captions_missing video_id=%s fallback=audio_transcription", normalized.video_id)
+            return _extract_youtube_audio_and_transcribe(
+                url=normalized.canonical_url,
+                info=info,
+                temp_dir=Path(temp_dir),
+            )
 
         caption_path = caption_files[0]
         raw_caption = _decode_text(caption_path.read_bytes())
@@ -176,13 +274,18 @@ def extract_text_from_youtube_url(url: str) -> tuple[str, dict[str, Any]]:
         if not text:
             raise KnowledgeImportError("empty_extraction", "No readable text was extracted from YouTube captions.")
 
+        logger.info(
+            "youtube_extract_completed video_id=%s mode=captions extracted_chars=%s",
+            normalized.video_id,
+            len(text),
+        )
         return text, {
             "provider": "yt-dlp",
             "mode": "captions",
             "video_id": info.get("id"),
             "video_title": info.get("title"),
             "duration": info.get("duration"),
-            "webpage_url": info.get("webpage_url") or url,
+            "webpage_url": info.get("webpage_url") or normalized.canonical_url,
             "caption_file": caption_path.name,
             "caption_ext": caption_path.suffix.lower().lstrip("."),
             "extracted_chars": len(text),
@@ -246,6 +349,11 @@ def _extract_youtube_audio_and_transcribe(
 
 def _download_youtube_audio(*, url: str, temp_dir: Path) -> Path:
     try:
+        normalized = normalize_youtube_video_url(url)
+    except YouTubeUrlError as exc:
+        raise KnowledgeImportError(exc.code, str(exc)) from exc
+
+    try:
         import yt_dlp
     except ImportError as exc:
         raise KnowledgeImportError("yt_dlp_missing", "yt-dlp is required for YouTube imports.") from exc
@@ -257,13 +365,19 @@ def _download_youtube_audio(*, url: str, temp_dir: Path) -> Path:
         "noplaylist": True,
         "quiet": True,
         "noprogress": True,
-        "no_warnings": True,
+        "no_warnings": False,
+        "logger": _YtDlpDiagnosticLogger(video_id=normalized.video_id),
     }
     try:
         with yt_dlp.YoutubeDL(options) as downloader:
-            downloader.extract_info(url, download=True)
+            downloader.extract_info(normalized.canonical_url, download=True)
     except Exception as exc:
-        raise KnowledgeImportError("youtube_audio_download_failed", f"Could not download YouTube audio: {exc}") from exc
+        logger.exception(
+            "youtube_audio_download_failed video_id=%s exception_type=%s",
+            normalized.video_id,
+            type(exc).__name__,
+        )
+        raise _youtube_import_error(exc, action="audio") from exc
 
     candidates = sorted(
         [item for item in temp_dir.glob("audio_*") if item.is_file()],

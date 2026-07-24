@@ -2,6 +2,9 @@ from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic_core import PydanticCustomError
+
+from src.modules.ai.youtube_urls import YouTubeUrlError, normalize_youtube_video_url
 
 AIKnowledgeSourceType = Literal[
     "text",
@@ -59,6 +62,13 @@ class AIKnowledgeSourceCreateModel(BaseModel):
             raise ValueError("subject_user_id is required when subject_type is admin")
         if self.subject_type == "server":
             self.subject_user_id = None
+        if self.source_type == "youtube":
+            if not self.source_url:
+                raise PydanticCustomError("youtube_url_missing", "A YouTube video URL is required.")
+            try:
+                self.source_url = normalize_youtube_video_url(self.source_url).canonical_url
+            except YouTubeUrlError as exc:
+                raise PydanticCustomError(exc.code, str(exc)) from exc
         return self
 
 
@@ -139,6 +149,7 @@ class AIKnowledgeJobReadModel(BaseModel):
     attempt_count: int
     run_after: datetime
     locked_at: datetime | None = None
+    error_code: str | None = None
     error_message: str | None = None
     source_title: str | None = None
     source_type: str | None = None

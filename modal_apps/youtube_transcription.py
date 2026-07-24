@@ -1,10 +1,16 @@
+import logging
 import os
+import shutil
 import subprocess
 import tempfile
+from importlib import metadata as importlib_metadata
 from pathlib import Path
 from typing import Any
 
 import modal
+
+
+logger = logging.getLogger(__name__)
 
 APP_NAME = os.getenv("MODAL_APP_NAME") or "cybercolors-youtube-transcription"
 MODEL_NAME = os.getenv("WHISPER_MODEL_NAME") or "openai/whisper-large-v3"
@@ -21,7 +27,10 @@ TRANSCRIBE_LANGUAGE = os.getenv("WHISPER_LANGUAGE") or None
 
 image = (
     modal.Image.debian_slim(python_version="3.12")
-    .apt_install("ffmpeg")
+    .apt_install("curl", "ffmpeg", "unzip")
+    .run_commands(
+        "curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh -s v2.8.1",
+    )
     .uv_pip_install(
         "accelerate>=0.26.0",
         "hf-transfer>=0.1.8",
@@ -29,12 +38,13 @@ image = (
         "soundfile>=0.12.1",
         "torch>=2.2.0",
         "transformers>=4.41.0",
-        "yt-dlp>=2026.6.9",
+        "yt-dlp[default]>=2026.7.4",
     )
     .env(
         {
             "HF_HUB_ENABLE_HF_TRANSFER": "1",
             "HF_HUB_CACHE": MODEL_DIR,
+            "DENO_NO_UPDATE_CHECK": "1",
         }
     )
 )
@@ -185,6 +195,16 @@ def _materialize_audio(
 def _download_youtube_audio(*, youtube_url: str, temp_dir: Path) -> Path:
     import yt_dlp
 
+    try:
+        ejs_version = importlib_metadata.version("yt-dlp-ejs")
+    except importlib_metadata.PackageNotFoundError:
+        ejs_version = None
+    logger.info(
+        "modal_youtube_download_started yt_dlp_version=%s yt_dlp_ejs_version=%s deno_available=%s",
+        importlib_metadata.version("yt-dlp"),
+        ejs_version,
+        shutil.which("deno") is not None,
+    )
     output_template = str(temp_dir / "audio_%(id)s.%(ext)s")
     options = {
         "format": os.getenv("YOUTUBE_AUDIO_FORMAT") or "bestaudio/best",
@@ -192,7 +212,7 @@ def _download_youtube_audio(*, youtube_url: str, temp_dir: Path) -> Path:
         "noplaylist": True,
         "quiet": True,
         "noprogress": True,
-        "no_warnings": True,
+        "no_warnings": False,
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",
@@ -201,8 +221,17 @@ def _download_youtube_audio(*, youtube_url: str, temp_dir: Path) -> Path:
             }
         ],
     }
-    with yt_dlp.YoutubeDL(options) as downloader:
-        downloader.extract_info(youtube_url, download=True)
+    try:
+        with yt_dlp.YoutubeDL(options) as downloader:
+            info = downloader.extract_info(youtube_url, download=True)
+    except Exception:
+        logger.exception("modal_youtube_download_failed")
+        raise
+    logger.info(
+        "modal_youtube_download_completed video_id=%s duration=%s",
+        info.get("id") if isinstance(info, dict) else None,
+        info.get("duration") if isinstance(info, dict) else None,
+    )
     candidates = sorted(
         [item for item in temp_dir.glob("audio_*") if item.is_file()],
         key=lambda item: (_audio_candidate_rank(item), -item.stat().st_size, item.name),

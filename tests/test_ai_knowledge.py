@@ -102,6 +102,21 @@ def test_ai_knowledge_routes_are_registered():
         "POST",
         "/servers/{server_id}/ai/knowledge/{source_id}/reindex",
     )
+    _assert_route(
+        "/servers/123/ai/youtube-channels",
+        "POST",
+        "/servers/{server_id}/ai/youtube-channels",
+    )
+    _assert_route(
+        "/servers/123/ai/youtube-channels/11111111-1111-1111-1111-111111111111/sync",
+        "POST",
+        "/servers/{server_id}/ai/youtube-channels/{subscription_id}/sync",
+    )
+    _assert_route(
+        "/servers/123/ai/youtube-channels/11111111-1111-1111-1111-111111111111/videos",
+        "GET",
+        "/servers/{server_id}/ai/youtube-channels/{subscription_id}/videos",
+    )
 
 
 def test_build_knowledge_chunks_normalizes_text_and_hashes_chunks():
@@ -437,10 +452,10 @@ async def _knowledge_youtube_import_scenario(monkeypatch) -> None:
     actor_id = _make_discord_id()
 
     def fake_extract_text_from_youtube_url(url: str):
-        assert url == "https://www.youtube.com/watch?v=test123"
+        assert url == "https://www.youtube.com/watch?v=abc123DEF_0"
         return "Mina says movie night happens every Friday.", {
             "provider": "test",
-            "video_id": "test123",
+            "video_id": "abc123DEF_0",
             "video_title": "Server update",
             "extracted_chars": 43,
         }
@@ -458,7 +473,7 @@ async def _knowledge_youtube_import_scenario(monkeypatch) -> None:
             body=AIKnowledgeSourceCreateModel(
                 source_type="youtube",
                 title="YouTube server update",
-                source_url="https://www.youtube.com/watch?v=test123",
+                source_url="https://www.youtube.com/watch?v=abc123DEF_0&list=PLignored",
             ),
         )
 

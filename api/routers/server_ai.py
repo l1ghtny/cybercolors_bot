@@ -27,6 +27,15 @@ from api.models.ai_moderation import (
     AISuggestionStatusFilter,
     AITweakSuggestionModel,
 )
+from api.models.youtube_channels import (
+    YouTubeChannelSubscriptionCreateModel,
+    YouTubeChannelSubscriptionListModel,
+    YouTubeChannelSubscriptionReadModel,
+    YouTubeChannelSubscriptionUpdateModel,
+    YouTubeChannelVideoLinkModel,
+    YouTubeChannelVideoListModel,
+    YouTubeChannelVideoReadModel,
+)
 from api.services.ai_knowledge import (
     create_file_knowledge_source,
     create_knowledge_source,
@@ -46,6 +55,15 @@ from api.services.ai_moderation import (
     list_ai_decisions,
     list_ai_suggestions,
     tweak_ai_suggestion,
+)
+from api.services.youtube_channels import (
+    create_youtube_channel_subscription,
+    delete_youtube_channel_subscription,
+    link_youtube_channel_video_source,
+    list_youtube_channel_subscriptions,
+    list_youtube_channel_videos,
+    sync_youtube_channel_now,
+    update_youtube_channel_subscription,
 )
 from src.db.database import get_session
 
@@ -355,3 +373,126 @@ async def reindex_ai_knowledge_source(
     session: AsyncSession = Depends(get_session),
 ):
     return await queue_knowledge_source_reindex(session=session, server_id=server_id, source_id=source_id)
+
+
+@server_ai_router.get(
+    "/youtube-channels",
+    response_model=YouTubeChannelSubscriptionListModel,
+    dependencies=[Depends(require_server_permission("ai.knowledge.view"))],
+)
+async def get_youtube_channel_subscriptions(
+    server_id: int,
+    session: AsyncSession = Depends(get_session),
+):
+    return await list_youtube_channel_subscriptions(session, server_id=server_id)
+
+
+@server_ai_router.post(
+    "/youtube-channels",
+    response_model=YouTubeChannelSubscriptionReadModel,
+)
+async def create_youtube_channel_subscription_route(
+    server_id: int,
+    body: YouTubeChannelSubscriptionCreateModel,
+    session: AsyncSession = Depends(get_session),
+    current_user_id: int = Depends(require_server_permission("ai.knowledge.manage")),
+):
+    return await create_youtube_channel_subscription(
+        session,
+        server_id=server_id,
+        created_by_user_id=current_user_id,
+        body=body,
+    )
+
+
+@server_ai_router.put(
+    "/youtube-channels/{subscription_id}",
+    response_model=YouTubeChannelSubscriptionReadModel,
+    dependencies=[Depends(require_server_permission("ai.knowledge.manage"))],
+)
+async def update_youtube_channel_subscription_route(
+    server_id: int,
+    subscription_id: UUID,
+    body: YouTubeChannelSubscriptionUpdateModel,
+    session: AsyncSession = Depends(get_session),
+):
+    return await update_youtube_channel_subscription(
+        session,
+        server_id=server_id,
+        subscription_id=subscription_id,
+        body=body,
+    )
+
+
+@server_ai_router.delete(
+    "/youtube-channels/{subscription_id}",
+    status_code=204,
+    dependencies=[Depends(require_server_permission("ai.knowledge.manage"))],
+)
+async def delete_youtube_channel_subscription_route(
+    server_id: int,
+    subscription_id: UUID,
+    session: AsyncSession = Depends(get_session),
+):
+    await delete_youtube_channel_subscription(
+        session,
+        server_id=server_id,
+        subscription_id=subscription_id,
+    )
+
+
+@server_ai_router.post(
+    "/youtube-channels/{subscription_id}/sync",
+    response_model=YouTubeChannelSubscriptionReadModel,
+    dependencies=[Depends(require_server_permission("ai.knowledge.manage"))],
+)
+async def sync_youtube_channel_subscription_route(
+    server_id: int,
+    subscription_id: UUID,
+    session: AsyncSession = Depends(get_session),
+):
+    return await sync_youtube_channel_now(
+        session,
+        server_id=server_id,
+        subscription_id=subscription_id,
+    )
+
+
+@server_ai_router.get(
+    "/youtube-channels/{subscription_id}/videos",
+    response_model=YouTubeChannelVideoListModel,
+    dependencies=[Depends(require_server_permission("ai.knowledge.view"))],
+)
+async def get_youtube_channel_videos(
+    server_id: int,
+    subscription_id: UUID,
+    limit: int = Query(default=200, ge=1, le=500),
+    session: AsyncSession = Depends(get_session),
+):
+    return await list_youtube_channel_videos(
+        session,
+        server_id=server_id,
+        subscription_id=subscription_id,
+        limit=limit,
+    )
+
+
+@server_ai_router.put(
+    "/youtube-channels/{subscription_id}/videos/{video_id}/link",
+    response_model=YouTubeChannelVideoReadModel,
+    dependencies=[Depends(require_server_permission("ai.knowledge.manage"))],
+)
+async def link_youtube_channel_video_source_route(
+    server_id: int,
+    subscription_id: UUID,
+    video_id: str,
+    body: YouTubeChannelVideoLinkModel,
+    session: AsyncSession = Depends(get_session),
+):
+    return await link_youtube_channel_video_source(
+        session,
+        server_id=server_id,
+        subscription_id=subscription_id,
+        video_id=video_id,
+        knowledge_source_id=body.knowledge_source_id,
+    )
