@@ -21,7 +21,7 @@ COPY src/__init__.py ./src/__init__.py
 COPY src/db ./src/db
 COPY src/modules/__init__.py ./src/modules/__init__.py
 RUN mkdir -p ./src/modules/ai ./scripts
-COPY src/modules/ai/embeddings.py src/modules/ai/knowledge.py src/modules/ai/knowledge_errors.py src/modules/ai/knowledge_imports.py src/modules/ai/youtube_channel_errors.py src/modules/ai/youtube_channel_sync.py src/modules/ai/youtube_data.py src/modules/ai/youtube_urls.py ./src/modules/ai/
+COPY src/modules/ai ./src/modules/ai
 COPY scripts/run_ai_knowledge_worker.py scripts/run_youtube_channel_worker.py ./scripts/
 
 CMD ["python", "scripts/run_ai_knowledge_worker.py"]

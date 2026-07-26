@@ -56,13 +56,11 @@ jobs:
               pyproject.toml \
               uv.lock \
               scripts/run_ai_knowledge_worker.py \
+              scripts/run_youtube_channel_worker.py \
               src/__init__.py \
               src/db \
               src/modules/__init__.py \
-              src/modules/ai/__init__.py \
-              src/modules/ai/embeddings.py \
-              src/modules/ai/knowledge.py \
-              src/modules/ai/knowledge_imports.py \
+              src/modules/ai \
             | sort \
             | xargs sha256sum \
             | sha256sum \
@@ -323,13 +321,11 @@ jobs:
               pyproject.toml \
               uv.lock \
               scripts/run_ai_knowledge_worker.py \
+              scripts/run_youtube_channel_worker.py \
               src/__init__.py \
               src/db \
               src/modules/__init__.py \
-              src/modules/ai/__init__.py \
-              src/modules/ai/embeddings.py \
-              src/modules/ai/knowledge.py \
-              src/modules/ai/knowledge_imports.py \
+              src/modules/ai \
             | sort \
             | xargs sha256sum \
             | sha256sum \
