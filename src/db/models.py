@@ -266,7 +266,14 @@ class Replies(SQLModel, table=True):
 
     id: UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     bot_reply: str = Field(nullable=False, index=True)
-    server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False))
+    server_id: int = Field(
+        sa_column=Column(
+            BigInteger,
+            ForeignKey("servers.server_id"),
+            nullable=False,
+            index=True,
+        )
+    )
     created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
     created_by_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False))
 
@@ -294,6 +301,28 @@ class ServerReplySettings(SQLModel, table=True):
         sa_column=Column(sa.JSON, nullable=False),
     )
     excluded_user_ids: list[str] = Field(
+        default_factory=list,
+        sa_column=Column(sa.JSON, nullable=False),
+    )
+
+
+class ReplyConcept(SQLModel, table=True):
+    __tablename__ = "reply_concepts"
+    __table_args__ = (
+        UniqueConstraint("server_id", "name", name="uq_reply_concepts_server_name"),
+    )
+
+    id: UUID = uuid7_primary_key_field()
+    server_id: int = Field(
+        sa_column=Column(
+            BigInteger,
+            ForeignKey("servers.server_id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        ),
+    )
+    name: str = Field(sa_column=Column(String(length=64), nullable=False))
+    variants: list[str] = Field(
         default_factory=list,
         sa_column=Column(sa.JSON, nullable=False),
     )
@@ -1544,10 +1573,18 @@ class AttachmentLog(SQLModel, table=True):
 
 class Triggers(SQLModel, table=True):
     __tablename__ = "triggers"
+    __table_args__ = (
+        UniqueConstraint("reply_id", "message", name="uq_triggers_reply_message"),
+        sa.CheckConstraint(
+            "source IN ('representative', 'generated')",
+            name="ck_triggers_source",
+        ),
+    )
 
     id: UUID = uuid7_primary_key_field()
     message: str = Field(nullable=False, index=True)
-    reply_id: UUID = Field(nullable=False, foreign_key="replies.id")
+    reply_id: UUID = Field(nullable=False, foreign_key="replies.id", index=True)
+    source: str = Field(default="representative", max_length=32, nullable=False)
 
     reply: Replies = Relationship(back_populates="triggers")
 

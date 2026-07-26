@@ -4,11 +4,26 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.models.bot_replies import (
+    ReplyConceptCreateModel,
+    ReplyConceptModel,
+    ReplyConceptUpdateModel,
     ReplyDuplicateResponseModel,
+    ReplyIntentCreateModel,
+    ReplyIntentUpdateModel,
     ReplySettingsModel,
     ReplySettingsUpdateModel,
 )
-from src.db.models import GlobalUser, Replies, Server, ServerReplySettings, Triggers
+from src.db.models import GlobalUser, Replies, ReplyConcept, Server, ServerReplySettings, Triggers
+from src.modules.on_message_processing.processing_methods import normalize_reply_text
+from src.modules.on_message_processing.reply_matcher import CONCEPT_PLACEHOLDER_RE
+
+
+class ReplyConfigurationConflict(ValueError):
+    pass
+
+
+class ReplyConceptInUseError(ValueError):
+    pass
 
 
 async def _ensure_server_exists(session: AsyncSession, server_id: int) -> None:
@@ -67,6 +82,255 @@ async def update_reply_settings(
     return settings
 
 
+def to_reply_concept_model(concept: ReplyConcept) -> ReplyConceptModel:
+    return ReplyConceptModel(
+        id=str(concept.id),
+        server_id=str(concept.server_id),
+        name=concept.name,
+        variants=list(concept.variants or []),
+    )
+
+
+async def list_reply_concepts(
+    session: AsyncSession,
+    server_id: int,
+) -> list[ReplyConcept]:
+    return list(
+        (
+            await session.exec(
+                select(ReplyConcept)
+                .where(ReplyConcept.server_id == server_id)
+                .order_by(ReplyConcept.name)
+            )
+        ).all()
+    )
+
+
+async def create_reply_concept(
+    session: AsyncSession,
+    server_id: int,
+    body: ReplyConceptCreateModel,
+) -> ReplyConcept:
+    await _ensure_server_exists(session, server_id)
+    existing = (
+        await session.exec(
+            select(ReplyConcept).where(
+                ReplyConcept.server_id == server_id,
+                ReplyConcept.name == body.name,
+            )
+        )
+    ).first()
+    if existing:
+        raise ReplyConfigurationConflict(f"Concept '{body.name}' already exists")
+    concept = ReplyConcept(server_id=server_id, name=body.name, variants=body.variants)
+    session.add(concept)
+    await session.flush()
+    return concept
+
+
+async def _server_trigger_rows(
+    session: AsyncSession,
+    server_id: int,
+) -> list[tuple[Triggers, Replies]]:
+    return list(
+        (
+            await session.exec(
+                select(Triggers, Replies)
+                .join(Replies, Triggers.reply_id == Replies.id)
+                .where(Replies.server_id == server_id)
+            )
+        ).all()
+    )
+
+
+async def update_reply_concept(
+    session: AsyncSession,
+    server_id: int,
+    concept_id: UUID,
+    body: ReplyConceptUpdateModel,
+) -> ReplyConcept | None:
+    concept = (
+        await session.exec(
+            select(ReplyConcept).where(
+                ReplyConcept.id == concept_id,
+                ReplyConcept.server_id == server_id,
+            )
+        )
+    ).first()
+    if concept is None:
+        return None
+    if body.name != concept.name:
+        duplicate = (
+            await session.exec(
+                select(ReplyConcept).where(
+                    ReplyConcept.server_id == server_id,
+                    ReplyConcept.name == body.name,
+                    ReplyConcept.id != concept_id,
+                )
+            )
+        ).first()
+        if duplicate:
+            raise ReplyConfigurationConflict(f"Concept '{body.name}' already exists")
+        new_placeholder = "{{" + body.name + "}}"
+        for trigger, _reply in await _server_trigger_rows(session, server_id):
+            rewritten = CONCEPT_PLACEHOLDER_RE.sub(
+                lambda match: (
+                    new_placeholder
+                    if match.group(1).casefold() == concept.name
+                    else match.group(0)
+                ),
+                trigger.message,
+            )
+            if rewritten != trigger.message:
+                trigger.message = rewritten
+                session.add(trigger)
+    concept.name = body.name
+    concept.variants = body.variants
+    session.add(concept)
+    await session.flush()
+    return concept
+
+
+async def delete_reply_concept(
+    session: AsyncSession,
+    server_id: int,
+    concept_id: UUID,
+) -> bool:
+    concept = (
+        await session.exec(
+            select(ReplyConcept).where(
+                ReplyConcept.id == concept_id,
+                ReplyConcept.server_id == server_id,
+            )
+        )
+    ).first()
+    if concept is None:
+        return False
+    used_by = [
+        reply.id
+        for trigger, reply in await _server_trigger_rows(session, server_id)
+        if any(
+            match.group(1).casefold() == concept.name
+            for match in CONCEPT_PLACEHOLDER_RE.finditer(trigger.message)
+        )
+    ]
+    if used_by:
+        raise ReplyConceptInUseError(
+            f"Concept '{concept.name}' is used by {len(set(used_by))} automatic reply rule(s)"
+        )
+    await session.delete(concept)
+    await session.flush()
+    return True
+
+
+async def _validate_intent_triggers(
+    session: AsyncSession,
+    server_id: int,
+    representative_questions: list[str],
+    generated_variations: list[str],
+    *,
+    exclude_reply_id: UUID | None = None,
+) -> None:
+    concepts = {concept.name for concept in await list_reply_concepts(session, server_id)}
+    all_phrases = representative_questions + generated_variations
+    missing_concepts = sorted(
+        {
+            match.group(1).casefold()
+            for phrase in all_phrases
+            for match in CONCEPT_PLACEHOLDER_RE.finditer(phrase)
+            if match.group(1).casefold() not in concepts
+        }
+    )
+    if missing_concepts:
+        raise ReplyConfigurationConflict(
+            "Unknown concepts: " + ", ".join(missing_concepts)
+        )
+
+    desired_keys = {normalize_reply_text(phrase) for phrase in all_phrases}
+    collisions: list[str] = []
+    for trigger, reply in await _server_trigger_rows(session, server_id):
+        if exclude_reply_id is not None and reply.id == exclude_reply_id:
+            continue
+        if normalize_reply_text(trigger.message) in desired_keys:
+            collisions.append(trigger.message)
+    if collisions:
+        raise ReplyConfigurationConflict(
+            "These triggers are already used by another reply: " + ", ".join(collisions[:5])
+        )
+
+
+async def create_reply_intent(
+    session: AsyncSession,
+    server_id: int,
+    body: ReplyIntentCreateModel,
+) -> Replies:
+    await _ensure_server_exists(session, server_id)
+    await _ensure_global_user_exists(session, int(body.admin_id))
+    await _validate_intent_triggers(
+        session,
+        server_id,
+        body.representative_questions,
+        body.generated_variations,
+    )
+    reply = Replies(
+        server_id=server_id,
+        bot_reply=body.bot_reply,
+        created_by_id=int(body.admin_id),
+    )
+    session.add(reply)
+    await session.flush()
+    for message in body.representative_questions:
+        session.add(Triggers(message=message, reply_id=reply.id, source="representative"))
+    for message in body.generated_variations:
+        session.add(Triggers(message=message, reply_id=reply.id, source="generated"))
+    await session.flush()
+    return reply
+
+
+async def update_reply_intent(
+    session: AsyncSession,
+    server_id: int,
+    reply_id: UUID,
+    body: ReplyIntentUpdateModel,
+) -> Replies | None:
+    reply = (
+        await session.exec(
+            select(Replies).where(Replies.id == reply_id, Replies.server_id == server_id)
+        )
+    ).first()
+    if reply is None:
+        return None
+    await _validate_intent_triggers(
+        session,
+        server_id,
+        body.representative_questions,
+        body.generated_variations,
+        exclude_reply_id=reply_id,
+    )
+    existing = list(
+        (await session.exec(select(Triggers).where(Triggers.reply_id == reply_id))).all()
+    )
+    desired = {
+        **{message: "representative" for message in body.representative_questions},
+        **{message: "generated" for message in body.generated_variations},
+    }
+    existing_by_message = {trigger.message: trigger for trigger in existing}
+    for trigger in existing:
+        source = desired.get(trigger.message)
+        if source is None:
+            await session.delete(trigger)
+        elif trigger.source != source:
+            trigger.source = source
+            session.add(trigger)
+    for message, source in desired.items():
+        if message not in existing_by_message:
+            session.add(Triggers(message=message, reply_id=reply_id, source=source))
+    reply.bot_reply = body.bot_reply
+    session.add(reply)
+    await session.flush()
+    return reply
+
+
 async def duplicate_selected_replies(
     session: AsyncSession,
     source_server_id: int,
@@ -109,9 +373,56 @@ async def duplicate_selected_replies(
             select(Triggers).where(Triggers.reply_id.in_(list(source_reply_ids)))
         )
     ).all()
-    triggers_by_source_reply: dict[UUID, list[str]] = {}
+    triggers_by_source_reply: dict[UUID, list[tuple[str, str]]] = {}
     for trigger in source_trigger_rows:
-        triggers_by_source_reply.setdefault(trigger.reply_id, []).append(trigger.message)
+        triggers_by_source_reply.setdefault(trigger.reply_id, []).append(
+            (trigger.message, trigger.source or "representative")
+        )
+
+    referenced_concept_names = {
+        match.group(1).casefold()
+        for trigger in source_trigger_rows
+        for match in CONCEPT_PLACEHOLDER_RE.finditer(trigger.message)
+    }
+    if referenced_concept_names:
+        source_concepts = list(
+            (
+                await session.exec(
+                    select(ReplyConcept).where(
+                        ReplyConcept.server_id == source_server_id,
+                        ReplyConcept.name.in_(list(referenced_concept_names)),
+                    )
+                )
+            ).all()
+        )
+        target_concepts = list(
+            (
+                await session.exec(
+                    select(ReplyConcept).where(
+                        ReplyConcept.server_id == target_server_id,
+                        ReplyConcept.name.in_(list(referenced_concept_names)),
+                    )
+                )
+            ).all()
+        )
+        target_concepts_by_name = {concept.name: concept for concept in target_concepts}
+        for source_concept in source_concepts:
+            target_concept = target_concepts_by_name.get(source_concept.name)
+            if target_concept is None:
+                session.add(
+                    ReplyConcept(
+                        server_id=target_server_id,
+                        name=source_concept.name,
+                        variants=list(source_concept.variants or []),
+                    )
+                )
+                continue
+            merged_variants = list(
+                dict.fromkeys((target_concept.variants or []) + (source_concept.variants or []))
+            )
+            if merged_variants != list(target_concept.variants or []):
+                target_concept.variants = merged_variants
+                session.add(target_concept)
 
     bot_replies = list({reply.bot_reply for reply in source_replies})
     existing_target_replies = (
@@ -158,12 +469,18 @@ async def duplicate_selected_replies(
     skipped_triggers = 0
     for source_reply in source_replies:
         target_reply = target_reply_by_text[source_reply.bot_reply]
-        for trigger_text in triggers_by_source_reply.get(source_reply.id, []):
+        for trigger_text, trigger_source in triggers_by_source_reply.get(source_reply.id, []):
             key = (target_reply.id, trigger_text)
             if key in existing_trigger_pairs:
                 skipped_triggers += 1
                 continue
-            session.add(Triggers(message=trigger_text, reply_id=target_reply.id))
+            session.add(
+                Triggers(
+                    message=trigger_text,
+                    reply_id=target_reply.id,
+                    source=trigger_source,
+                )
+            )
             existing_trigger_pairs.add(key)
             duplicated_triggers += 1
 

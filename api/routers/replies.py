@@ -11,24 +11,45 @@ from api.dependencies.server_access import require_server_dashboard_access, requ
 from api.helpers.replies import enrich_user_data
 from api.models.bot_replies import (
     ReplyAddModel,
+    ReplyConceptCreateModel,
+    ReplyConceptModel,
+    ReplyConceptUpdateModel,
     ReplyDuplicateRequestModel,
     ReplyDuplicateResponseModel,
     ReplyEditModel,
+    ReplyIntentCreateModel,
+    ReplyIntentUpdateModel,
     ReplyModel,
     ReplyMutationResponseModel,
     ReplySettingsModel,
     ReplySettingsUpdateModel,
+    ReplyVariationSuggestionRequestModel,
+    ReplyVariationSuggestionResponseModel,
 )
 from api.services.dashboard_access_service import assert_dashboard_access
 from api.services.replies_service import (
+    ReplyConceptInUseError,
+    ReplyConfigurationConflict,
+    create_reply_concept,
+    create_reply_intent,
+    delete_reply_concept,
     duplicate_selected_replies,
     get_or_create_reply_settings,
+    list_reply_concepts,
+    to_reply_concept_model,
     to_reply_settings_model,
+    update_reply_concept,
+    update_reply_intent,
     update_reply_settings,
+)
+from api.services.reply_variations import (
+    ReplyVariationGenerationError,
+    suggest_reply_variations,
 )
 from api.services.rbac_service import assert_user_has_permission
 from src.db.database import get_session
-from src.db.models import Replies, Triggers
+from src.db.models import Replies, ReplyConcept, Triggers
+from src.modules.on_message_processing.reply_matcher import invalidate_reply_matcher
 
 replies = APIRouter(
     prefix="/replies",
@@ -91,7 +112,7 @@ async def require_duplicate_target_server_replies_manage(
 async def get_replies_by_server_id(server_id: int, session: AsyncSession = Depends(get_session)):
     server_replies = (
         await session.exec(
-            select(Replies, Triggers.message)
+            select(Replies, Triggers)
             .outerjoin(Triggers, Triggers.reply_id == Replies.id)
             .where(Replies.server_id == server_id)
             .order_by(Replies.created_at.desc())
@@ -101,7 +122,7 @@ async def get_replies_by_server_id(server_id: int, session: AsyncSession = Depen
         raise HTTPException(status_code=404, detail="No replies found for this server")
 
     grouped: dict[UUID, ReplyModel] = {}
-    for reply, trigger_message in server_replies:
+    for reply, trigger in server_replies:
         if reply.id not in grouped:
             user_data = await enrich_user_data(reply.created_by_id)
             grouped[reply.id] = ReplyModel(
@@ -111,8 +132,12 @@ async def get_replies_by_server_id(server_id: int, session: AsyncSession = Depen
                 created_at=reply.created_at,
                 created_by=user_data,
             )
-        if trigger_message and trigger_message not in grouped[reply.id].user_messages:
-            grouped[reply.id].user_messages.append(trigger_message)
+        if trigger and trigger.message not in grouped[reply.id].user_messages:
+            grouped[reply.id].user_messages.append(trigger.message)
+            if trigger.source == "generated":
+                grouped[reply.id].generated_variations.append(trigger.message)
+            else:
+                grouped[reply.id].representative_questions.append(trigger.message)
 
     return list(grouped.values())
 
@@ -137,7 +162,160 @@ async def set_reply_settings(
     session: AsyncSession = Depends(get_session),
 ):
     settings = await update_reply_settings(session, server_id, body)
+    await session.commit()
+    invalidate_reply_matcher(server_id)
     return to_reply_settings_model(settings)
+
+
+@replies.get("/{server_id}/concepts", response_model=list[ReplyConceptModel])
+async def get_reply_concepts(
+    server_id: int,
+    session: AsyncSession = Depends(get_session),
+):
+    return [
+        to_reply_concept_model(concept)
+        for concept in await list_reply_concepts(session, server_id)
+    ]
+
+
+@replies.post(
+    "/{server_id}/concepts",
+    response_model=ReplyConceptModel,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_server_permission("replies.manage"))],
+)
+async def add_reply_concept(
+    server_id: int,
+    body: ReplyConceptCreateModel,
+    session: AsyncSession = Depends(get_session),
+):
+    try:
+        concept = await create_reply_concept(session, server_id, body)
+    except ReplyConfigurationConflict as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    await session.commit()
+    invalidate_reply_matcher(server_id)
+    return to_reply_concept_model(concept)
+
+
+@replies.put(
+    "/{server_id}/concepts/{concept_id}",
+    response_model=ReplyConceptModel,
+    dependencies=[Depends(require_server_permission("replies.manage"))],
+)
+async def edit_reply_concept(
+    server_id: int,
+    concept_id: UUID,
+    body: ReplyConceptUpdateModel,
+    session: AsyncSession = Depends(get_session),
+):
+    try:
+        concept = await update_reply_concept(session, server_id, concept_id, body)
+    except ReplyConfigurationConflict as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    if concept is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Concept not found")
+    await session.commit()
+    invalidate_reply_matcher(server_id)
+    return to_reply_concept_model(concept)
+
+
+@replies.delete(
+    "/{server_id}/concepts/{concept_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_server_permission("replies.manage"))],
+)
+async def remove_reply_concept(
+    server_id: int,
+    concept_id: UUID,
+    session: AsyncSession = Depends(get_session),
+):
+    try:
+        deleted = await delete_reply_concept(session, server_id, concept_id)
+    except ReplyConceptInUseError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Concept not found")
+    await session.commit()
+    invalidate_reply_matcher(server_id)
+
+
+@replies.post(
+    "/{server_id}/suggest-variations",
+    response_model=ReplyVariationSuggestionResponseModel,
+    dependencies=[Depends(require_server_permission("replies.manage"))],
+)
+async def suggest_variations(
+    server_id: int,
+    body: ReplyVariationSuggestionRequestModel,
+    session: AsyncSession = Depends(get_session),
+):
+    concepts = list(
+        (
+            await session.exec(
+                select(ReplyConcept).where(ReplyConcept.server_id == server_id)
+            )
+        ).all()
+    )
+    try:
+        return await suggest_reply_variations(
+            bot_reply=body.bot_reply,
+            representative_questions=body.representative_questions,
+            concepts=concepts,
+        )
+    except ReplyVariationGenerationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+
+
+@replies.post(
+    "/{server_id}/intents",
+    response_model=ReplyMutationResponseModel,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_server_permission("replies.manage"))],
+)
+async def add_reply_intent(
+    server_id: int,
+    body: ReplyIntentCreateModel,
+    session: AsyncSession = Depends(get_session),
+):
+    try:
+        await create_reply_intent(session, server_id, body)
+    except ReplyConfigurationConflict as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    await session.commit()
+    invalidate_reply_matcher(server_id)
+    return ReplyMutationResponseModel(
+        processed=len(body.representative_questions) + len(body.generated_variations),
+        created=1 + len(body.representative_questions) + len(body.generated_variations),
+    )
+
+
+@replies.put(
+    "/{server_id}/intents/{reply_id}",
+    response_model=ReplyMutationResponseModel,
+    dependencies=[Depends(require_server_permission("replies.manage"))],
+)
+async def edit_reply_intent(
+    server_id: int,
+    reply_id: UUID,
+    body: ReplyIntentUpdateModel,
+    session: AsyncSession = Depends(get_session),
+):
+    try:
+        reply = await update_reply_intent(session, server_id, reply_id, body)
+    except ReplyConfigurationConflict as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    if reply is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reply not found")
+    await session.commit()
+    invalidate_reply_matcher(server_id)
+    return ReplyMutationResponseModel(
+        processed=len(body.representative_questions) + len(body.generated_variations),
+        updated=1,
+    )
 
 
 @replies.post(
@@ -195,10 +373,17 @@ async def add_replies(
             )
         ).first()
         if not trigger:
-            session.add(Triggers(message=reply.user_message, reply_id=existing_reply.id))
+            session.add(
+                Triggers(
+                    message=reply.user_message,
+                    reply_id=existing_reply.id,
+                    source=reply.source,
+                )
+            )
             created_triggers += 1
 
     await session.commit()
+    invalidate_reply_matcher(server_id)
     return ReplyMutationResponseModel(
         processed=len(body),
         created=created_replies + created_triggers,
@@ -235,6 +420,7 @@ async def delete_replies(
             deleted_replies += 1
 
     await session.commit()
+    invalidate_reply_matcher(server_id)
 
     return ReplyMutationResponseModel(
         processed=len(body),
@@ -295,6 +481,7 @@ async def edit_replies(
                 created_triggers += 1
 
     await session.commit()
+    invalidate_reply_matcher(server_id)
 
     return ReplyMutationResponseModel(
         processed=len(body),
@@ -326,4 +513,5 @@ async def duplicate_selected_replies_to_server(
         actor_user_id=current_user_id,
     )
     await session.commit()
+    invalidate_reply_matcher(target_server_id)
     return result

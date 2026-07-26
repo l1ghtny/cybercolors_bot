@@ -1,15 +1,14 @@
-from sqlmodel import select
-from sqlmodel.ext.asyncio.session import AsyncSession
-
-from src.db.database import engine
-from src.db.models import Replies, ServerReplySettings, Triggers
-from src.modules.on_message_processing.processing_methods import (
-    normalize_reply_text,
-    normalized_reply_trigger_matches,
+from src.db.models import ServerReplySettings
+from src.modules.on_message_processing.reply_matcher import (
+    CompiledReplySettings,
+    get_reply_matcher,
 )
 
 
-def automatic_reply_allowed(message, settings: ServerReplySettings | None) -> bool:
+def automatic_reply_allowed(
+    message,
+    settings: ServerReplySettings | CompiledReplySettings | None,
+) -> bool:
     if settings is None:
         return True
 
@@ -40,32 +39,17 @@ def automatic_reply_allowed(message, settings: ServerReplySettings | None) -> bo
 
 
 async def check_for_replies(message):
-    database_found = False
-    message_content = normalize_reply_text(message.content)
     server_id = message.guild.id
-    
-    async with AsyncSession(engine) as session:
-        settings = await session.get(ServerReplySettings, server_id)
-        if not automatic_reply_allowed(message, settings):
-            return False, server_id
-        # Join Triggers and Replies to get both in one go
-        statement = select(Triggers, Replies).join(Replies).where(Replies.server_id == server_id)
-        result = await session.exec(statement)
-        rows = result.all()
-    
-    for trigger, reply in rows:
-        trigger_text_raw = trigger.message
-        response_text = reply.bot_reply
-        
-        # Handle the f-string style response if it starts with f' or f"
-        is_fstring = response_text.startswith("f'") or response_text.startswith('f"')
-        
-        if normalized_reply_trigger_matches(trigger_text_raw, message_content):
-            database_found = True
-            await send_reply(message, response_text, is_fstring)
-            break
-                
-    return database_found, server_id
+    matcher = await get_reply_matcher(server_id)
+    if not automatic_reply_allowed(message, matcher.settings):
+        return False, server_id
+
+    matched_rule = matcher.match(message.content)
+    if matched_rule is None:
+        return False, server_id
+
+    await send_reply(message, matched_rule.response_text, matched_rule.is_fstring)
+    return True, server_id
 
 async def send_reply(message, response_text, is_fstring):
     if is_fstring:

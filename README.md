@@ -11,6 +11,8 @@ It will likely be modified to have a config file or a built-in server setup proc
 ## OpenAI integration
 The bot is waiting to be mentioned in the channel, specified in the .env file and requests a chatGPT response from OpenAI API. It also supports a dialogue with a user ID check to make sure he gets follow-up questions from the same user who originally asked the question. Currently, the dialogue length is 5 messages per user just a cost-saving measure and also to fit into the token size of GPT 3.5-turbo.
 
+Automatic-reply variation suggestions use the Responses API with structured output. They use `gpt-5.6-sol` by default and can be configured with `REPLY_VARIATION_MODEL` and `REPLY_VARIATION_TIMEOUT_SECONDS`. Runtime reply matchers are compiled per server and refreshed after `REPLY_MATCHER_CACHE_TTL_SECONDS` (30 seconds by default). Reusable reply concepts use `{{concept-name}}` placeholders inside representative questions.
+
 ![image](https://github.com/l1ghtny/regular_bot/assets/47033558/3edbe86c-4226-4f8a-9943-c641e2622cd9)
 
 
