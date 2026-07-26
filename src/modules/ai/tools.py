@@ -185,6 +185,9 @@ def build_default_tool_registry() -> AIToolRegistry:
                 "Query followed YouTube channel knowledge for this Discord server. The tool resolves names, "
                 "handles, abbreviations, aliases, and grammatical variants; returns public channel metadata or "
                 "structured video dates; and can semantically search all linked indexed video transcripts. "
+                "Every video and transcript match includes its actual channel name. If "
+                "needs_channel_clarification is true, do not choose or combine channels; ask the user which returned "
+                "channel they mean. "
                 "Choose list_channels for channel names only, channel_info for a profile, latest_videos for recent "
                 "uploads, search_videos for title/description matching, or search_transcripts for video contents."
             ),

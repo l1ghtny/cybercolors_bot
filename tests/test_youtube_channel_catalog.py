@@ -80,6 +80,8 @@ def test_catalog_returns_channel_video_dates_and_transcript_status():
 
     assert result["channels"][0]["handle"] == "@StudioColors"
     assert result["channels"][0]["description"] == "A channel about theatre and production."
+    assert result["videos"][0]["channel_name"] == "Studio Colors"
+    assert result["videos"][0]["channel_url"] == channel.canonical_url
     assert result["videos"][0]["published_at"] == "2026-07-20T12:00:00Z"
     assert result["videos"][0]["transcript_available"] is True
     assert "channel_id" not in result["channels"][0]
@@ -111,6 +113,7 @@ def test_default_tool_registry_exposes_youtube_channel_catalog():
     tool = specs["search_youtube_channel_catalog"]
     assert tool["requires_admin_context"] is False
     assert "structured video dates" in tool["description"]
+    assert "needs_channel_clarification" in tool["description"]
 
 
 def test_server_knowledge_can_be_scoped_to_linked_transcript():
@@ -157,6 +160,76 @@ def test_catalog_resolves_acronym_and_grammatical_name_variant():
 
     assert by_name["channels"][0]["name"] == "Зона Веселья с Саней"
     assert by_acronym["channels"][0]["name"] == "Зона Веселья с Саней"
+
+
+def test_catalog_does_not_mix_channels_that_share_a_person_name():
+    main_channel = _channel()
+    main_channel.title = "Зона Веселья с Саней"
+    streams_channel = _channel()
+    streams_channel.id = uuid4()
+    streams_channel.channel_id = "UC9876543210987654321098"
+    streams_channel.title = "Зона Стримов с Саней"
+    streams_channel.handle = "@sanyastreams"
+    streams_channel.canonical_url = "https://www.youtube.com/channel/UC9876543210987654321098"
+    session = _Session([[main_channel, streams_channel], []])
+
+    result = asyncio.run(
+        search_youtube_channel_catalog(
+            session,
+            server_id=123,
+            channel_query="канал Сани",
+            mode="latest_videos",
+            limit=5,
+        )
+    )
+
+    assert result["needs_channel_clarification"] is True
+    assert {channel["name"] for channel in result["channels"]} == {
+        "Зона Веселья с Саней",
+        "Зона Стримов с Саней",
+    }
+    assert result["videos"] == []
+    assert len(session.statements) == 2
+
+
+def test_catalog_uses_main_channel_alias_to_disambiguate_related_channels():
+    main_channel = _channel()
+    main_channel.title = "Зона Веселья с Саней"
+    main_channel.aliases = ["Основной канал Сани"]
+    streams_channel = _channel()
+    streams_channel.id = uuid4()
+    streams_channel.channel_id = "UC9876543210987654321098"
+    streams_channel.title = "Зона Стримов с Саней"
+    streams_channel.handle = "@sanyastreams"
+    streams_channel.canonical_url = "https://www.youtube.com/channel/UC9876543210987654321098"
+    main_video = YouTubeChannelVideo(
+        id=uuid4(),
+        subscription_id=main_channel.id,
+        server_id=123,
+        video_id="mainvideo01",
+        title="Main channel upload",
+        availability="available",
+    )
+    session = _Session(
+        [
+            [main_channel, streams_channel],
+            [(main_video, main_channel, "ready")],
+        ]
+    )
+
+    result = asyncio.run(
+        search_youtube_channel_catalog(
+            session,
+            server_id=123,
+            channel_query="последние ролики на основном канале Сани",
+            mode="latest_videos",
+            limit=5,
+        )
+    )
+
+    assert [channel["name"] for channel in result["channels"]] == ["Зона Веселья с Саней"]
+    assert result["videos"][0]["channel_name"] == "Зона Веселья с Саней"
+    assert "needs_channel_clarification" not in result
 
 
 def test_catalog_uses_indexed_channel_profile_for_semantic_resolution(monkeypatch):

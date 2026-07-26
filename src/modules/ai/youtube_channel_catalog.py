@@ -16,6 +16,8 @@ from src.modules.ai.youtube_channel_profiles import CHANNEL_PROFILE_SOURCE_TYPE,
 
 
 MAX_CHANNEL_CATALOG_RESULTS = 20
+CHANNEL_MATCH_THRESHOLD = 0.62
+CHANNEL_MATCH_MARGIN = 0.06
 logger = logging.getLogger(__name__)
 YouTubeKnowledgeMode = Literal[
     "list_channels",
@@ -28,16 +30,28 @@ _GENERIC_QUERY_WORDS = {
     "a",
     "about",
     "channel",
+    "latest",
+    "newest",
     "of",
+    "recent",
     "the",
+    "uploads",
     "video",
     "videos",
     "youtube",
+    "в",
     "видео",
     "канал",
     "канале",
     "канала",
+    "на",
+    "последние",
+    "последних",
     "про",
+    "ролик",
+    "ролики",
+    "роликов",
+    "с",
     "ютуб",
     "ютубе",
 }
@@ -68,13 +82,15 @@ async def search_youtube_channel_catalog(
         )
     ).all()
     channels = _resolve_channels(all_channels, normalized_channel_query)
-    if normalized_channel_query and not channels and all_channels:
-        channels = await _resolve_channels_from_index(
+    if normalized_channel_query and len(channels) != 1 and all_channels:
+        indexed_channels = await _resolve_channels_from_index(
             session,
             server_id=server_id,
             channels=all_channels,
             query=normalized_channel_query,
         )
+        if indexed_channels:
+            channels = indexed_channels
     related_names = await _related_member_names_by_channel(session, channels)
     channel_payload = [
         _channel_payload(channel, related_members=related_names.get(str(channel.id), []))
@@ -85,6 +101,9 @@ async def search_youtube_channel_catalog(
         "videos": [],
         "transcript_matches": [],
     }
+    if normalized_channel_query and len(channels) > 1:
+        result["needs_channel_clarification"] = True
+        return result
     if not channels or mode in {"list_channels", "channel_info"}:
         return result
 
@@ -132,8 +151,8 @@ async def search_youtube_channel_catalog(
     rows = (await session.exec(video_statement)).all()
     if mode != "search_transcripts":
         result["videos"] = [
-            _video_payload(video, knowledge_source_status=source_status)
-            for video, _channel, source_status in rows
+            _video_payload(video, channel=channel, knowledge_source_status=source_status)
+            for video, channel, source_status in rows
         ]
         return result
 
@@ -152,8 +171,14 @@ async def search_youtube_channel_catalog(
         limit=bounded_limit,
         source_ids=source_ids,
     )
+    channel_name_by_source_id = {
+        str(video.knowledge_source_id): channel.title
+        for video, channel, _source_status in rows
+        if video.knowledge_source_id is not None
+    }
     result["transcript_matches"] = [
         {
+            "channel_name": channel_name_by_source_id.get(str(match.get("source_id") or "")),
             "video_title": match["title"],
             "video_url": match["source_url"],
             "excerpt": match["text"],
@@ -175,7 +200,14 @@ def _resolve_channels(
         key=lambda item: item[0],
         reverse=True,
     )
-    return [channel for score, channel in ranked if score >= 0.62][:3]
+    if not ranked or ranked[0][0] < CHANNEL_MATCH_THRESHOLD:
+        return []
+    best_score = ranked[0][0]
+    return [
+        channel
+        for score, channel in ranked
+        if score >= CHANNEL_MATCH_THRESHOLD and best_score - score <= CHANNEL_MATCH_MARGIN
+    ][:3]
 
 
 async def _resolve_channels_from_index(
@@ -214,7 +246,7 @@ async def _resolve_channels_from_index(
 
     source_by_id = {str(source.id): source for source in sources if source.id is not None}
     channel_by_id = {str(channel.id): channel for channel in channels if channel.id is not None}
-    resolved: list[YouTubeChannelSubscription] = []
+    ranked: list[tuple[float, YouTubeChannelSubscription]] = []
     seen: set[str] = set()
     for match in matches:
         source = source_by_id.get(str(match.get("source_id") or ""))
@@ -227,8 +259,11 @@ async def _resolve_channels_from_index(
         channel = channel_by_id.get(subscription_id)
         if channel is not None and subscription_id not in seen:
             seen.add(subscription_id)
-            resolved.append(channel)
-    return resolved
+            ranked.append((float(match.get("score") or 0.0), channel))
+    if not ranked:
+        return []
+    best_score = ranked[0][0]
+    return [channel for score, channel in ranked if best_score - score <= CHANNEL_MATCH_MARGIN]
 
 
 def _channel_match_score(channel: YouTubeChannelSubscription, query: str) -> float:
@@ -245,12 +280,17 @@ def _channel_match_score(channel: YouTubeChannelSubscription, query: str) -> flo
             best = max(best, 0.94)
         best = max(best, SequenceMatcher(None, query_normalized, candidate_normalized).ratio())
         candidate_tokens = _meaningful_tokens(candidate_normalized)
-        for query_token in query_tokens:
-            for candidate_token in candidate_tokens:
-                token_score = SequenceMatcher(None, query_token, candidate_token).ratio()
-                if query_token == candidate_token:
-                    token_score = 0.98
-                best = max(best, token_score)
+        if query_tokens and candidate_tokens:
+            token_scores = [
+                max(
+                    0.98
+                    if query_token == candidate_token
+                    else SequenceMatcher(None, query_token, candidate_token).ratio()
+                    for candidate_token in candidate_tokens
+                )
+                for query_token in query_tokens
+            ]
+            best = max(best, sum(token_scores) / len(token_scores))
     return best
 
 
@@ -308,9 +348,12 @@ async def _related_member_names_by_channel(
 def _video_payload(
     video: YouTubeChannelVideo,
     *,
+    channel: YouTubeChannelSubscription,
     knowledge_source_status: str | None,
 ) -> dict[str, Any]:
     return {
+        "channel_name": channel.title,
+        "channel_url": channel.canonical_url,
         "title": video.title,
         "description": _truncate(video.description, 500),
         "url": f"https://www.youtube.com/watch?v={video.video_id}",
