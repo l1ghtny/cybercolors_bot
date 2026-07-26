@@ -59,6 +59,7 @@ from api.services.ai_moderation import (
 from api.services.youtube_channels import (
     create_youtube_channel_subscription,
     delete_youtube_channel_subscription,
+    index_youtube_channel_video,
     link_youtube_channel_video_source,
     list_youtube_channel_subscriptions,
     list_youtube_channel_videos,
@@ -466,7 +467,8 @@ async def sync_youtube_channel_subscription_route(
 async def get_youtube_channel_videos(
     server_id: int,
     subscription_id: UUID,
-    limit: int = Query(default=200, ge=1, le=500),
+    limit: int = Query(default=50, ge=1, le=500),
+    search: str | None = Query(default=None, max_length=200),
     session: AsyncSession = Depends(get_session),
 ):
     return await list_youtube_channel_videos(
@@ -474,6 +476,27 @@ async def get_youtube_channel_videos(
         server_id=server_id,
         subscription_id=subscription_id,
         limit=limit,
+        search=search,
+    )
+
+
+@server_ai_router.post(
+    "/youtube-channels/{subscription_id}/videos/{video_id}/index",
+    response_model=YouTubeChannelVideoReadModel,
+)
+async def index_youtube_channel_video_route(
+    server_id: int,
+    subscription_id: UUID,
+    video_id: str,
+    session: AsyncSession = Depends(get_session),
+    current_user_id: int = Depends(require_server_permission("ai.knowledge.manage")),
+):
+    return await index_youtube_channel_video(
+        session,
+        server_id=server_id,
+        subscription_id=subscription_id,
+        video_id=video_id,
+        created_by_user_id=current_user_id,
     )
 
 

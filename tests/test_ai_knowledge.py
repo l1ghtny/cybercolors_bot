@@ -117,6 +117,11 @@ def test_ai_knowledge_routes_are_registered():
         "GET",
         "/servers/{server_id}/ai/youtube-channels/{subscription_id}/videos",
     )
+    _assert_route(
+        "/servers/123/ai/youtube-channels/11111111-1111-1111-1111-111111111111/videos/video123/index",
+        "POST",
+        "/servers/{server_id}/ai/youtube-channels/{subscription_id}/videos/{video_id}/index",
+    )
 
 
 def test_build_knowledge_chunks_normalizes_text_and_hashes_chunks():

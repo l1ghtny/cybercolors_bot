@@ -2,10 +2,11 @@ import asyncio
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import delete, func
+from sqlalchemy import delete, func, or_
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from api.models.ai_knowledge import AIKnowledgeSourceCreateModel
 from api.models.youtube_channels import (
     YouTubeChannelSubscriptionCreateModel,
     YouTubeChannelSubscriptionListModel,
@@ -14,6 +15,7 @@ from api.models.youtube_channels import (
     YouTubeChannelVideoListModel,
     YouTubeChannelVideoReadModel,
 )
+from api.services.ai_knowledge import create_knowledge_source, queue_knowledge_source_reindex
 from src.db.models import (
     AIKnowledgeSource,
     GlobalUser,
@@ -180,30 +182,125 @@ async def list_youtube_channel_videos(
     *,
     server_id: int,
     subscription_id: UUID,
-    limit: int = 200,
+    limit: int = 50,
+    search: str | None = None,
 ) -> YouTubeChannelVideoListModel:
     await _get_subscription(session, server_id=server_id, subscription_id=subscription_id)
+    statement = (
+        select(YouTubeChannelVideo, AIKnowledgeSource.status)
+        .outerjoin(
+            AIKnowledgeSource,
+            AIKnowledgeSource.id == YouTubeChannelVideo.knowledge_source_id,
+        )
+        .where(
+            YouTubeChannelVideo.server_id == server_id,
+            YouTubeChannelVideo.subscription_id == subscription_id,
+        )
+    )
+    normalized_search = " ".join((search or "").split()).casefold()[:200]
+    if normalized_search:
+        statement = statement.where(
+            or_(
+                func.lower(YouTubeChannelVideo.title).contains(normalized_search),
+                func.lower(func.coalesce(YouTubeChannelVideo.description, "")).contains(normalized_search),
+                func.lower(YouTubeChannelVideo.video_id).contains(normalized_search),
+            )
+        )
     rows = (
         await session.exec(
-            select(YouTubeChannelVideo, AIKnowledgeSource.status)
-            .outerjoin(
-                AIKnowledgeSource,
-                AIKnowledgeSource.id == YouTubeChannelVideo.knowledge_source_id,
-            )
-            .where(
-                YouTubeChannelVideo.server_id == server_id,
-                YouTubeChannelVideo.subscription_id == subscription_id,
-            )
-            .order_by(
+            statement.order_by(
                 YouTubeChannelVideo.published_at.desc(),
                 YouTubeChannelVideo.discovered_at.desc(),
-            )
-            .limit(min(max(int(limit), 1), 500))
+            ).limit(min(max(int(limit), 1), 500))
         )
     ).all()
     return YouTubeChannelVideoListModel(
         items=[_video_to_model(video, knowledge_source_status=source_status) for video, source_status in rows]
     )
+
+
+async def index_youtube_channel_video(
+    session: AsyncSession,
+    *,
+    server_id: int,
+    subscription_id: UUID,
+    video_id: str,
+    created_by_user_id: int,
+) -> YouTubeChannelVideoReadModel:
+    subscription = await _get_subscription(session, server_id=server_id, subscription_id=subscription_id)
+    video = await _get_channel_video(
+        session,
+        server_id=server_id,
+        subscription_id=subscription_id,
+        video_id=video_id,
+    )
+    if video.availability != "available":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "youtube_channel_video_unavailable",
+                "message": "This YouTube video is unavailable and cannot be indexed.",
+            },
+        )
+
+    source = None
+    if video.knowledge_source_id is not None:
+        candidate = await session.get(AIKnowledgeSource, video.knowledge_source_id)
+        if candidate is not None and candidate.deleted_at is None and candidate.status != "deleted":
+            return _video_to_model(video, knowledge_source_status=candidate.status)
+
+    canonical_url = f"https://www.youtube.com/watch?v={video.video_id}"
+    source = (
+        await session.exec(
+            select(AIKnowledgeSource)
+            .where(
+                AIKnowledgeSource.server_id == server_id,
+                AIKnowledgeSource.source_type == "youtube",
+                AIKnowledgeSource.source_url == canonical_url,
+                AIKnowledgeSource.deleted_at.is_(None),
+                AIKnowledgeSource.status != "deleted",
+            )
+            .order_by(AIKnowledgeSource.created_at.desc())
+        )
+    ).first()
+    if source is None:
+        created = await create_knowledge_source(
+            session,
+            server_id=server_id,
+            created_by_user_id=created_by_user_id,
+            body=AIKnowledgeSourceCreateModel(
+                source_type="youtube",
+                subject_type="server",
+                visibility="public_answer",
+                title=video.title[:255],
+                source_url=canonical_url,
+                metadata_json={
+                    "youtube": {
+                        "channel_subscription_id": str(subscription.id),
+                        "channel_id": subscription.channel_id,
+                        "video_id": video.video_id,
+                    }
+                },
+                queue_index=True,
+            ),
+        )
+        source = await session.get(AIKnowledgeSource, UUID(created.id))
+        if source is None:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={
+                    "code": "youtube_channel_index_failed",
+                    "message": "Video indexing could not be started.",
+                },
+            )
+    elif source.status not in {"queued", "processing", "ready"}:
+        await queue_knowledge_source_reindex(session, server_id=server_id, source_id=source.id)
+
+    video.knowledge_source_id = source.id
+    video.updated_at = utcnow_utc_tz()
+    session.add(video)
+    await session.flush()
+    return _video_to_model(video, knowledge_source_status=source.status)
 
 
 async def link_youtube_channel_video_source(
@@ -214,17 +311,12 @@ async def link_youtube_channel_video_source(
     video_id: str,
     knowledge_source_id: UUID | None,
 ) -> YouTubeChannelVideoReadModel:
-    video = (
-        await session.exec(
-            select(YouTubeChannelVideo).where(
-                YouTubeChannelVideo.server_id == server_id,
-                YouTubeChannelVideo.subscription_id == subscription_id,
-                YouTubeChannelVideo.video_id == video_id,
-            )
-        )
-    ).first()
-    if video is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="YouTube channel video not found")
+    video = await _get_channel_video(
+        session,
+        server_id=server_id,
+        subscription_id=subscription_id,
+        video_id=video_id,
+    )
 
     source_status = None
     if knowledge_source_id is not None:
@@ -251,6 +343,27 @@ async def link_youtube_channel_video_source(
     session.add(video)
     await session.flush()
     return _video_to_model(video, knowledge_source_status=source_status)
+
+
+async def _get_channel_video(
+    session: AsyncSession,
+    *,
+    server_id: int,
+    subscription_id: UUID,
+    video_id: str,
+) -> YouTubeChannelVideo:
+    video = (
+        await session.exec(
+            select(YouTubeChannelVideo).where(
+                YouTubeChannelVideo.server_id == server_id,
+                YouTubeChannelVideo.subscription_id == subscription_id,
+                YouTubeChannelVideo.video_id == video_id,
+            ).with_for_update()
+        )
+    ).first()
+    if video is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="YouTube channel video not found")
+    return video
 
 
 async def _get_subscription(

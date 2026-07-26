@@ -5,6 +5,7 @@ from uuid import uuid4
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from api.services.youtube_channels import index_youtube_channel_video, list_youtube_channel_videos
 from src.db.database import engine
 from src.db.models import AIKnowledgeIndexJob, AIKnowledgeSource, Server, YouTubeChannelSubscription, YouTubeChannelVideo
 from src.modules.ai.youtube_channel_links import link_youtube_source_to_channel_video
@@ -303,3 +304,77 @@ async def _database_timezone_scenario() -> None:
 
 def test_channel_sync_persists_provider_timestamp_in_postgresql():
     asyncio.run(_database_timezone_scenario())
+
+
+async def _manual_video_index_scenario() -> None:
+    await engine.dispose()
+    async with engine.connect() as connection:
+        transaction = await connection.begin()
+        try:
+            server_id = 8_100_000_000_000_000 + (uuid4().int % 100_000_000_000_000)
+            user_id = 8_200_000_000_000_000 + (uuid4().int % 100_000_000_000_000)
+            subscription = _subscription()
+            subscription.server_id = server_id
+            video = YouTubeChannelVideo(
+                subscription_id=subscription.id,
+                server_id=server_id,
+                video_id="manual12345",
+                title="Needle manual indexing video",
+                description="Searchable catalogue description",
+                availability="available",
+            )
+
+            async with AsyncSession(connection, expire_on_commit=False) as session:
+                session.add(Server(server_id=server_id, server_name="manual-index-test", bot_active=True))
+                session.add(subscription)
+                session.add(video)
+                await session.flush()
+
+                search_result = await list_youtube_channel_videos(
+                    session,
+                    server_id=server_id,
+                    subscription_id=subscription.id,
+                    search="needle",
+                )
+                missing_result = await list_youtube_channel_videos(
+                    session,
+                    server_id=server_id,
+                    subscription_id=subscription.id,
+                    search="not-present",
+                )
+                assert [item.video_id for item in search_result.items] == [video.video_id]
+                assert missing_result.items == []
+
+                indexed = await index_youtube_channel_video(
+                    session,
+                    server_id=server_id,
+                    subscription_id=subscription.id,
+                    video_id=video.video_id,
+                    created_by_user_id=user_id,
+                )
+                assert indexed.knowledge_source_id is not None
+                assert indexed.knowledge_source_status == "queued"
+
+                repeated = await index_youtube_channel_video(
+                    session,
+                    server_id=server_id,
+                    subscription_id=subscription.id,
+                    video_id=video.video_id,
+                    created_by_user_id=user_id,
+                )
+                jobs = (
+                    await session.exec(
+                        select(AIKnowledgeIndexJob).where(
+                            AIKnowledgeIndexJob.source_id == video.knowledge_source_id,
+                        )
+                    )
+                ).all()
+                assert repeated.knowledge_source_id == indexed.knowledge_source_id
+                assert len(jobs) == 1
+        finally:
+            await transaction.rollback()
+    await engine.dispose()
+
+
+def test_channel_video_search_and_manual_index_are_idempotent():
+    asyncio.run(_manual_video_index_scenario())
