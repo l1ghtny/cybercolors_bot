@@ -250,7 +250,7 @@ async def security_capture_permissions(interaction: discord.Interaction, mode: a
 
 @app_commands.checks.has_permissions(manage_guild=True)
 @app_commands.command(
-    name="security_lockdown",
+    name="lockdown",
     description="Enable or disable lockdown, slowmode, and emergency controls.",
 )
 async def security_lockdown(

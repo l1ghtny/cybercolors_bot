@@ -452,12 +452,12 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         workflow=["Reads current verified role permissions and saves them into the selected template."],
     ),
     BotCommandDocModel(
-        id="mod.security.security_lockdown",
-        name="security_lockdown",
-        qualified_name="mod security security_lockdown",
-        invoke="/mod security security_lockdown",
+        id="mod.lockdown",
+        name="lockdown",
+        qualified_name="mod lockdown",
+        invoke="/mod lockdown",
         category="security",
-        summary="Enable or disable lockdown permissions for the verified role.",
+        summary="Start or stop server lockdown, with optional slowmode and emergency bot or role pauses.",
         required_permissions=["manage_guild"],
         parameters=[
             _param("enabled", "boolean", "Enable lockdown when true; restore saved values when false."),
@@ -467,7 +467,12 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
             _param("pause_role_mutations", "boolean", "Pause ordinary role assignments and removals.", required=False),
             _param("reason", "string", "Incident reason.", required=False),
         ],
-        workflow=["Requires a verified role and saved permission template, edits the role permissions, stores state, and confirms ephemerally."],
+        workflow=[
+            "Requires a configured verified role and saved normal and lockdown permission templates.",
+            "When enabled, applies lockdown permissions, optional channel slowmode, and the selected bot-response or role-change pauses.",
+            "When disabled, restores normal role permissions and each channel's previous slowmode, then clears the emergency pauses.",
+            "Stores the new state and sends an ephemeral confirmation.",
+        ],
     ),
     BotCommandDocModel(
         id="mod.security.verify_member",
@@ -841,9 +846,9 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         qualified_name="check_dr",
         invoke="/check_dr",
         category="birthdays",
-        summary="Force a birthday role check.",
-        workflow=["Runs birthday and role checks immediately, then responds OK."],
-        notes=["Primarily an operational/testing command."],
+        summary="Run the birthday and birthday-role checks immediately instead of waiting for the scheduler.",
+        workflow=["Runs both scheduled checks immediately and responds with OK when they finish."],
+        notes=["Operational/testing command; normal birthday checks run automatically."],
     ),
     BotCommandDocModel(
         id="birthday_list",
@@ -870,9 +875,9 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         qualified_name="force_validation",
         invoke="/force_validation",
         category="maintenance",
-        summary="Force user validation.",
-        workflow=["Runs the validation process and reports success or the exception ephemerally."],
-        notes=["The command description marks this as testing-purpose functionality."],
+        summary="Run the user-validation maintenance process immediately and report the result.",
+        workflow=["Runs the same validation process used by scheduled maintenance and reports success or the exception ephemerally."],
+        notes=["Operational/testing command; use it only when an immediate validation pass is needed."],
     ),
     BotCommandDocModel(
         id="cat_text",
@@ -914,7 +919,7 @@ COMMAND_RBAC_PERMISSIONS: dict[str, tuple[str, ...]] = {
     "mod.security.security_set_newcomer_role": ("security.settings.edit",),
     "mod.security.security_create_newcomer_role": ("security.settings.edit",),
     "mod.security.security_capture_permissions": ("security.settings.edit",),
-    "mod.security.security_lockdown": ("security.lockdown.manage",),
+    "mod.lockdown": ("security.lockdown.manage",),
     "mod.security.verify_member": ("security.settings.edit",),
     "mod.settings.moderation_settings": ("moderation.settings.view",),
     "mod.settings.moderation_set_language": ("localization.settings.edit",),
@@ -959,11 +964,16 @@ RU_PARAMETER_DESCRIPTIONS: dict[str, str] = {
     "auto_release_minutes": "Задержка автоматического снятия ограничений от 1 до 43200 минут.",
     "case": "UUID модераторского дела или вариант из автодополнения.",
     "channel": "Канал Discord.",
+    "channel_ids": "ID текстовых каналов через запятую; для них бот изменит slowmode.",
     "code": "Необязательный короткий код правила.",
     "color_hex": "Цвет роли в формате из шести hex-символов.",
     "commentary": "Необязательный комментарий модератора, который сохранится вместе с действием.",
     "default_minutes": "Длительность мута по умолчанию от 1 до 43200 минут.",
     "description": "Необязательное описание.",
+    "day": "День месяца.",
+    "delete_message_channel": "Необязательный канал, в котором бот будет удалять сообщения.",
+    "delete_message_limit": "Максимальное число удаляемых сообщений: по умолчанию 25, не больше 100.",
+    "delete_messages": "Период, за который нужно удалить недавние сообщения пользователя.",
     "duration": "Готовый вариант длительности.",
     "duration_unit": "Единица измерения для duration_value.",
     "duration_value": "Свое значение длительности от 1 до 999.",
@@ -980,6 +990,10 @@ RU_PARAMETER_DESCRIPTIONS: dict[str, str] = {
     "message_links": "Ссылки на сообщения Discord через пробел, запятую или новую строку.",
     "mode": "Какой шаблон прав обновить.",
     "month": "Месяц.",
+    "name": "Новое название.",
+    "note": "Текст заметки.",
+    "pause_public_responses": "Приостановить публичные ответы бота и ИИ на время локдауна.",
+    "pause_role_mutations": "Приостановить обычную выдачу и снятие ролей на время локдауна.",
     "permissions": "Целое число прав Discord в виде строки.",
     "phrase": "Фраза-триггер.",
     "reason": "Необязательная причина.",
@@ -988,6 +1002,7 @@ RU_PARAMETER_DESCRIPTIONS: dict[str, str] = {
     "role": "Роль Discord.",
     "role_name": "Название роли.",
     "rule": "Правило сервера из активных правил.",
+    "slowmode_seconds": "Интервал slowmode от 0 до 21600 секунд.",
     "sort_order": "Позиция сортировки от 0 до 999.",
     "summary": "Необязательное краткое описание дела.",
     "text": "Текст для изображения.",
@@ -996,6 +1011,78 @@ RU_PARAMETER_DESCRIPTIONS: dict[str, str] = {
     "user": "Пользователь Discord.",
     "value": "Значение: ссылка или текст.",
 }
+
+RU_PARAMETER_DESCRIPTIONS_BY_COMMAND: dict[str, dict[str, str]] = {
+    "tempvoice.rename": {
+        "name": "Новое название временного голосового канала: от 1 до 100 символов.",
+    },
+    "tempvoice.limit": {
+        "limit": "Лимит участников в канале от 0 до 99; 0 снимает ограничение.",
+    },
+    "mod.warn": {
+        "case": "Открытое дело из автодополнения; если доступно, можно сразу создать новое.",
+    },
+    "mod.mute": {
+        "case": "Открытое дело из автодополнения; если доступно, можно сразу создать новое.",
+        "duration": "Готовая длительность мута; без выбора действует настройка сервера.",
+    },
+    "mod.kick": {
+        "case": "Открытое дело из автодополнения; если доступно, можно сразу создать новое.",
+    },
+    "mod.ban": {
+        "case": "Открытое дело из автодополнения; если доступно, можно сразу создать новое.",
+        "duration": "Срок бана; без выбора бан будет бессрочным.",
+    },
+    "mod.unmute": {
+        "reason": "Необязательная причина досрочного снятия мута.",
+    },
+    "mod.unban": {
+        "user": "Заблокированный пользователь Discord.",
+        "reason": "Необязательная причина снятия бана.",
+    },
+    "mod.security.security_set_verified_role": {
+        "role": "Роль, которую получают участники после проверки или онбординга.",
+    },
+    "mod.security.security_set_newcomer_role": {
+        "role": "Существующая роль с ограничениями для новичков.",
+        "enabled": "Включить ограничения для новичков после сохранения роли.",
+    },
+    "mod.security.security_create_newcomer_role": {
+        "enabled": "Включить ограничения для новичков после создания роли.",
+    },
+    "mod.lockdown": {
+        "enabled": "true включает локдаун, false возвращает сохранённые обычные настройки.",
+        "reason": "Необязательная причина включения или отключения локдауна.",
+    },
+    "mod.settings.moderation_set_mute_role": {
+        "role": "Роль, которую бот выдаёт при муте и снимает при размуте.",
+    },
+    "mod.rules.rule_add": {
+        "title": "Название правила.",
+    },
+    "mod.cases.create": {
+        "title": "Название модераторского дела.",
+        "rule": "Необязательное активное правило, связанное с делом.",
+    },
+    "mod.cases.list": {
+        "user": "Необязательный фильтр по участнику.",
+        "limit": "Сколько открытых дел показать: от 1 до 10.",
+    },
+    "mod.cases.add_user": {
+        "role": "Связь пользователя с делом: участник дела или его цель.",
+    },
+    "mod.cases.remove_rule": {
+        "rule": "UUID правила, выбранного из автодополнения.",
+    },
+    "mod.actions.list": {
+        "user": "Необязательный фильтр по участнику.",
+        "limit": "Сколько недавних действий показать: от 1 до 10.",
+    },
+    "mod.actions.revert": {
+        "reason": "Необязательная причина отмены модераторского действия.",
+    },
+}
+
 
 RU_CHOICE_NAMES_BY_VALUE: dict[str, str] = {
     "default": "настройка сервера",
@@ -1023,6 +1110,23 @@ RU_CHOICE_NAMES_BY_VALUE: dict[str, str] = {
     "text": "Текст",
     "related": "Связанный",
     "target": "Цель",
+    "15": "15 минут",
+    "60": "1 час",
+    "360": "6 часов",
+    "1440": "24 часа",
+    "10080": "7 дней",
+    "01": "Январь",
+    "02": "Февраль",
+    "03": "Март",
+    "04": "Апрель",
+    "05": "Май",
+    "06": "Июнь",
+    "07": "Июль",
+    "08": "Август",
+    "09": "Сентябрь",
+    "10": "Октябрь",
+    "11": "Ноябрь",
+    "12": "Декабрь",
 }
 
 RU_COMPONENTS_BY_LABEL: dict[str, tuple[str, str]] = {
@@ -1038,6 +1142,8 @@ RU_COMPONENTS_BY_LABEL: dict[str, tuple[str, str]] = {
     ),
     "Cancel": ("Отмена", "Оставляет запись без изменений."),
     "Matching triggers": ("Найденные триггеры", "Если совпадений несколько, позволяет выбрать нужный триггер."),
+    "Message": ("Сообщение", "Текст ответа от имени Modral, не больше 2000 символов."),
+    "Notify author": ("Уведомить автора", "Отправляет автору исходного сообщения стандартное уведомление Discord об ответе."),
     "Open case": ("Открыть дело", "Кнопка-ссылка на дело в панели управления."),
     "Open dashboard": ("Открыть в панели", "Кнопка-ссылка на модераторское действие в панели управления."),
     "Replies list": ("Список ответов", "Постраничный список Discord, когда ответы настроены."),
@@ -1053,9 +1159,26 @@ RU_COMPONENTS_BY_LABEL: dict[str, tuple[str, str]] = {
     "role": ("Роль", "Связь пользователя с делом: связанный или цель."),
     "rule": ("Правило", "Автодополнение ищет активные правила сервера."),
     "trigger": ("Триггер", "Автодополнение ищет настроенные триггеры ответов."),
+    "delete_messages": ("Удаление сообщений", "Выбор периода: от 15 минут до 7 дней."),
 }
 
 RU_COMMAND_TEXT: dict[str, dict[str, list[str] | str]] = {
+    "tempvoice.rename": {
+        "summary": "Переименовать свой временный голосовой канал, если это разрешено в настройках сервера.",
+        "workflow": [
+            "Проверяет, что пользователь находится в созданном им временном голосовом канале.",
+            "Проверяет, разрешено ли владельцам переименовывать каналы и нужна ли для этого специальная роль.",
+            "Переименовывает канал в Discord и обновляет сохранённое название активного канала и его архива.",
+        ],
+    },
+    "tempvoice.limit": {
+        "summary": "Задать лимит участников в своём временном голосовом канале.",
+        "workflow": [
+            "Проверяет, что пользователь находится в созданном им временном голосовом канале.",
+            "Проверяет, разрешено ли владельцам менять лимит и нужна ли для этого специальная роль.",
+            "Обновляет лимит участников голосового канала в Discord; значение 0 снимает ограничение.",
+        ],
+    },
     "mod.warn": {
         "summary": "Выдать предупреждение участнику, указать правило сервера и записать модераторское действие.",
         "workflow": [
@@ -1063,32 +1186,36 @@ RU_COMMAND_TEXT: dict[str, dict[str, list[str] | str]] = {
             "Загружает активные правила сервера и требует корректное выбранное правило.",
             "Проверяет, что модератор может применить действие к выбранному участнику.",
             "Создает или связывает модераторское дело, создает предупреждение и сохраняет изменения.",
+            "Если задан период удаления, удаляет недавние сообщения участника из журнала и прикрепляет их к делу как доказательства.",
             "Публикует уведомление в канале и отправляет модератору приватный отчет.",
         ],
+        "notes": ["Из Discord-команды можно удалить недавние сообщения участника; в панели управления также можно выбрать отдельные сообщения."],
     },
     "mod.mute": {
-        "summary": "Выдать настроенную mute-роль на выбранную длительность и записать действие.",
+        "summary": "Выдать участнику роль мута на выбранный срок и записать модераторское действие.",
         "workflow": [
-            "Загружает настройки модерации и требует настроенную mute-роль.",
+            "Загружает настройки модерации и проверяет, что роль мута настроена.",
             "Проверяет, что роль существует и находится ниже роли бота.",
             "Вычисляет длительность по готовому варианту или пользовательским полям.",
+            "Если задан период удаления, удаляет недавние сообщения участника из журнала и прикрепляет их к делу как доказательства.",
             "Записывает мут, применяет изменения в Discord, публикует уведомление и отправляет приватный отчет.",
         ],
+        "notes": ["Из Discord-команды можно удалить недавние сообщения участника; в панели управления также можно выбрать отдельные сообщения."],
     },
     "mod.unmute": {
-        "summary": "Снять mute-роль и закрыть активные муты участника.",
+        "summary": "Снять с участника роль мута и закрыть его активные муты.",
         "workflow": [
             "Проверяет выбранного участника.",
-            "Снимает настроенную mute-роль, если она есть у пользователя.",
-            "Деактивирует активные mute-действия пользователя.",
+            "Снимает настроенную роль мута, если она есть у пользователя.",
+            "Закрывает активные действия типа «мут» для этого пользователя.",
             "Пишет в модераторский лог при настроенном канале, публикует уведомление и отправляет приватный отчет.",
         ],
     },
     "mod.kick": {
-        "summary": "Кикнуть участника и записать действие со ссылкой на правило.",
+        "summary": "Исключить участника с сервера и записать действие со ссылкой на правило.",
         "workflow": [
             "Проверяет иерархию ролей и выбранное правило.",
-            "Создает модераторское действие через общий сервис и применяет Discord-эффект.",
+            "Создаёт модераторское действие и исключает участника с сервера Discord.",
             "Публикует уведомление и отправляет модератору приватный отчет.",
         ],
     },
@@ -1097,15 +1224,17 @@ RU_COMMAND_TEXT: dict[str, dict[str, list[str] | str]] = {
         "workflow": [
             "Вычисляет длительность бана; без выбранной длительности бан считается постоянным.",
             "Проверяет иерархию ролей и выбранное правило.",
+            "Если задан период удаления, удаляет недавние сообщения участника из журнала и прикрепляет их к делу как доказательства.",
             "Создает модераторское действие и применяет бан в Discord.",
             "Публикует уведомление и отправляет модератору приватный отчет.",
         ],
+        "notes": ["Из Discord-команды можно удалить недавние сообщения участника; в панели управления также можно выбрать отдельные сообщения."],
     },
     "mod.unban": {
-        "summary": "Разбанить пользователя Discord и закрыть активные ban-действия.",
+        "summary": "Снять бан с пользователя Discord и закрыть его активные баны.",
         "workflow": [
             "Пытается снять бан в Discord.",
-            "Деактивирует активные ban-действия пользователя.",
+            "Закрывает активные действия типа «бан» для этого пользователя.",
             "Публикует уведомление и отправляет модератору приватный отчет.",
         ],
     },
@@ -1137,19 +1266,19 @@ RU_COMMAND_TEXT: dict[str, dict[str, list[str] | str]] = {
         "workflow": ["Доступно через контекстное меню сообщения Discord.", "Импортирует правила без замены существующих и обновляет кеш правил бота."],
     },
     "context.reply_as_modral": {
-        "summary": "\u041e\u0442\u043f\u0440\u0430\u0432\u0438\u0442\u044c \u0430\u0443\u0434\u0438\u0440\u0443\u0435\u043c\u044b\u0439 \u0442\u0435\u043a\u0441\u0442\u043e\u0432\u044b\u0439 \u043e\u0442\u0432\u0435\u0442 \u043e\u0442 \u0438\u043c\u0435\u043d\u0438 \u0431\u043e\u0442\u0430.",
+        "summary": "Ответить на выбранное сообщение от имени бота и записать отправку в журнал.",
         "workflow": [
-            "\u0414\u043e\u0441\u0442\u0443\u043f\u043d\u043e \u0447\u0435\u0440\u0435\u0437 \u043a\u043e\u043d\u0442\u0435\u043a\u0441\u0442\u043d\u043e\u0435 \u043c\u0435\u043d\u044e \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u044f Discord.",
-            "\u041f\u043e\u0432\u0442\u043e\u0440\u043d\u043e \u043f\u0440\u043e\u0432\u0435\u0440\u044f\u0435\u0442 \u043f\u0440\u0430\u0432\u0430 Discord \u0438 dashboard, \u043f\u043e \u0432\u044b\u0431\u043e\u0440\u0443 \u0443\u0432\u0435\u0434\u043e\u043c\u043b\u044f\u0435\u0442 \u0442\u043e\u043b\u044c\u043a\u043e \u0430\u0432\u0442\u043e\u0440\u0430 \u0438\u0441\u0445\u043e\u0434\u043d\u043e\u0433\u043e \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u044f, \u043f\u043e\u0434\u0430\u0432\u043b\u044f\u0435\u0442 \u0432\u0441\u0435 \u043e\u0441\u0442\u0430\u043b\u044c\u043d\u044b\u0435 \u0443\u043f\u043e\u043c\u0438\u043d\u0430\u043d\u0438\u044f \u0438 \u0437\u0430\u043f\u0438\u0441\u044b\u0432\u0430\u0435\u0442 \u043c\u043e\u0434\u0435\u0440\u0430\u0442\u043e\u0440\u0430 \u0432 \u0436\u0443\u0440\u043d\u0430\u043b \u0430\u0443\u0434\u0438\u0442\u0430.",
+            "Команда доступна в контекстном меню сообщения Discord.",
+            "Повторно проверяет права Discord и панели управления, при необходимости уведомляет только автора исходного сообщения, блокирует остальные упоминания и записывает модератора в журнал.",
         ],
     },
     "mod.security.security_set_verified_role": {
-        "summary": "Установить роль, которую получают участники после прохождения онбординга.",
-        "workflow": ["Сохраняет verified-роль и, если обычный шаблон прав еще не задан, снимает с нее текущие права как шаблон normal."],
+        "summary": "Указать роль, которую получают участники после проверки или онбординга.",
+        "workflow": ["Сохраняет роль подтверждённого участника и, если обычный шаблон ещё не задан, сохраняет её текущие права как обычный шаблон."],
     },
     "mod.security.newcomer_role_suggest": {
         "summary": "Показать рекомендуемые настройки ограниченной роли новичка.",
-        "workflow": ["Строит рекомендацию на backend и отправляет название роли, права, цвет и объяснение приватным сообщением."],
+        "workflow": ["Формирует рекомендуемые название, права и цвет роли, объясняет выбор и отправляет результат приватным сообщением."],
     },
     "mod.security.security_set_newcomer_role": {
         "summary": "Назначить существующую роль как ограниченную роль новичка.",
@@ -1160,20 +1289,25 @@ RU_COMMAND_TEXT: dict[str, dict[str, list[str] | str]] = {
         "workflow": ["Создает роль в Discord, сохраняет ее в настройках безопасности и приватно подтверждает режим снятия ограничений."],
     },
     "mod.security.security_capture_permissions": {
-        "summary": "Сохранить текущие права verified-роли как обычный шаблон или шаблон локдауна.",
-        "workflow": ["Читает текущие права verified-роли и сохраняет их в выбранный шаблон."],
+        "summary": "Сохранить текущие права роли подтверждённого участника как обычный шаблон или шаблон локдауна.",
+        "workflow": ["Читает текущие права роли подтверждённого участника и сохраняет их в выбранный шаблон."],
     },
-    "mod.security.security_lockdown": {
-        "summary": "Включить или отключить lockdown-права для verified-роли.",
-        "workflow": ["Требует verified-роль и сохраненный шаблон прав, меняет права роли, сохраняет состояние и подтверждает приватно."],
+    "mod.lockdown": {
+        "summary": "Включить или отключить локдаун сервера, slowmode и экстренные паузы для бота или ролей.",
+        "workflow": [
+            "Проверяет, что настроена роль подтверждённого участника и сохранены обычный шаблон прав и шаблон локдауна.",
+            "При включении применяет права локдауна, настраивает slowmode в выбранных каналах и включает выбранные паузы.",
+            "При отключении возвращает обычные права роли и прежний slowmode каждого канала, затем снимает экстренные паузы.",
+            "Сохраняет новое состояние и отправляет приватное подтверждение.",
+        ],
     },
     "mod.security.verify_member": {
-        "summary": "Выдать участнику настроенную verified-роль.",
+        "summary": "Выдать участнику настроенную роль подтверждённого участника.",
         "workflow": ["Проверяет, что роль настроена, пропускает пользователей, у которых она уже есть, и выдает роль в Discord."],
     },
     "mod.settings.moderation_settings": {
         "summary": "Показать настройки модерации этого сервера.",
-        "workflow": ["Загружает или создает настройки модерации и приватно показывает mute-роль, канал логов, язык и длительности мута."],
+        "workflow": ["Загружает или создаёт настройки модерации и приватно показывает роль мута, канал журнала, язык, а также стандартную и максимальную длительность мута."],
     },
     "mod.settings.moderation_set_language": {
         "summary": "Установить язык бота для этого сервера.",
@@ -1192,7 +1326,7 @@ RU_COMMAND_TEXT: dict[str, dict[str, list[str] | str]] = {
         "workflow": ["Очищает сохраненный канал модераторских логов и подтверждает приватно."],
     },
     "mod.settings.moderation_create_mute_role": {
-        "summary": "Создать новую mute-роль и привязать ее к настройкам модерации.",
+        "summary": "Создать новую роль мута и привязать её к настройкам модерации.",
         "workflow": ["Создает роль без прав, применяет запреты в поддерживаемых каналах, сохраняет роль и сообщает число успешных и неуспешных изменений."],
     },
     "mod.settings.moderation_set_mute_defaults": {
@@ -1205,23 +1339,23 @@ RU_COMMAND_TEXT: dict[str, dict[str, list[str] | str]] = {
     },
     "mod.cases.list": {
         "summary": "Показать открытые модераторские дела.",
-        "workflow": ["Загружает открытые дела, добавляет детали и связанные действия, затем отправляет приватный embed."],
+        "workflow": ["Загружает открытые дела вместе с деталями и связанными действиями, затем отправляет приватную карточку."],
     },
     "mod.cases.show": {
         "summary": "Показать детали модераторского дела.",
-        "workflow": ["Загружает детали дела и отправляет embed с целью, статусом, заметками, доказательствами, правилами, связанными действиями и кнопкой панели."],
+        "workflow": ["Загружает дело и отправляет карточку с участниками, статусом, заметками, доказательствами, правилами, связанными действиями и кнопкой перехода в панель управления."],
     },
     "mod.cases.close": {
         "summary": "Закрыть модераторское дело.",
-        "workflow": ["Меняет статус дела на closed и записывает модератора, который закрыл дело."],
+        "workflow": ["Меняет статус дела на «закрыто» и записывает модератора, который его закрыл."],
     },
     "mod.cases.reopen": {
-        "summary": "Переоткрыть модераторское дело.",
-        "workflow": ["Возвращает статус дела в open."],
+        "summary": "Снова открыть закрытое или архивное модераторское дело.",
+        "workflow": ["Возвращает делу статус «открыто»."],
     },
     "mod.cases.archive": {
         "summary": "Архивировать модераторское дело.",
-        "workflow": ["Меняет статус дела на archived и записывает действующего модератора."],
+        "workflow": ["Меняет статус дела на «в архиве» и записывает модератора, который выполнил команду."],
     },
     "mod.cases.note": {
         "summary": "Добавить заметку к модераторскому делу.",
@@ -1229,7 +1363,7 @@ RU_COMMAND_TEXT: dict[str, dict[str, list[str] | str]] = {
     },
     "mod.cases.evidence": {
         "summary": "Добавить текстовое доказательство или ссылку к модераторскому делу.",
-        "workflow": ["Преобразует URL в link-доказательство, а Text в текстовую заметку, сохраняет запись и подтверждает приватно."],
+        "workflow": ["Сохраняет URL как ссылку, а обычный текст — как текстовое доказательство, затем отправляет приватное подтверждение."],
     },
     "mod.cases.add_user": {
         "summary": "Добавить связанного пользователя или цель в модераторское дело.",
@@ -1257,11 +1391,11 @@ RU_COMMAND_TEXT: dict[str, dict[str, list[str] | str]] = {
     },
     "mod.actions.list": {
         "summary": "Показать недавние модераторские действия.",
-        "workflow": ["Загружает недавние действия и отправляет приватный embed со ссылками на панель управления."],
+        "workflow": ["Загружает недавние действия и отправляет приватную карточку со ссылками на панель управления."],
     },
     "mod.actions.revert": {
-        "summary": "Откатить активный мут или бан.",
-        "workflow": ["Находит действие, разрешает только активные муты и баны, применяет откат в Discord, деактивирует действие, логирует и подтверждает."],
+        "summary": "Отменить активное предупреждение, мут или бан и записать результат.",
+        "workflow": ["Находит действие, проверяет, что активное предупреждение, мут или бан можно отменить, выполняет обратное действие в Discord, закрывает запись и отправляет подтверждение."],
     },
     "add_my_birthday": {
         "summary": "Добавить свой день рождения в список сервера.",
@@ -1272,7 +1406,7 @@ RU_COMMAND_TEXT: dict[str, dict[str, list[str] | str]] = {
         "workflow": ["Обновляет сохраненную дату дня рождения и предлагает пользователю подтвердить часовой пояс."],
     },
     "birthdays_settings": {
-        "summary": "Настроить канал дней рождения и роль именинника через Discord UI.",
+        "summary": "Настроить канал поздравлений и роль именинника через элементы интерфейса Discord.",
         "workflow": ["Показывает текущие настройки, если они есть, или запускает выбор канала и роли."],
     },
     "add_reply": {
@@ -1284,9 +1418,9 @@ RU_COMMAND_TEXT: dict[str, dict[str, list[str] | str]] = {
         "workflow": ["Ищет триггеры, показывает подтверждение для одного совпадения или меню выбора для нескольких, затем удаляет триггер и осиротевший ответ после подтверждения."],
     },
     "check_dr": {
-        "summary": "Принудительно запустить проверку ролей дней рождения.",
-        "workflow": ["Сразу запускает проверки дней рождения и ролей, затем отвечает OK."],
-        "notes": ["В основном служебная или тестовая команда."],
+        "summary": "Сразу запустить проверку дней рождения и ролей, не дожидаясь планировщика.",
+        "workflow": ["Немедленно запускает обе плановые проверки и после завершения отвечает OK."],
+        "notes": ["Служебная команда для проверки; обычно бот запускает эти процессы автоматически."],
     },
     "birthday_list": {
         "summary": "Показать все дни рождения на сервере.",
@@ -1294,12 +1428,12 @@ RU_COMMAND_TEXT: dict[str, dict[str, list[str] | str]] = {
     },
     "show_replies": {
         "summary": "Показать все настроенные триггеры пользовательских ответов на сервере.",
-        "workflow": ["Загружает триггеры и ответы сервера, затем показывает их через постраничный Discord view."],
+        "workflow": ["Загружает триггеры и ответы сервера, затем показывает их в постраничном списке Discord."],
     },
     "force_validation": {
-        "summary": "Принудительно запустить проверку пользователей.",
-        "workflow": ["Запускает процесс валидации и приватно сообщает успех или ошибку."],
-        "notes": ["Описание команды помечает ее как функциональность для тестирования."],
+        "summary": "Сразу запустить служебную проверку пользователей и показать результат.",
+        "workflow": ["Запускает тот же процесс, который используется при плановом обслуживании, и приватно сообщает об успехе или ошибке."],
+        "notes": ["Служебная команда; используйте её, только если проверку нужно запустить немедленно."],
     },
     "cat_text": {
         "summary": "Отправить сгенерированную картинку кота с текстом.",
@@ -1328,13 +1462,21 @@ def _localize_choices(choices: list[BotCommandChoiceModel], locale: str) -> list
     ]
 
 
-def _localize_parameters(parameters: list[BotCommandParameterModel], locale: str) -> list[BotCommandParameterModel]:
+def _localize_parameters(
+    parameters: list[BotCommandParameterModel],
+    locale: str,
+    command_id: str,
+) -> list[BotCommandParameterModel]:
     if locale != "ru":
         return parameters
+    command_descriptions = RU_PARAMETER_DESCRIPTIONS_BY_COMMAND.get(command_id, {})
     return [
         parameter.model_copy(
             update={
-                "description": RU_PARAMETER_DESCRIPTIONS.get(parameter.name, parameter.description),
+                "description": command_descriptions.get(
+                    parameter.name,
+                    RU_PARAMETER_DESCRIPTIONS.get(parameter.name, parameter.description),
+                ),
                 "choices": _localize_choices(parameter.choices, locale),
             }
         )
@@ -1360,7 +1502,7 @@ def _localize_command(command: BotCommandDocModel, locale: str) -> BotCommandDoc
         deep=True,
         update={
             "summary": translation.get("summary", command.summary),
-            "parameters": _localize_parameters(command.parameters, locale),
+            "parameters": _localize_parameters(command.parameters, locale, command.id),
             "components": _localize_components(command.components, locale),
             "workflow": translation.get("workflow", command.workflow),
             "notes": translation.get("notes", command.notes),

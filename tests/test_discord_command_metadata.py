@@ -4,7 +4,16 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from api.api_main import app
-from api.services.bot_command_catalog import BOT_COMMANDS, get_bot_command, list_bot_commands
+from api.services.bot_command_catalog import (
+    BOT_COMMANDS,
+    RU_CHOICE_NAMES_BY_VALUE,
+    RU_COMMAND_TEXT,
+    RU_COMPONENTS_BY_LABEL,
+    RU_PARAMETER_DESCRIPTIONS,
+    RU_PARAMETER_DESCRIPTIONS_BY_COMMAND,
+    get_bot_command,
+    list_bot_commands,
+)
 from api.services.rbac_catalog import get_all_permission_keys
 
 
@@ -218,7 +227,7 @@ def test_bot_command_catalog_endpoint_returns_filterable_contract():
     response = client.get("/bot-commands", params={"category": "moderation-cases"})
     assert response.status_code == 200
     body = response.json()
-    assert body["version"] == "2026-06-30"
+    assert body["version"] == "2026-07-26"
     assert body["locale"] == "en"
     assert body["available_locales"] == ["en", "ru"]
     assert {command["category"] for command in body["commands"]} == {"moderation-cases"}
@@ -251,7 +260,11 @@ def test_bot_command_catalog_exposes_valid_rbac_permission_keys():
 
     assert get_bot_command("mod.warn").required_rbac_permissions == ["moderation.actions.apply.warn"]
     assert get_bot_command("mod.actions.revert").required_rbac_permissions == ["moderation.actions.revert"]
-    assert get_bot_command("mod.security.security_lockdown").required_rbac_permissions == ["security.lockdown.manage"]
+    lockdown_command = get_bot_command("mod.lockdown")
+    assert lockdown_command is not None
+    assert lockdown_command.invoke == "/mod lockdown"
+    assert lockdown_command.required_rbac_permissions == ["security.lockdown.manage"]
+    assert {parameter.name for parameter in lockdown_command.parameters}.issuperset({"enabled", "reason"})
 
 
 def _function_nodes_by_name() -> dict[str, ast.AsyncFunctionDef | ast.FunctionDef]:
@@ -364,3 +377,44 @@ def test_bot_command_catalog_list_returns_russian_locale_metadata():
     assert body["locale"] == "ru"
     assert body["available_locales"] == ["en", "ru"]
     assert any(command["summary"].startswith("Выдать предупреждение") for command in body["commands"])
+
+
+def test_russian_bot_command_catalog_has_no_english_fallbacks():
+    assert set(RU_COMMAND_TEXT) == {command.id for command in BOT_COMMANDS}
+
+    missing: list[str] = []
+    for command in BOT_COMMANDS:
+        translation = RU_COMMAND_TEXT[command.id]
+        if not translation.get("summary"):
+            missing.append(f"{command.id}: summary")
+        if command.workflow and not translation.get("workflow"):
+            missing.append(f"{command.id}: workflow")
+        if command.notes and not translation.get("notes"):
+            missing.append(f"{command.id}: notes")
+
+        command_parameters = RU_PARAMETER_DESCRIPTIONS_BY_COMMAND.get(command.id, {})
+        for parameter in command.parameters:
+            if parameter.name not in command_parameters and parameter.name not in RU_PARAMETER_DESCRIPTIONS:
+                missing.append(f"{command.id}: parameter {parameter.name}")
+            for choice in parameter.choices:
+                if str(choice.value) not in RU_CHOICE_NAMES_BY_VALUE:
+                    missing.append(f"{command.id}: choice {choice.value}")
+
+        for component in command.components:
+            if component.label not in RU_COMPONENTS_BY_LABEL:
+                missing.append(f"{command.id}: component {component.label}")
+
+    assert missing == []
+
+
+def test_russian_parameter_help_uses_command_context():
+    temp_voice_limit = get_bot_command("tempvoice.limit", locale="ru")
+    case_list = get_bot_command("mod.cases.list", locale="ru")
+    lockdown = get_bot_command("mod.lockdown", locale="ru")
+
+    assert temp_voice_limit is not None
+    assert temp_voice_limit.parameters[0].description == "Лимит участников в канале от 0 до 99; 0 снимает ограничение."
+    assert case_list is not None
+    assert case_list.parameters[1].description == "Сколько открытых дел показать: от 1 до 10."
+    assert lockdown is not None
+    assert lockdown.parameters[0].description.startswith("true включает локдаун")
