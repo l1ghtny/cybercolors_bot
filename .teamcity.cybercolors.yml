@@ -258,22 +258,63 @@ jobs:
                             key: password
           YAML
 
-          for i in $(seq 1 60); do
-            POD_NAME="$(kubectl -n cybercolors get pods -l "job-name=$JOB_NAME" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
-            if [ -n "$POD_NAME" ]; then
+          migration_container_logs() {
+            local pod pod_started
+
+            while IFS= read -r pod; do
+              [ -n "$pod" ] || continue
+              pod_started="$(
+                kubectl -n cybercolors get "$pod" \
+                  -o jsonpath='{.status.containerStatuses[?(@.name=="migration")].state.running.startedAt}{.status.containerStatuses[?(@.name=="migration")].state.terminated.finishedAt}' \
+                  2>/dev/null || true
+              )"
+
+              if [ -n "$pod_started" ]; then
+                kubectl -n cybercolors logs "$pod" -c migration --tail=200 || true
+              else
+                echo "Logs unavailable for $pod: migration container has not started."
+              fi
+            done < <(
+              kubectl -n cybercolors get pods -l "job-name=$JOB_NAME" -o name 2>/dev/null || true
+            )
+          }
+
+          MIGRATION_RESULT="timeout"
+          for i in $(seq 1 600); do
+            JOB_CONDITIONS="$(
+              kubectl -n cybercolors get "job.batch/$JOB_NAME" \
+                -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}|{.status.conditions[?(@.type=="Failed")].status}' \
+                2>/dev/null || true
+            )"
+            JOB_COMPLETE="${JOB_CONDITIONS%%|*}"
+            JOB_FAILED="${JOB_CONDITIONS#*|}"
+
+            if [ "${JOB_COMPLETE:-}" = "True" ]; then
+              MIGRATION_RESULT="complete"
               break
+            fi
+            if [ "${JOB_FAILED:-}" = "True" ]; then
+              MIGRATION_RESULT="failed"
+              break
+            fi
+
+            if [ $((i % 30)) -eq 0 ]; then
+              echo "Waiting for migration job $JOB_NAME (${i}s elapsed)..."
+              kubectl -n cybercolors get "job.batch/$JOB_NAME" -o wide 2>/dev/null || true
+              kubectl -n cybercolors get pods -l "job-name=$JOB_NAME" -o wide 2>/dev/null || true
             fi
             sleep 1
           done
 
-          if ! kubectl -n cybercolors wait --for=condition=complete "job.batch/$JOB_NAME" --timeout=600s; then
+          if [ "$MIGRATION_RESULT" != "complete" ]; then
+            echo "Migration job $JOB_NAME did not complete successfully (result: $MIGRATION_RESULT)." >&2
             kubectl -n cybercolors describe "job.batch/$JOB_NAME" || true
             kubectl -n cybercolors get pods -l "job-name=$JOB_NAME" -o wide || true
-            kubectl -n cybercolors logs -l "job-name=$JOB_NAME" --all-containers=true --tail=200 || true
+            migration_container_logs
             exit 1
           fi
 
-          kubectl -n cybercolors logs -l "job-name=$JOB_NAME" --all-containers=true --tail=200 || true
+          migration_container_logs
 
   deploy:
     name: 6. Deploy with Argo CD
