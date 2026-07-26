@@ -245,6 +245,7 @@ def test_settings_write_routes_use_feature_permissions():
         ("POST", "/replies/{server_id}/delete_replies"): {"replies.manage"},
         ("POST", "/replies/{server_id}/edit_replies"): {"replies.manage"},
         ("POST", "/replies/{server_id}/duplicate-selected"): {"replies.manage"},
+        ("PUT", "/replies/{server_id}/settings"): {"replies.manage"},
         ("POST", "/birthdays/{server_id}"): {"birthdays.records.manage"},
         ("PUT", "/birthdays/{server_id}/{user_id}"): {"birthdays.records.manage"},
         ("DELETE", "/birthdays/{server_id}/{user_id}"): {"birthdays.records.manage"},

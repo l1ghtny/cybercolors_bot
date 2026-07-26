@@ -16,9 +16,16 @@ from api.models.bot_replies import (
     ReplyEditModel,
     ReplyModel,
     ReplyMutationResponseModel,
+    ReplySettingsModel,
+    ReplySettingsUpdateModel,
 )
 from api.services.dashboard_access_service import assert_dashboard_access
-from api.services.replies_service import duplicate_selected_replies
+from api.services.replies_service import (
+    duplicate_selected_replies,
+    get_or_create_reply_settings,
+    to_reply_settings_model,
+    update_reply_settings,
+)
 from api.services.rbac_service import assert_user_has_permission
 from src.db.database import get_session
 from src.db.models import Replies, Triggers
@@ -108,6 +115,29 @@ async def get_replies_by_server_id(server_id: int, session: AsyncSession = Depen
             grouped[reply.id].user_messages.append(trigger_message)
 
     return list(grouped.values())
+
+
+@replies.get("/{server_id}/settings", response_model=ReplySettingsModel)
+async def get_reply_settings(
+    server_id: int,
+    session: AsyncSession = Depends(get_session),
+):
+    settings = await get_or_create_reply_settings(session, server_id)
+    return to_reply_settings_model(settings)
+
+
+@replies.put(
+    "/{server_id}/settings",
+    response_model=ReplySettingsModel,
+    dependencies=[Depends(require_server_permission("replies.manage"))],
+)
+async def set_reply_settings(
+    server_id: int,
+    body: ReplySettingsUpdateModel,
+    session: AsyncSession = Depends(get_session),
+):
+    settings = await update_reply_settings(session, server_id, body)
+    return to_reply_settings_model(settings)
 
 
 @replies.post(

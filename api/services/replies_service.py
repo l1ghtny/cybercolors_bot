@@ -3,8 +3,12 @@ from uuid import UUID
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from api.models.bot_replies import ReplyDuplicateResponseModel
-from src.db.models import GlobalUser, Replies, Server, Triggers
+from api.models.bot_replies import (
+    ReplyDuplicateResponseModel,
+    ReplySettingsModel,
+    ReplySettingsUpdateModel,
+)
+from src.db.models import GlobalUser, Replies, Server, ServerReplySettings, Triggers
 
 
 async def _ensure_server_exists(session: AsyncSession, server_id: int) -> None:
@@ -21,6 +25,46 @@ async def _ensure_global_user_exists(session: AsyncSession, user_id: int) -> Non
         return
     session.add(GlobalUser(discord_id=user_id, username=None))
     await session.flush()
+
+
+async def get_or_create_reply_settings(
+    session: AsyncSession,
+    server_id: int,
+) -> ServerReplySettings:
+    await _ensure_server_exists(session, server_id)
+    settings = await session.get(ServerReplySettings, server_id)
+    if settings:
+        return settings
+    settings = ServerReplySettings(server_id=server_id)
+    session.add(settings)
+    await session.flush()
+    return settings
+
+
+def to_reply_settings_model(settings: ServerReplySettings) -> ReplySettingsModel:
+    return ReplySettingsModel(
+        server_id=str(settings.server_id),
+        included_channel_ids=list(settings.included_channel_ids or []),
+        excluded_channel_ids=list(settings.excluded_channel_ids or []),
+        excluded_role_ids=list(settings.excluded_role_ids or []),
+        excluded_user_ids=list(settings.excluded_user_ids or []),
+    )
+
+
+async def update_reply_settings(
+    session: AsyncSession,
+    server_id: int,
+    body: ReplySettingsUpdateModel,
+) -> ServerReplySettings:
+    settings = await get_or_create_reply_settings(session, server_id)
+    settings.included_channel_ids = body.included_channel_ids
+    settings.excluded_channel_ids = body.excluded_channel_ids
+    settings.excluded_role_ids = body.excluded_role_ids
+    settings.excluded_user_ids = body.excluded_user_ids
+    session.add(settings)
+    await session.flush()
+    await session.refresh(settings)
+    return settings
 
 
 async def duplicate_selected_replies(

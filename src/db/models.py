@@ -275,6 +275,30 @@ class Replies(SQLModel, table=True):
     triggers: List["Triggers"] = Relationship(back_populates="reply")
 
 
+class ServerReplySettings(SQLModel, table=True):
+    __tablename__ = "server_reply_settings"
+
+    server_id: int = Field(
+        sa_column=Column(BigInteger, ForeignKey("servers.server_id"), primary_key=True),
+    )
+    included_channel_ids: list[str] = Field(
+        default_factory=list,
+        sa_column=Column(sa.JSON, nullable=False),
+    )
+    excluded_channel_ids: list[str] = Field(
+        default_factory=list,
+        sa_column=Column(sa.JSON, nullable=False),
+    )
+    excluded_role_ids: list[str] = Field(
+        default_factory=list,
+        sa_column=Column(sa.JSON, nullable=False),
+    )
+    excluded_user_ids: list[str] = Field(
+        default_factory=list,
+        sa_column=Column(sa.JSON, nullable=False),
+    )
+
+
 class PastNickname(SQLModel, table=True):
     __tablename__ = "past_nicknames"
     id: UUID = Field(default_factory=uuid.uuid4, primary_key=True)
