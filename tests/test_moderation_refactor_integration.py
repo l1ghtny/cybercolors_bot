@@ -348,6 +348,22 @@ async def _scenario_monitoring_cross_refs_and_profile_rule_stats() -> None:
         assert action_summary.rules_count >= 1
         assert action_summary.case_id == moderation_case.id
 
+        moderator_action_summaries = await list_action_summaries(
+            session=session,
+            server_id=server_id,
+            moderator_user_id=moderator_id,
+            limit=20,
+        )
+        assert any(item.id == created_action.id for item in moderator_action_summaries)
+
+        target_as_moderator_summaries = await list_action_summaries(
+            session=session,
+            server_id=server_id,
+            moderator_user_id=target_id,
+            limit=20,
+        )
+        assert target_as_moderator_summaries == []
+
         per_user_actions = await list_actions_for_user(
             session=session,
             server_id=server_id,

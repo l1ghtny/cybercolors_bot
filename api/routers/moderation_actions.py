@@ -296,6 +296,7 @@ async def get_server_moderation_history_v2(
 async def list_moderation_actions(
     server_id: int,
     target_user_id: str | None = Query(default=None, pattern=r"^\d+$"),
+    moderator_user_id: str | None = Query(default=None, pattern=r"^\d+$"),
     limit: int = Query(default=500, ge=1, le=2000),
     session: AsyncSession = Depends(get_session),
 ):
@@ -303,6 +304,7 @@ async def list_moderation_actions(
         session=session,
         server_id=server_id,
         target_user_id=int(target_user_id) if target_user_id else None,
+        moderator_user_id=int(moderator_user_id) if moderator_user_id else None,
         limit=limit,
     )
 
