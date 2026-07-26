@@ -45,6 +45,12 @@ ACTION_ID_PARAM = _param(
     "Moderation action number selected from autocomplete; UUID also accepted.",
     autocomplete=True,
 )
+ACTION_NUMBER_PARAM = _param(
+    "action_number",
+    "integer",
+    "Sequential moderation action number selected from autocomplete.",
+    autocomplete=True,
+)
 CASE_ID_PARAM = _param("case", "string", "Moderation case UUID selected from autocomplete.", autocomplete=True)
 DURATION_CHOICES = [
     _choice("server default", "default"),
@@ -566,10 +572,10 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         workflow=["Rejects defaults greater than maximum, stores settings, and confirms ephemerally."],
     ),
     BotCommandDocModel(
-        id="mod.cases.create",
-        name="create",
-        qualified_name="mod cases create",
-        invoke="/mod cases create",
+        id="mod.cases.new",
+        name="new",
+        qualified_name="mod cases new",
+        invoke="/mod cases new",
         category="moderation-cases",
         summary="Open a moderation case for a user.",
         required_permissions=["moderate_members"],
@@ -760,21 +766,21 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         workflow=["Loads recent action summaries and sends an ephemeral embed with dashboard links."],
     ),
     BotCommandDocModel(
-        id="mod.actions.revert",
-        name="revert",
-        qualified_name="mod actions revert",
-        invoke="/mod actions revert",
+        id="mod.actions.undo",
+        name="undo",
+        qualified_name="mod actions undo",
+        invoke="/mod actions undo",
         category="moderation-actions",
-        summary="Revert an active warn, mute, or ban action.",
+        summary="Undo an active warn, mute, or ban action.",
         required_permissions=["moderate_members"],
-        parameters=[ACTION_ID_PARAM, _param("reason", "string", "Optional revert reason.", required=False)],
+        parameters=[ACTION_NUMBER_PARAM, _param("reason", "string", "Optional undo reason.", required=False)],
         workflow=["Fetches the action, permits active warns, mutes, and bans, applies the Discord reversal where possible, deactivates the action, logs it, and confirms."],
     ),
     BotCommandDocModel(
-        id="add_my_birthday",
-        name="add_my_birthday",
-        qualified_name="add_my_birthday",
-        invoke="/add_my_birthday",
+        id="bday.add",
+        name="add",
+        qualified_name="bday add",
+        invoke="/bday add",
         category="birthdays",
         summary="Add your birthday to the server birthday list.",
         parameters=[
@@ -785,10 +791,10 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         workflow=["Passes the selected day/month to the birthday module for validation and storage."],
     ),
     BotCommandDocModel(
-        id="change_birthday",
-        name="change_birthday",
-        qualified_name="change_birthday",
-        invoke="/change_birthday",
+        id="bday.change",
+        name="change",
+        qualified_name="bday change",
+        invoke="/bday change",
         category="birthdays",
         summary="Change your saved birthday and confirm the timezone again.",
         parameters=[
@@ -841,20 +847,20 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         workflow=["Searches triggers, shows direct confirmation for one match or a select menu for multiple matches, then deletes the trigger and orphaned reply when confirmed."],
     ),
     BotCommandDocModel(
-        id="check_dr",
-        name="check_dr",
-        qualified_name="check_dr",
-        invoke="/check_dr",
+        id="mod.bday.check",
+        name="check",
+        qualified_name="mod bday check",
+        invoke="/mod bday check",
         category="birthdays",
         summary="Run the birthday and birthday-role checks immediately instead of waiting for the scheduler.",
         workflow=["Runs both scheduled checks immediately and responds with OK when they finish."],
         notes=["Operational/testing command; normal birthday checks run automatically."],
     ),
     BotCommandDocModel(
-        id="birthday_list",
-        name="birthday_list",
-        qualified_name="birthday_list",
-        invoke="/birthday_list",
+        id="bday.list",
+        name="list",
+        qualified_name="bday list",
+        invoke="/bday list",
         category="birthdays",
         summary="Show all birthdays on the server.",
         workflow=["Delegates to the birthday list module with page size 15."],
@@ -880,22 +886,13 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         notes=["Operational/testing command; use it only when an immediate validation pass is needed."],
     ),
     BotCommandDocModel(
-        id="cat_text",
-        name="cat_text",
-        qualified_name="cat_text",
-        invoke="/cat_text",
-        category="misc",
-        summary="Send a generated cat image with text.",
-        parameters=[_param("text", "string", "Text to render on the cat image.")],
-        workflow=["Fetches an image from cataas.com, sends it as cat.png, and deletes the temporary local file."],
-    ),
-    BotCommandDocModel(
         id="cat",
         name="cat",
         qualified_name="cat",
         invoke="/cat",
         category="misc",
-        summary="Send a generated cat image.",
+        summary="Send a generated cat image, optionally with text.",
+        parameters=[_param("text", "string", "Optional text to render on the cat image.", required=False)],
         workflow=["Fetches an image from cataas.com, sends it as cat.png, and deletes the temporary local file."],
     ),
 )
@@ -928,7 +925,7 @@ COMMAND_RBAC_PERMISSIONS: dict[str, tuple[str, ...]] = {
     "mod.settings.moderation_clear_log_channel": ("moderation.settings.edit",),
     "mod.settings.moderation_create_mute_role": ("moderation.settings.edit",),
     "mod.settings.moderation_set_mute_defaults": ("moderation.settings.edit",),
-    "mod.cases.create": ("moderation.cases.manage",),
+    "mod.cases.new": ("moderation.cases.manage",),
     "mod.cases.list": ("moderation.cases.view",),
     "mod.cases.show": ("moderation.cases.view",),
     "mod.cases.close": ("moderation.cases.manage",),
@@ -943,7 +940,7 @@ COMMAND_RBAC_PERMISSIONS: dict[str, tuple[str, ...]] = {
     "mod.cases.link_action": ("moderation.cases.manage",),
     "mod.cases.unlink_action": ("moderation.cases.manage",),
     "mod.actions.list": ("moderation.actions.view",),
-    "mod.actions.revert": ("moderation.actions.revert",),
+    "mod.actions.undo": ("moderation.actions.revert",),
 }
 
 
@@ -960,6 +957,7 @@ AVAILABLE_BOT_COMMAND_LOCALES: tuple[str, ...] = ("en", "ru")
 
 RU_PARAMETER_DESCRIPTIONS: dict[str, str] = {
     "action_id": "Номер действия из автодополнения; UUID также поддерживается.",
+    "action_number": "Порядковый номер модераторского действия из автодополнения.",
     "auto_reconnect_on_mute": "Нужно ли автоматически возвращать пользователя в голосовой канал после мута.",
     "auto_release_minutes": "Задержка автоматического снятия ограничений от 1 до 43200 минут.",
     "case": "UUID модераторского дела или вариант из автодополнения.",
@@ -1060,7 +1058,7 @@ RU_PARAMETER_DESCRIPTIONS_BY_COMMAND: dict[str, dict[str, str]] = {
     "mod.rules.rule_add": {
         "title": "Название правила.",
     },
-    "mod.cases.create": {
+    "mod.cases.new": {
         "title": "Название модераторского дела.",
         "rule": "Необязательное активное правило, связанное с делом.",
     },
@@ -1078,7 +1076,7 @@ RU_PARAMETER_DESCRIPTIONS_BY_COMMAND: dict[str, dict[str, str]] = {
         "user": "Необязательный фильтр по участнику.",
         "limit": "Сколько недавних действий показать: от 1 до 10.",
     },
-    "mod.actions.revert": {
+    "mod.actions.undo": {
         "reason": "Необязательная причина отмены модераторского действия.",
     },
 }
@@ -1333,7 +1331,7 @@ RU_COMMAND_TEXT: dict[str, dict[str, list[str] | str]] = {
         "summary": "Задать стандартную и максимальную длительность мута.",
         "workflow": ["Отклоняет значение по умолчанию больше максимума, сохраняет настройки и подтверждает приватно."],
     },
-    "mod.cases.create": {
+    "mod.cases.new": {
         "summary": "Открыть модераторское дело на пользователя.",
         "workflow": ["Проверяет записи сервера и пользователей, при необходимости проверяет правило, создает дело и подтверждает короткий ID."],
     },
@@ -1393,15 +1391,15 @@ RU_COMMAND_TEXT: dict[str, dict[str, list[str] | str]] = {
         "summary": "Показать недавние модераторские действия.",
         "workflow": ["Загружает недавние действия и отправляет приватную карточку со ссылками на панель управления."],
     },
-    "mod.actions.revert": {
+    "mod.actions.undo": {
         "summary": "Отменить активное предупреждение, мут или бан и записать результат.",
         "workflow": ["Находит действие, проверяет, что активное предупреждение, мут или бан можно отменить, выполняет обратное действие в Discord, закрывает запись и отправляет подтверждение."],
     },
-    "add_my_birthday": {
+    "bday.add": {
         "summary": "Добавить свой день рождения в список сервера.",
         "workflow": ["Передает выбранные день и месяц в модуль дней рождения для проверки и сохранения."],
     },
-    "change_birthday": {
+    "bday.change": {
         "summary": "Изменить сохраненный день рождения и снова подтвердить часовой пояс.",
         "workflow": ["Обновляет сохраненную дату дня рождения и предлагает пользователю подтвердить часовой пояс."],
     },
@@ -1417,12 +1415,12 @@ RU_COMMAND_TEXT: dict[str, dict[str, list[str] | str]] = {
         "summary": "Удалить пользовательский триггер ответа бота.",
         "workflow": ["Ищет триггеры, показывает подтверждение для одного совпадения или меню выбора для нескольких, затем удаляет триггер и осиротевший ответ после подтверждения."],
     },
-    "check_dr": {
+    "mod.bday.check": {
         "summary": "Сразу запустить проверку дней рождения и ролей, не дожидаясь планировщика.",
         "workflow": ["Немедленно запускает обе плановые проверки и после завершения отвечает OK."],
         "notes": ["Служебная команда для проверки; обычно бот запускает эти процессы автоматически."],
     },
-    "birthday_list": {
+    "bday.list": {
         "summary": "Показать все дни рождения на сервере.",
         "workflow": ["Передает работу модулю списка дней рождения с размером страницы 15."],
     },
@@ -1435,12 +1433,8 @@ RU_COMMAND_TEXT: dict[str, dict[str, list[str] | str]] = {
         "workflow": ["Запускает тот же процесс, который используется при плановом обслуживании, и приватно сообщает об успехе или ошибке."],
         "notes": ["Служебная команда; используйте её, только если проверку нужно запустить немедленно."],
     },
-    "cat_text": {
-        "summary": "Отправить сгенерированную картинку кота с текстом.",
-        "workflow": ["Загружает изображение с cataas.com, отправляет его как cat.png и удаляет временный локальный файл."],
-    },
     "cat": {
-        "summary": "Отправить сгенерированную картинку кота.",
+        "summary": "Отправить сгенерированную картинку кота, при желании добавив текст.",
         "workflow": ["Загружает изображение с cataas.com, отправляет его как cat.png и удаляет временный локальный файл."],
     },
 }

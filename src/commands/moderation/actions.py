@@ -41,7 +41,11 @@ from src.modules.moderation.public_notices import send_public_action_notice
 from src.modules.moderation.mute_management import deactivate_user_bans
 
 
-async def _fetch_action_for_server(session, server_id: int, action_id: str) -> ModerationAction | None:
+async def _fetch_action_for_server(
+    session,
+    server_id: int,
+    action_id: str | int,
+) -> ModerationAction | None:
     return await resolve_moderation_action_reference(
         session,
         server_id=server_id,
@@ -656,8 +660,16 @@ async def actions_list(
 
 
 @app_commands.checks.has_permissions(moderate_members=True)
-@app_commands.command(name="revert", description="Revert an active warn, mute, or ban action.")
-async def action_revert(interaction: discord.Interaction, action_id: str, reason: str | None = None):
+@app_commands.command(name="undo", description="Undo an active warn, mute, or ban action by its number.")
+@app_commands.describe(
+    action_number="Sequential moderation action number.",
+    reason="Optional reason for undoing the action.",
+)
+async def action_revert(
+    interaction: discord.Interaction,
+    action_number: int,
+    reason: str | None = None,
+):
     if interaction.guild is None:
         await interaction.response.send_message(tr(None, "common.server_only"), ephemeral=True)
         return
@@ -666,7 +678,7 @@ async def action_revert(interaction: discord.Interaction, action_id: str, reason
     if not await ensure_bot_permission(interaction, "moderation.actions.revert", locale=locale):
         return
     async with get_async_session() as session:
-        action = await _fetch_action_for_server(session, interaction.guild.id, action_id)
+        action = await _fetch_action_for_server(session, interaction.guild.id, action_number)
     if action is None:
         await interaction.followup.send(tr(locale, "action.not_found"), ephemeral=True)
         return
@@ -712,8 +724,8 @@ async def action_revert(interaction: discord.Interaction, action_id: str, reason
     )
 
 
-@action_revert.autocomplete("action_id")
-async def action_revert_autocomplete(interaction: discord.Interaction, current: str):
+@action_revert.autocomplete("action_number")
+async def action_revert_autocomplete(interaction: discord.Interaction, current: int | float):
     if interaction.guild_id is None:
         return []
     if not await has_bot_permission(
@@ -733,4 +745,8 @@ async def action_revert_autocomplete(interaction: discord.Interaction, current: 
             )
     except Exception:
         return []
-    return action_choices(actions, current)
+    current_text = str(int(current)) if current else ""
+    return [
+        app_commands.Choice(name=choice.name, value=int(choice.value))
+        for choice in action_choices(actions, current_text)
+    ]

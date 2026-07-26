@@ -58,7 +58,7 @@ class NewDayAgain(discord.ui.Modal):
                     await interaction.followup.send('\u0418\u0437\u0432\u0438\u043d\u0438, \u0447\u0442\u043e-\u0442\u043e \u043f\u043e\u0448\u043b\u043e \u043d\u0435 \u0442\u0430\u043a. \u041f\u043e\u043f\u0440\u043e\u0431\u0443\u0439 \u0435\u0449\u0451 \u0440\u0430\u0437.', ephemeral=True)
         else:
             await interaction.response.send_message('Извини, это не число. Попробуй добавить день рождения командой '
-                                                   '/add_my_birthday', ephemeral=True)
+                                                   '/bday add', ephemeral=True)
 
 
 class NewMonthAgain(discord.ui.View):
@@ -167,7 +167,7 @@ class ChangeBirthday(discord.ui.View):
             await self.disable_all_items()
             await interaction.response.send_message(
                 'Окей, тогда не добавляем новую дату. Если хочешь, всегда можешь воспользоваться командой '
-                '/add_my_birthday', ephemeral=True)
+                '/bday add', ephemeral=True)
         else:
             await interaction.response.send_message(f'{interaction.user.mention}, это не твоя кнопка, уходи',
                                                     ephemeral=True)
