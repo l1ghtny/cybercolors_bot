@@ -91,6 +91,8 @@ def test_variation_generation_uses_structured_output_and_deduplicates():
 
         async def complete(self, request):
             assert request.response_format is not None
+            assert request.response_format.strict is True
+            assert request.response_format.schema["additionalProperties"] is False
             return AIResponse(
                 content=json.dumps(
                     {

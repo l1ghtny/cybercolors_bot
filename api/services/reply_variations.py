@@ -1,8 +1,9 @@
 import asyncio
 import json
+import logging
 import os
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from api.models.bot_replies import ReplyVariationSuggestionResponseModel
 from src.db.models import ReplyConcept
@@ -12,7 +13,10 @@ from src.modules.on_message_processing.processing_methods import normalize_reply
 from src.modules.on_message_processing.reply_matcher import CONCEPT_PLACEHOLDER_RE
 
 
-REPLY_VARIATION_MODEL = os.getenv("REPLY_VARIATION_MODEL", "gpt-5.6-sol")
+logger = logging.getLogger(__name__)
+
+
+REPLY_VARIATION_MODEL = os.getenv("REPLY_VARIATION_MODEL", "gpt-5.6-terra")
 REPLY_VARIATION_TIMEOUT_SECONDS = max(
     int(os.getenv("REPLY_VARIATION_TIMEOUT_SECONDS", "45")),
     5,
@@ -24,6 +28,8 @@ class ReplyVariationGenerationError(RuntimeError):
 
 
 class _VariationPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     variations: list[str] = Field(min_length=8, max_length=30)
 
 
@@ -95,6 +101,7 @@ async def suggest_reply_variations(
     except TimeoutError as exc:
         raise ReplyVariationGenerationError("Variation generation timed out") from exc
     except AIProviderError as exc:
+        logger.exception("Reply variation generation failed for model %s", model)
         raise ReplyVariationGenerationError("Variation generation provider failed") from exc
 
     if not response.content:
