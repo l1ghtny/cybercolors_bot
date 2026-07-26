@@ -14,7 +14,7 @@ from src.commands.moderation.bot_messages import (
     reply_as_bot_ctx,
     reply_as_cybercolors_ctx,
 )
-from src.commands.sync import sync_application_commands
+from src.commands.sync import sync_application_commands, sync_guild_application_commands
 
 
 class FakeCommandTree:
@@ -41,25 +41,30 @@ class FakeCommandTree:
         self.added_guild_commands.append((guild.id, command))
 
 
-def test_command_sync_replaces_test_guild_registry_with_single_branded_override():
+def test_command_sync_uses_modral_everywhere_except_the_pilot_guild():
     tree = FakeCommandTree()
 
     result = asyncio.run(
         sync_application_commands(
             tree,
+            guild_ids=(123456789012345678, 478278763239702538),
             test_guild_id="478278763239702538",
+            standard_guild_commands=(reply_as_bot_ctx,),
             test_guild_commands=(reply_as_cybercolors_ctx,),
         )
     )
 
-    assert tree.sync_guild_ids == [None, 478278763239702538]
-    assert tree.cleared_guild_ids == [478278763239702538]
+    assert tree.sync_guild_ids == [None, 123456789012345678, 478278763239702538]
+    assert tree.cleared_guild_ids == [123456789012345678, 478278763239702538]
     assert tree.added_guild_commands == [
+        (123456789012345678, reply_as_bot_ctx),
         (478278763239702538, reply_as_cybercolors_ctx)
     ]
     assert result.global_count == 2
-    assert result.guild_id == 478278763239702538
-    assert result.guild_count == 1
+    assert result.guild_counts == {
+        123456789012345678: 1,
+        478278763239702538: 1,
+    }
 
 
 def test_command_sync_without_test_guild_only_updates_global_registry():
@@ -71,7 +76,47 @@ def test_command_sync_without_test_guild_only_updates_global_registry():
     assert tree.cleared_guild_ids == []
     assert tree.added_guild_commands == []
     assert result.global_count == 2
-    assert result.guild_id is None
+    assert result.guild_counts == {}
+
+
+def test_single_guild_sync_replaces_registry_for_newly_joined_guild():
+    tree = FakeCommandTree()
+
+    count = asyncio.run(
+        sync_guild_application_commands(
+            tree,
+            guild_id=123456789012345678,
+            commands=(reply_as_bot_ctx,),
+        )
+    )
+
+    assert tree.sync_guild_ids == [123456789012345678]
+    assert tree.cleared_guild_ids == [123456789012345678]
+    assert tree.added_guild_commands == [
+        (123456789012345678, reply_as_bot_ctx)
+    ]
+    assert count == 1
+
+
+def test_modral_context_command_can_be_registered_for_multiple_guilds():
+    client = discord.Client(intents=discord.Intents.none())
+    tree = app_commands.CommandTree(client)
+    first_guild = discord.Object(id=123456789012345678)
+    second_guild = discord.Object(id=223456789012345678)
+
+    tree.add_command(reply_as_bot_ctx, guild=first_guild)
+    tree.add_command(reply_as_bot_ctx, guild=second_guild)
+
+    assert tree.get_command(
+        "Reply as Modral",
+        type=discord.AppCommandType.message,
+        guild=first_guild,
+    ) is reply_as_bot_ctx
+    assert tree.get_command(
+        "Reply as Modral",
+        type=discord.AppCommandType.message,
+        guild=second_guild,
+    ) is reply_as_bot_ctx
 
 
 def test_message_context_commands_remain_moderator_only_by_default():
@@ -87,8 +132,9 @@ def test_message_context_commands_remain_moderator_only_by_default():
     assert reply_as_cybercolors_ctx.guild_only is True
 
 
-def test_branded_context_command_overrides_global_identity_without_duplicate():
-    assert reply_as_cybercolors_ctx.name == reply_as_bot_ctx.name
+def test_branded_context_commands_have_distinct_names_for_distinct_guilds():
+    assert reply_as_cybercolors_ctx.name == "Reply as CyberColors"
+    assert reply_as_bot_ctx.name == "Reply as Modral"
     assert reply_as_cybercolors_ctx.type == reply_as_bot_ctx.type
 
 
@@ -102,7 +148,7 @@ def test_cybercolors_context_command_payload_overrides_display_name_by_locale():
 
     payload = asyncio.run(translated_payload())
 
-    assert payload["name"] == "Reply as Modral"
+    assert payload["name"] == "Reply as CyberColors"
     assert payload["name_localizations"]["en-US"] == "Reply as CyberColors"
     assert payload["name_localizations"]["en-GB"] == "Reply as CyberColors"
     assert payload["name_localizations"]["ru"] == "Ответить от имени CyberColors"

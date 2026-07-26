@@ -199,11 +199,8 @@ reply_as_bot_ctx.default_permissions = discord.Permissions(moderate_members=True
 reply_as_bot_ctx.guild_only = True
 
 reply_as_cybercolors_ctx = app_commands.ContextMenu(
-    # The raw name intentionally matches the global command. Discord lets a
-    # guild command with the same name and type override the global command,
-    # while localized clients display the CyberColors-specific label.
     name=app_commands.locale_str(
-        "Reply as Modral",
+        "Reply as CyberColors",
         translations=CYBERCOLORS_REPLY_TRANSLATIONS,
     ),
     callback=reply_as_bot_context,

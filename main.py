@@ -40,7 +40,7 @@ from src.commands.moderation.bot_messages import (
     reply_as_bot_ctx,
     reply_as_cybercolors_ctx,
 )
-from src.commands.sync import sync_application_commands
+from src.commands.sync import sync_application_commands, sync_guild_application_commands
 from src.commands.moderation.actions import (
     action_revert,
     actions_list,
@@ -231,14 +231,16 @@ class Aclient(discord.AutoShardedClient):
             await tree.set_translator(StaticCommandTranslator())
             synced = await sync_application_commands(
                 tree,
+                guild_ids=tuple(guild.id for guild in self.guilds),
                 test_guild_id=TEST_GUILD_ID,
+                standard_guild_commands=(reply_as_bot_ctx,),
                 test_guild_commands=(reply_as_cybercolors_ctx,),
             )
             print(f"Commands synced globally ({synced.global_count}).")
-            if synced.guild_id is not None:
+            for guild_id, guild_count in synced.guild_counts.items():
                 print(
-                    f"Guild-specific command overrides synced for guild {synced.guild_id} "
-                    f"({synced.guild_count} total)."
+                    f"Guild-specific commands synced for guild {guild_id} "
+                    f"({guild_count} total)."
                 )
             self.synced = True
         if not self.added:
@@ -397,7 +399,6 @@ tree.add_command(temp_voice_group)
 tree.add_command(rules_import_from_message_ctx)
 tree.add_command(link_message_to_action_ctx)
 tree.add_command(start_action_from_message_ctx)
-tree.add_command(reply_as_bot_ctx)
 
 
 # Add birthdays to the database
@@ -787,6 +788,22 @@ async def on_interaction(interaction: discord.Interaction):
 @client.event
 async def on_guild_join(guild: discord.Guild):
     await mark_guild_presence(guild, is_active=True)
+    pilot_guild_id = int(TEST_GUILD_ID) if TEST_GUILD_ID else None
+    commands = (
+        (reply_as_cybercolors_ctx,)
+        if guild.id == pilot_guild_id
+        else (reply_as_bot_ctx,)
+    )
+    guild_count = await sync_guild_application_commands(
+        tree,
+        guild_id=guild.id,
+        commands=commands,
+    )
+    logger.info(
+        "Guild-specific commands synced after joining guild %s (%s total).",
+        guild.id,
+        guild_count,
+    )
 
 
 @client.event
