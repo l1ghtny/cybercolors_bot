@@ -14,7 +14,14 @@ class FakeResponses:
         self.kwargs = kwargs
         return SimpleNamespace(
             output_text="ok",
-            usage=SimpleNamespace(total_tokens=7),
+            usage=SimpleNamespace(
+                total_tokens=7,
+                input_tokens=4,
+                output_tokens=3,
+                output_tokens_details=SimpleNamespace(reasoning_tokens=2),
+            ),
+            status="completed",
+            incomplete_details=None,
             output=[],
             id="resp-1",
         )
@@ -48,6 +55,11 @@ def test_openai_provider_formats_multimodal_message_content():
 
     assert response.content == "ok"
     assert response.total_tokens == 7
+    assert response.input_tokens == 4
+    assert response.output_tokens == 3
+    assert response.reasoning_tokens == 2
+    assert response.status == "completed"
+    assert response.incomplete_reason is None
     assert client.responses.kwargs is not None
     message = client.responses.kwargs["input"][0]
     assert message["role"] == "user"
@@ -154,3 +166,42 @@ def test_openai_provider_sends_strict_json_schema_response_format():
         "strict": True,
         "description": "A schema-constrained Discord moderation assessment.",
     }
+
+
+def test_openai_provider_preserves_incomplete_response_reason():
+    client = FakeClient()
+
+    async def create_incomplete(**kwargs):
+        client.responses.kwargs = kwargs
+        return SimpleNamespace(
+            output_text='{"flagged": false',
+            usage=SimpleNamespace(
+                total_tokens=607,
+                input_tokens=7,
+                output_tokens=600,
+                output_tokens_details=SimpleNamespace(reasoning_tokens=0),
+            ),
+            status="incomplete",
+            incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+            output=[],
+            id="resp-incomplete",
+        )
+
+    client.responses.create = create_incomplete
+    provider = OpenAIProvider(client=client)
+
+    response = asyncio.run(
+        provider.complete(
+            AIRequest(
+                task="moderation",
+                model="test-model",
+                system_prompt="Review.",
+                messages=[AIMessage(role="user", content="message")],
+                response_format=MODERATION_RESPONSE_FORMAT,
+            )
+        )
+    )
+
+    assert response.status == "incomplete"
+    assert response.incomplete_reason == "max_output_tokens"
+    assert response.output_tokens == 600

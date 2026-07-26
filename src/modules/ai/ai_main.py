@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 from typing import Any
@@ -33,6 +34,16 @@ from src.modules.ai.models import (
 from src.modules.ai.providers import AIProvider, OpenAIProvider
 from src.modules.ai.tools import AIToolRegistry, build_default_tool_registry
 from src.modules.ai.knowledge import get_public_knowledge_for_subject_users, search_server_knowledge
+
+
+logger = logging.getLogger(__name__)
+
+AI_MODERATION_MAX_ATTEMPTS = 3
+AI_MODERATION_MAX_OUTPUT_TOKENS = 2_000
+
+
+class _ModerationResponseError(ValueError):
+    pass
 
 
 MODERATION_SYSTEM_PROMPT = """
@@ -198,15 +209,60 @@ class AIMain:
                     images=moderation_input.images,
                 )
             ],
-            max_output_tokens=600,
+            max_output_tokens=AI_MODERATION_MAX_OUTPUT_TOKENS,
             metadata={"task": "moderation", "strictness": moderation_strictness},
             response_format=MODERATION_RESPONSE_FORMAT,
         )
-        response = await self.provider.complete(request)
-        return self._parse_moderation_verdict(
-            response,
-            moderation_strictness=moderation_strictness,
-            moderation_input=moderation_input,
+        total_tokens = 0
+        input_tokens = 0
+        output_tokens = 0
+        reasoning_tokens = 0
+        last_response: AIResponse | None = None
+        last_error = "AI moderation response was not valid JSON."
+
+        for attempt in range(1, AI_MODERATION_MAX_ATTEMPTS + 1):
+            response = await self.provider.complete(request)
+            total_tokens += response.total_tokens
+            input_tokens += response.input_tokens
+            output_tokens += response.output_tokens
+            reasoning_tokens += response.reasoning_tokens
+            response.total_tokens = total_tokens
+            response.input_tokens = input_tokens
+            response.output_tokens = output_tokens
+            response.reasoning_tokens = reasoning_tokens
+            last_response = response
+
+            if response.status is not None and response.status != "completed":
+                detail = f", reason={response.incomplete_reason}" if response.incomplete_reason else ""
+                last_error = f"AI moderation response did not complete (status={response.status}{detail})."
+            else:
+                try:
+                    return self._parse_moderation_verdict(
+                        response,
+                        moderation_strictness=moderation_strictness,
+                        moderation_input=moderation_input,
+                    )
+                except _ModerationResponseError as exc:
+                    last_error = str(exc)
+
+            if attempt < AI_MODERATION_MAX_ATTEMPTS:
+                logger.warning(
+                    "Retrying AI moderation response for guild %s message %s after attempt %s/%s: %s",
+                    moderation_input.server_id,
+                    moderation_input.message_id,
+                    attempt,
+                    AI_MODERATION_MAX_ATTEMPTS,
+                    last_error,
+                )
+
+        assert last_response is not None
+        return ModerationVerdict(
+            flagged=True,
+            severity="low",
+            categories=["parse_error"],
+            reason=f"{last_error} Failed after {AI_MODERATION_MAX_ATTEMPTS} attempts.",
+            suggested_action="manual_review",
+            raw_response=last_response,
         )
 
     async def answer(
@@ -661,8 +717,10 @@ class AIMain:
         moderation_strictness: str = "standard",
         moderation_input: MessageModerationInput | None = None,
     ) -> ModerationVerdict:
-        content = response.content or "{}"
+        content = response.content or ""
         cleaned = content.strip()
+        if not cleaned:
+            raise _ModerationResponseError("AI moderation response was empty.")
         if cleaned.startswith("```"):
             cleaned = cleaned.strip("`").strip()
             if cleaned.lower().startswith("json"):
@@ -670,15 +728,10 @@ class AIMain:
 
         try:
             payload = json.loads(cleaned)
-        except json.JSONDecodeError:
-            return ModerationVerdict(
-                flagged=True,
-                severity="low",
-                categories=["parse_error"],
-                reason="AI moderation response was not valid JSON.",
-                suggested_action="manual_review",
-                raw_response=response,
-            )
+        except json.JSONDecodeError as exc:
+            raise _ModerationResponseError("AI moderation response was not valid JSON.") from exc
+        if not isinstance(payload, dict):
+            raise _ModerationResponseError("AI moderation response was not a JSON object.")
 
         severity = payload.get("severity") if payload.get("severity") in MODERATION_SEVERITIES else "none"
         suggested_action = (

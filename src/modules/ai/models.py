@@ -109,6 +109,11 @@ class AIResponse:
     model: str
     provider: str
     total_tokens: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    reasoning_tokens: int = 0
+    status: str | None = None
+    incomplete_reason: str | None = None
     tool_call_count: int = 0
     raw: Any | None = None
     tool_calls: list[AIToolCall] = field(default_factory=list)

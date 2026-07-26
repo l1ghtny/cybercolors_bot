@@ -15,8 +15,10 @@ class FakeProvider:
     def __init__(self, content: str):
         self.content = content
         self.last_request: AIRequest | None = None
+        self.call_count = 0
 
     async def complete(self, request: AIRequest) -> AIResponse:
+        self.call_count += 1
         self.last_request = request
         return AIResponse(
             content=self.content,
@@ -207,6 +209,7 @@ def test_check_message_builds_moderation_request_and_parses_verdict():
     assert provider.last_request.response_format is not None
     assert provider.last_request.response_format.strict is True
     assert provider.last_request.response_format.schema["additionalProperties"] is False
+    assert provider.last_request.max_output_tokens == ai_main_module.AI_MODERATION_MAX_OUTPUT_TOKENS
     prompt = provider.last_request.messages[0].content
     assert "join this server now" in prompt
     assert '"server_id": "123"' in prompt
@@ -604,6 +607,56 @@ def test_check_message_invalid_json_falls_back_to_manual_review():
     assert verdict.severity == "low"
     assert verdict.categories == ["parse_error"]
     assert verdict.suggested_action == "manual_review"
+    assert provider.call_count == ai_main_module.AI_MODERATION_MAX_ATTEMPTS
+    assert verdict.raw_response is not None
+    assert verdict.raw_response.total_tokens == 12 * ai_main_module.AI_MODERATION_MAX_ATTEMPTS
+    assert f"Failed after {ai_main_module.AI_MODERATION_MAX_ATTEMPTS} attempts" in verdict.reason
+
+
+def test_check_message_retries_incomplete_and_invalid_responses_before_success():
+    provider = SequenceProvider(
+        [
+            AIResponse(
+                content='{"flagged": false',
+                model="unused",
+                provider="fake",
+                total_tokens=10,
+                input_tokens=7,
+                output_tokens=3,
+                status="incomplete",
+                incomplete_reason="max_output_tokens",
+            ),
+            AIResponse(
+                content="not json",
+                model="unused",
+                provider="fake",
+                total_tokens=12,
+                input_tokens=8,
+                output_tokens=4,
+                status="completed",
+            ),
+            AIResponse(
+                content=_moderation_json(reason="No violation."),
+                model="unused",
+                provider="fake",
+                total_tokens=14,
+                input_tokens=9,
+                output_tokens=5,
+                status="completed",
+            ),
+        ]
+    )
+    ai = AIMain(provider=provider, model="test-model")
+
+    verdict = asyncio.run(ai.check_message("hello"))
+
+    assert verdict.flagged is False
+    assert verdict.reason == "No violation."
+    assert len(provider.requests) == 3
+    assert verdict.raw_response is not None
+    assert verdict.raw_response.total_tokens == 36
+    assert verdict.raw_response.input_tokens == 24
+    assert verdict.raw_response.output_tokens == 12
 
 
 def test_answer_uses_assistant_task_and_context_block():
