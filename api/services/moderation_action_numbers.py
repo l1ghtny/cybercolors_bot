@@ -54,7 +54,7 @@ async def resolve_moderation_action_reference(
     session: AsyncSession,
     *,
     server_id: int,
-    reference: str,
+    reference: str | int,
 ) -> ModerationAction | None:
     normalized = str(reference).strip().removeprefix("#")
     if normalized.isdigit():

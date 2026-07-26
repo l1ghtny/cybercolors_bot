@@ -73,7 +73,7 @@ def _actor_line(label: str, actor) -> str:
 
 @app_commands.checks.has_permissions(moderate_members=True)
 @app_commands.command(
-    name="create",
+    name="new",
     description="Open a moderation case for a user.",
 )
 async def case_create(
@@ -678,7 +678,6 @@ async def _case_action_autocomplete(interaction: discord.Interaction, current: s
 
 for _command in (case_link_action, case_unlink_action):
     _command.autocomplete("action_id")(_case_action_autocomplete)
-
 
 
 

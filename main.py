@@ -328,6 +328,15 @@ moderation_actions_group = app_commands.Group(
     description="Moderation action management",
     parent=moderation_group,
 )
+moderation_birthday_group = app_commands.Group(
+    name="bday",
+    description="Birthday moderation commands",
+    parent=moderation_group,
+)
+birthday_group = app_commands.Group(
+    name="bday",
+    description="Birthday commands",
+)
 
 temp_voice_group = app_commands.Group(
     name="tempvoice",
@@ -392,7 +401,7 @@ tree.add_command(reply_as_bot_ctx)
 
 
 # Add birthdays to the database
-@tree.command(name='add_my_birthday', description='Добавь свой день рождения')
+@app_commands.command(name='add', description='Добавь свой день рождения')
 @app_commands.choices(
     month=[
         app_commands.Choice(name='Январь', value='01'),
@@ -412,7 +421,7 @@ tree.add_command(reply_as_bot_ctx)
 async def add_my_birthday(interaction: discord.Interaction, day: int, month: app_commands.Choice[str]):
     await add_birthday(client, interaction, month, day)
 
-@tree.command(name='change_birthday', description='Измени свой день рождения')
+@app_commands.command(name='change', description='Измени свой день рождения')
 @app_commands.choices(
     month=[
         app_commands.Choice(name='Январь', value='01'),
@@ -585,7 +594,7 @@ async def delete_reply_autocomplete(interaction: discord.Interaction, current: s
     return result_list
 
 
-@tree.command(name='check_dr', description='Force birthday role check.')
+@app_commands.command(name='check', description='Force birthday role check.')
 async def birthday_check(interaction: discord.Interaction):
     await interaction.response.defer()
     await check_birthday_new(client)
@@ -600,9 +609,16 @@ async def birthday_check(interaction: discord.Interaction):
 
 
 
-@tree.command(name='birthday_list', description='Показывает все дни рождения на сервере')
+@app_commands.command(name='list', description='Показывает все дни рождения на сервере')
 async def birthday_list(interaction: discord.Interaction):
     await send_birthday_list(client, interaction, 15)
+
+
+birthday_group.add_command(add_my_birthday)
+birthday_group.add_command(change_birthday_command)
+birthday_group.add_command(birthday_list)
+moderation_birthday_group.add_command(birthday_check)
+tree.add_command(birthday_group)
 
 
 @tree.command(name='show_replies', description='Вызывает список всех вопросов-ответов на сервере')
@@ -652,13 +668,11 @@ async def force_validation(interaction: discord.Interaction):
     await interaction.followup.send('команда выполнена', ephemeral=True)
 
 
-@tree.command(name='cat_text', description='Котя с текстом')
-async def cat_text(interaction: discord.Interaction, text: str):
-    await cat_command_text(interaction, text)
-
-
-@tree.command(name='cat', description='cat')
-async def cat(interaction: discord.Interaction):
+@tree.command(name='cat', description='Котя с необязательным текстом')
+async def cat(interaction: discord.Interaction, text: str | None = None):
+    if text:
+        await cat_command_text(interaction, text)
+        return
     await cat_command(interaction)
 
 

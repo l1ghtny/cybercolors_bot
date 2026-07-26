@@ -202,6 +202,45 @@ def test_bot_command_catalog_covers_registered_discord_commands():
     assert "Reply as Modral" in catalog_qualified_names
 
 
+def test_requested_command_renames_are_registered_and_catalogued():
+    registered = _registered_slash_qualified_names()
+    catalogued = {command.qualified_name for command in BOT_COMMANDS}
+    renamed = {
+        "bday add",
+        "bday change",
+        "bday list",
+        "mod bday check",
+        "mod cases new",
+        "mod actions undo",
+        "cat",
+    }
+    retired_names = {
+        "add_my_birthday",
+        "change_birthday",
+        "birthday_list",
+        "check_dr",
+        "mod cases create",
+        "mod actions revert",
+        "cat_text",
+    }
+
+    assert renamed.issubset(registered)
+    assert renamed.issubset(catalogued)
+    assert registered.isdisjoint(retired_names)
+    assert catalogued.isdisjoint(retired_names)
+    assert {"birthdays_settings", "mod actions list"}.issubset(registered)
+
+    undo = get_bot_command("mod.actions.undo")
+    assert undo is not None
+    assert undo.parameters[0].name == "action_number"
+    assert undo.parameters[0].type == "integer"
+
+    cat = get_bot_command("cat")
+    assert cat is not None
+    assert cat.parameters[0].name == "text"
+    assert cat.parameters[0].required is False
+
+
 def test_bot_command_catalog_exposes_moderation_command_details():
     assert get_bot_command("mod.actions.manage") is None
 
@@ -259,7 +298,7 @@ def test_bot_command_catalog_exposes_valid_rbac_permission_keys():
         assert set(command.required_rbac_permissions).issubset(all_permission_keys)
 
     assert get_bot_command("mod.warn").required_rbac_permissions == ["moderation.actions.apply.warn"]
-    assert get_bot_command("mod.actions.revert").required_rbac_permissions == ["moderation.actions.revert"]
+    assert get_bot_command("mod.actions.undo").required_rbac_permissions == ["moderation.actions.revert"]
     lockdown_command = get_bot_command("mod.lockdown")
     assert lockdown_command is not None
     assert lockdown_command.invoke == "/mod lockdown"
