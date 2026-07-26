@@ -22,7 +22,7 @@ READ_MESSAGE_HISTORY = 1 << 16
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(timezone.utc)
 
 
 def _int_or_none(value) -> int | None:

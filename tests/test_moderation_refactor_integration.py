@@ -94,7 +94,7 @@ def _make_action_payload(
         case_id=case_id,
         target_user_id=target_id,
         target_user_name=target_name,
-        target_user_joined_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        target_user_joined_at=datetime.now(timezone.utc),
         target_user_server_nickname=f"{target_name}-nick",
         server_id=server_id,
         server_name=f"server-{server_id}",
@@ -108,7 +108,7 @@ async def _scenario_user_profile_hydrates_membership_dates() -> None:
     server_id = _make_discord_id()
     member_id = _make_discord_id()
     absent_id = _make_discord_id()
-    joined_at = datetime(2026, 6, 1, 12, 34, 56)
+    joined_at = datetime(2026, 6, 1, 12, 34, 56, tzinfo=timezone.utc)
 
     async def fake_fetch_guild_member(request_server_id: int, request_user_id: int):
         assert request_server_id == server_id
@@ -136,7 +136,7 @@ async def _scenario_user_profile_hydrates_membership_dates() -> None:
                     user_id=absent_id,
                     channel_id=_make_discord_id(),
                     content="historical message",
-                    created_at=datetime(2026, 5, 1, 10, 0, 0),
+                    created_at=datetime(2026, 5, 1, 10, 0, 0, tzinfo=timezone.utc),
                     server_id=server_id,
                 )
             )
@@ -546,7 +546,7 @@ async def _scenario_case_action_rich_links_and_case_badges() -> None:
         assert archived_case_row is not None
         archived_case_row.status = CaseStatus.ARCHIVED
         archived_case_row.closed_by_user_id = moderator_id
-        archived_case_row.closed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        archived_case_row.closed_at = datetime.now(timezone.utc)
         session.add(archived_case_row)
         await session.flush()
 

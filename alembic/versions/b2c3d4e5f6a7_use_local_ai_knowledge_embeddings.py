@@ -20,7 +20,7 @@ def _create_hnsw_index() -> None:
         """
         CREATE INDEX IF NOT EXISTS ix_ai_knowledge_chunks_embedding_hnsw
         ON ai_knowledge_chunks
-        USING hnsw (embedding vector_cosine_ops)
+        USING hnsw (embedding public.vector_cosine_ops)
         WHERE embedding IS NOT NULL
         """
     )
@@ -35,7 +35,7 @@ def upgrade() -> None:
         """
         ALTER TABLE ai_knowledge_chunks
         ALTER COLUMN embedding DROP NOT NULL,
-        ALTER COLUMN embedding TYPE vector(1024) USING NULL
+        ALTER COLUMN embedding TYPE public.vector(1024) USING NULL
         """
     )
     _create_hnsw_index()
@@ -105,7 +105,7 @@ def downgrade() -> None:
         """
         ALTER TABLE ai_knowledge_chunks
         ALTER COLUMN embedding DROP NOT NULL,
-        ALTER COLUMN embedding TYPE vector(1536) USING NULL
+        ALTER COLUMN embedding TYPE public.vector(1536) USING NULL
         """
     )
     _create_hnsw_index()

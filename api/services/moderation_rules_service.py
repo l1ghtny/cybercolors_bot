@@ -23,7 +23,7 @@ from api.models.moderation_rules import (
     ParsedModerationRuleModel,
 )
 from api.services.discord_guilds import fetch_channel_message
-from api.services.moderation_core import build_actor, naive_utcnow
+from api.services.moderation_core import build_actor, utc_now
 from api.services.moderation_rule_llm_parser import parse_rules_from_text_with_llm
 from api.services.moderation_rule_sync_state import ModerationRuleSyncState, ModerationRuleSyncStatus
 from api.services.moderation_rules_service_types import ParsedRule
@@ -215,7 +215,7 @@ async def _upsert_rule_sync_state(
     sync_note: str | None = None,
     now: datetime | None = None,
 ) -> ModerationRuleSyncState:
-    timestamp = now or naive_utcnow()
+    timestamp = now or utc_now()
     state = await session.get(ModerationRuleSyncState, rule_id)
     if state is None:
         state = ModerationRuleSyncState(rule_id=rule_id, created_at=timestamp)
@@ -332,7 +332,7 @@ async def create_manual_rule(
     created_by_user_id: int | None,
 ) -> ModerationRule:
     await _get_or_create_server(session, server_id)
-    now = naive_utcnow()
+    now = utc_now()
     rule = ModerationRule(
         server_id=server_id,
         code=code,
@@ -368,7 +368,7 @@ async def deactivate_rule(
     if not rule or rule.server_id != server_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Moderation rule not found")
     rule.is_active = False
-    rule.updated_at = naive_utcnow()
+    rule.updated_at = utc_now()
     session.add(rule)
     await session.flush()
     await session.refresh(rule)
@@ -385,7 +385,7 @@ async def activate_rule(
     if not rule or rule.server_id != server_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Moderation rule not found")
     rule.is_active = True
-    rule.updated_at = naive_utcnow()
+    rule.updated_at = utc_now()
     session.add(rule)
     await session.flush()
     await session.refresh(rule)
@@ -412,7 +412,7 @@ async def update_rule_manually(
     rule.sort_order = sort_order
     if is_active is not None:
         rule.is_active = is_active
-    now = naive_utcnow()
+    now = utc_now()
     rule.updated_at = now
     session.add(rule)
     if rule.id is not None:
@@ -438,7 +438,7 @@ async def delete_rule_permanently(
     if not rule or rule.server_id != server_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Moderation rule not found")
 
-    deleted_at = naive_utcnow()
+    deleted_at = utc_now()
     sync_state = await session.get(ModerationRuleSyncState, rule_id)
     if sync_state is not None:
         await session.delete(sync_state)
@@ -488,7 +488,7 @@ async def delete_rule_permanently(
 
 async def _deactivate_existing_rules(session: AsyncSession, server_id: int):
     existing_rules = await list_rules(session=session, server_id=server_id, include_inactive=False)
-    now = naive_utcnow()
+    now = utc_now()
     for rule in existing_rules:
         rule.is_active = False
         rule.updated_at = now
@@ -531,7 +531,7 @@ async def import_rules(
     else:
         sort_offset = await _active_rules_max_sort_order(session=session, server_id=server_id)
 
-    now = naive_utcnow()
+    now = utc_now()
     created: list[ModerationRule] = []
     for item in parsed_rules:
         rule = ModerationRule(
@@ -612,7 +612,7 @@ async def import_rules_from_messages(
     else:
         sort_offset = await _active_rules_max_sort_order(session=session, server_id=server_id)
 
-    now = naive_utcnow()
+    now = utc_now()
     created: list[ModerationRule] = []
     for index, (parsed, channel_id, message_id, _) in enumerate(parsed_chunks, start=1):
         rule = ModerationRule(
@@ -736,7 +736,7 @@ async def sync_rules_from_source_message_edit(
     if not parsed_rules:
         return []
 
-    now = naive_utcnow()
+    now = utc_now()
     content_hash = _content_hash(content)
     first_sort_order = min(rule.sort_order for rule in existing)
     created_by_user_id = existing[0].created_by_user_id

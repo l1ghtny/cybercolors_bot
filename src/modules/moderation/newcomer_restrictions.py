@@ -6,7 +6,7 @@ from sqlmodel import select
 from api.services.moderation_core import (
     get_or_create_server_record,
     get_or_create_user_membership,
-    naive_utcnow,
+    utc_now,
 )
 from api.services.monitoring_service import upsert_monitored_user
 from src.db.database import get_async_session
@@ -60,7 +60,7 @@ async def handle_newcomer_role_granted(
             return False
 
         release_due_at = (
-            naive_utcnow() + timedelta(minutes=settings.newcomer_auto_release_minutes)
+            utc_now() + timedelta(minutes=settings.newcomer_auto_release_minutes)
             if settings.newcomer_auto_release_minutes
             else None
         )

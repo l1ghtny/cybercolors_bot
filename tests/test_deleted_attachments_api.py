@@ -21,7 +21,7 @@ async def _deleted_attachments_scenario() -> None:
     author_id = _make_discord_id()
     moderator_id = _make_discord_id()
     channel_id = _make_discord_id()
-    now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
 
     async with get_async_session() as session:
         session.add(Server(server_id=server_id, server_name="deleted-attachments", bot_active=True))

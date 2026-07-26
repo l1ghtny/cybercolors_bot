@@ -17,7 +17,7 @@ from api.models.server_temp_voice import (
     ServerTempVoiceSettingsUpdateModel,
 )
 from api.services.discord_guilds import create_guild_voice_channel, delete_channel, fetch_guild_channels
-from api.services.moderation_core import naive_utcnow
+from api.services.moderation_core import utc_now
 from src.db.models import (
     AIModerationDecision,
     AttachmentLog,
@@ -119,7 +119,7 @@ async def update_server_temp_voice_settings(
         settings.owner_user_limit_enabled = body.owner_user_limit_enabled
     if body.owner_control_allowed_role_ids is not None:
         settings.owner_control_allowed_role_ids = body.owner_control_allowed_role_ids
-    settings.updated_at = naive_utcnow()
+    settings.updated_at = utc_now()
     session.add(settings)
     await session.flush()
     await session.refresh(settings)
@@ -128,7 +128,7 @@ async def update_server_temp_voice_settings(
 
 
 def _duration_seconds(start, end) -> int:
-    finished_at = end or naive_utcnow()
+    finished_at = end or utc_now()
     return max(0, int((finished_at - start).total_seconds()))
 
 
@@ -394,7 +394,7 @@ async def delete_active_temp_voice_channel(
         if error.status_code != status.HTTP_404_NOT_FOUND:
             raise
 
-    deleted_at = naive_utcnow()
+    deleted_at = utc_now()
     temp_log.deleted_at = deleted_at
     temp_log.archive_channel_id = None
     temp_log.archive_message_id = None
@@ -454,7 +454,7 @@ async def build_temp_voice_archive_transcript(
         f"Channel: {archive.channel_id}",
         f"Owner: {archive.owner_user_id or 'unknown'}",
         f"Created at: {archive.created_at.isoformat(sep=' ', timespec='seconds')}",
-        f"Deleted at: {(archive.deleted_at or naive_utcnow()).isoformat(sep=' ', timespec='seconds')}",
+        f"Deleted at: {(archive.deleted_at or utc_now()).isoformat(sep=' ', timespec='seconds')}",
         "",
     ]
     if not archive.messages:
@@ -493,7 +493,7 @@ async def create_temp_voice_trigger_channel_and_attach(
     settings = await get_or_create_server_temp_voice_settings(session, server_id, server_name=server_name)
     settings.trigger_channel_id = int(channel_id)
     settings.enabled = body.enabled
-    settings.updated_at = naive_utcnow()
+    settings.updated_at = utc_now()
     session.add(settings)
     await session.flush()
     await session.refresh(settings)

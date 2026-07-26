@@ -385,7 +385,7 @@ def validate_target_for_moderation(
 def target_joined_at_for_action(user: discord.Member) -> datetime:
     joined_at = user.joined_at or datetime.now(timezone.utc)
     if joined_at.tzinfo is not None:
-        return joined_at.astimezone(timezone.utc).replace(tzinfo=None)
+        return joined_at.astimezone(timezone.utc)
     return joined_at
 
 

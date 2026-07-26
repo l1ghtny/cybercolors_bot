@@ -15,8 +15,8 @@ from src.modules.localization.service import (
 )
 
 
-def _utcnow_naive() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 async def to_server_localization_read_model(
@@ -61,7 +61,7 @@ async def update_server_localization_settings(
         server_name=server_name,
     )
     settings.locale_code = locale_code
-    settings.updated_at = _utcnow_naive()
+    settings.updated_at = _utc_now()
     session.add(settings)
     await session.flush()
     await session.refresh(settings)

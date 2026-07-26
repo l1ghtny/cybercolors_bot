@@ -41,7 +41,7 @@ from api.services.moderation_core import (
     deleted_message_deletion_type,
     ensure_case_writable_for_actions,
     moderation_action_is_reverted,
-    naive_utcnow,
+    utc_now,
     to_deleted_message_read,
     to_moderation_history,
 )
@@ -133,7 +133,7 @@ def _rule_labels_for_action(action: ModerationAction, locale: str | None = None)
     if action.rule_citations:
         sorted_citations = sorted(
             action.rule_citations,
-            key=lambda item: (item.cited_at or datetime.min.replace(tzinfo=None), str(item.id)),
+            key=lambda item: (item.cited_at or datetime.min.replace(tzinfo=timezone.utc), str(item.id)),
         )
         return [
             _rule_label_from_parts(
@@ -355,7 +355,7 @@ def _build_action_revert_log_embed(
         "color": 0x5865F2,
         "fields": fields,
         "footer": {"text": f"{tr(locale, 'modlog.action_number_label')}: #{action.action_number}"},
-        "timestamp": _format_dt(naive_utcnow()),
+        "timestamp": _format_dt(utc_now()),
     }
 
 
@@ -1167,7 +1167,7 @@ async def revert_action(
     discord_changed = await _apply_discord_revert_for_action(session=session, action=action)
 
     action.is_active = False
-    action.expires_at = action.expires_at or naive_utcnow()
+    action.expires_at = action.expires_at or utc_now()
     session.add(action)
     await session.flush()
 
@@ -1432,7 +1432,7 @@ async def _message_logs_for_action_cleanup(
             collected[row.message_id] = row
 
     if cleanup.recent_period_minutes is not None:
-        since = naive_utcnow() - timedelta(minutes=cleanup.recent_period_minutes)
+        since = utc_now() - timedelta(minutes=cleanup.recent_period_minutes)
         recent_statement = select(MessageLog).where(
             MessageLog.server_id == action.server_id,
             MessageLog.user_id == action.target_user_id,
@@ -1471,7 +1471,7 @@ async def _move_deleted_message_logs_to_action(
     for attachment in attachment_rows:
         attachments_by_message_id.setdefault(attachment.message_id, []).append(attachment)
 
-    deleted_at = naive_utcnow()
+    deleted_at = utc_now()
     moved_count = 0
     for message in messages:
         attachments = attachments_by_message_id.get(message.message_id, [])
@@ -1568,7 +1568,7 @@ async def add_deleted_message_for_action(
         author_user_id=author_user_id,
         content=body.content,
         attachments_json=body.attachments_json,
-        deleted_at=body.deleted_at or naive_utcnow(),
+        deleted_at=body.deleted_at or utc_now(),
         deleted_by_user_id=deleted_by_user_id,
     )
     session.add(deleted_message)

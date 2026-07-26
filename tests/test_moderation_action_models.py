@@ -18,15 +18,15 @@ def _action_payload(expires_at: datetime) -> ModerationActionCreate:
     )
 
 
-def test_action_expiry_is_normalized_to_naive_utc_for_postgres() -> None:
+def test_action_expiry_is_normalized_to_aware_utc_for_postgres() -> None:
     local_tz = timezone(timedelta(hours=3))
     action = _action_payload(datetime(2026, 7, 19, 17, 54, tzinfo=local_tz))
 
-    assert action.expires_at == datetime(2026, 7, 19, 14, 54)
-    assert action.expires_at.tzinfo is None
+    assert action.expires_at == datetime(2026, 7, 19, 14, 54, tzinfo=timezone.utc)
+    assert action.expires_at.tzinfo is timezone.utc
 
 
-def test_naive_action_expiry_is_preserved() -> None:
+def test_naive_action_expiry_is_interpreted_as_utc() -> None:
     expires_at = datetime(2026, 7, 19, 14, 54)
 
-    assert _action_payload(expires_at).expires_at == expires_at
+    assert _action_payload(expires_at).expires_at == expires_at.replace(tzinfo=timezone.utc)

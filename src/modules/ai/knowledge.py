@@ -24,6 +24,7 @@ from src.modules.ai.embeddings import (
     KnowledgeEmbedder,
     get_knowledge_embedder,
 )
+from src.modules.ai.youtube_channel_links import link_youtube_source_to_channel_video
 
 
 logger = logging.getLogger(__name__)
@@ -333,6 +334,7 @@ async def process_knowledge_index_job_with_embedder(
     job.error_message = None
     job.locked_at = None
     job.updated_at = now
+    await link_youtube_source_to_channel_video(session, source)
     await session.flush()
 
 
@@ -409,6 +411,7 @@ async def search_server_knowledge(
     embedder: KnowledgeEmbedder | None = None,
     min_score: float | None = None,
     source_id: str | None = None,
+    source_ids: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     normalized_query = normalize_knowledge_text(query)
     if not normalized_query:
@@ -424,7 +427,10 @@ async def search_server_knowledge(
     )
     if not math.isfinite(effective_min_score) or not 0.0 <= effective_min_score <= 1.0:
         raise ValueError("min_score must be between 0 and 1")
-    source_filter = "AND source.id = CAST(:source_id AS uuid)" if source_id else ""
+    normalized_source_ids = list(dict.fromkeys(str(UUID(value)) for value in (source_ids or [])))
+    if source_id:
+        normalized_source_ids = [str(UUID(source_id))]
+    source_filter = "AND CAST(source.id AS text) IN :source_ids" if normalized_source_ids else ""
     statement = text(
         f"""
         SELECT
@@ -439,7 +445,7 @@ async def search_server_knowledge(
             chunk.chunk_text AS chunk_text,
             source.source_url AS source_url,
             source.indexed_at AS indexed_at,
-            chunk.embedding <=> CAST(:query_embedding AS vector) AS distance
+            chunk.embedding OPERATOR(public.<=>) CAST(:query_embedding AS public.vector) AS distance
         FROM ai_knowledge_chunks AS chunk
         JOIN ai_knowledge_sources AS source ON source.id = chunk.source_id
         WHERE chunk.server_id = :server_id
@@ -449,12 +455,13 @@ async def search_server_knowledge(
           AND source.deleted_at IS NULL
           AND chunk.embedding IS NOT NULL
           {source_filter}
-        ORDER BY chunk.embedding <=> CAST(:query_embedding AS vector)
+        ORDER BY chunk.embedding OPERATOR(public.<=>) CAST(:query_embedding AS public.vector)
         LIMIT :limit
         """
     ).bindparams(
         bindparam("ready_statuses", expanding=True),
         bindparam("visibility_values", expanding=True),
+        *([bindparam("source_ids", expanding=True)] if normalized_source_ids else []),
     )
     params: dict[str, Any] = {
         "server_id": server_id,
@@ -463,8 +470,8 @@ async def search_server_knowledge(
         "query_embedding": query_vector,
         "limit": bounded_limit,
     }
-    if source_id:
-        params["source_id"] = source_id
+    if normalized_source_ids:
+        params["source_ids"] = normalized_source_ids
     rows = (
         await session.exec(
             statement,

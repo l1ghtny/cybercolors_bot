@@ -53,13 +53,13 @@ def _parse_discord_datetime(value: str | None) -> datetime | None:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
-    if parsed.tzinfo is not None:
-        return parsed.astimezone(timezone.utc).replace(tzinfo=None)
-    return parsed
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
-def _utcnow_naive() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 async def _has_server_profile_evidence(session: AsyncSession, server_id: int, user_id: int) -> bool:
@@ -142,7 +142,7 @@ async def _hydrate_membership_from_discord(
 
     if membership is not None:
         if membership.is_member or (membership.left_server_at is None and membership.flagged_absent_at is None):
-            detected_at = _utcnow_naive()
+            detected_at = _utc_now()
             membership.is_member = False
             if membership.flagged_absent_at is None:
                 membership.flagged_absent_at = detected_at
@@ -155,7 +155,7 @@ async def _hydrate_membership_from_discord(
     if not await _has_server_profile_evidence(session, server_id, user_id):
         return None
 
-    detected_at = _utcnow_naive()
+    detected_at = _utc_now()
     membership = User(
         user_id=user_id,
         server_id=server_id,

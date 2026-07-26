@@ -8,7 +8,7 @@ from api.models.monitoring import (
     MonitoredUserUpdateModel,
     ServerMonitoringSettingsUpdateModel,
 )
-from api.services.moderation_core import naive_utcnow
+from api.services.moderation_core import utc_now
 from api.services.monitoring_service import (
     monitoring_notification_cooldown_active,
     monitoring_notifications_snoozed,
@@ -32,7 +32,7 @@ def test_monitoring_update_still_rejects_empty_payload():
 
 
 def test_monitoring_snooze_only_suppresses_notifications_until_deadline():
-    now = naive_utcnow()
+    now = utc_now()
     monitored_user = SimpleNamespace(
         notification_snoozed_until=now + timedelta(minutes=30)
     )
@@ -72,7 +72,7 @@ def test_monitoring_notification_cooldown_validation():
 
 
 def test_monitoring_notification_cooldown_is_per_user_and_time_bounded():
-    now = naive_utcnow()
+    now = utc_now()
     monitored_user = SimpleNamespace(
         last_notification_at=now - timedelta(minutes=2)
     )

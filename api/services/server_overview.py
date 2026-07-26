@@ -16,7 +16,7 @@ from api.services.moderation_core import (
     build_optional_actor,
     get_system_actor,
     moderation_action_is_reverted,
-    naive_utcnow,
+    utc_now,
 )
 from src.db.models import (
     ActionType,
@@ -43,7 +43,7 @@ from src.db.models import (
 
 
 def _today_start_utc() -> datetime:
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = datetime.now(timezone.utc)
     return now.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
@@ -141,7 +141,7 @@ async def build_server_overview(session: AsyncSession, server_id: int) -> Server
 
     return ServerOverviewModel(
         server_id=str(server_id),
-        generated_at=naive_utcnow(),
+        generated_at=utc_now(),
         stats=ServerOverviewStatsModel(
             moderation_actions_today=actions_today,
             moderation_actions_total=actions_total,
@@ -469,6 +469,6 @@ async def build_server_timeline(session: AsyncSession, server_id: int, limit: in
     events.sort(key=lambda item: item.occurred_at, reverse=True)
     return ServerTimelineModel(
         server_id=str(server_id),
-        generated_at=naive_utcnow(),
+        generated_at=utc_now(),
         events=events[:scoped_limit],
     )

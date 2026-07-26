@@ -14,13 +14,14 @@ from src.db.models import (
     utcnow_utc_tz,
 )
 from src.modules.ai.knowledge import queue_knowledge_index_job
+from src.modules.ai.youtube_channel_links import youtube_video_id_for_source
+from src.modules.ai.youtube_channel_profiles import upsert_youtube_channel_profile
 from src.modules.ai.youtube_data import (
     YouTubeChannel,
     YouTubeDataClient,
     YouTubeDataError,
     YouTubeVideo,
 )
-from src.modules.ai.youtube_urls import YouTubeUrlError, normalize_youtube_video_url
 
 
 logger = logging.getLogger(__name__)
@@ -117,6 +118,8 @@ async def sync_youtube_channel_subscription(
             row.knowledge_source_id = source.id
             session.add(row)
 
+    await upsert_youtube_channel_profile(session, subscription)
+
     subscription.status = "disabled" if was_disabled else "enabled"
     subscription.last_synced_at = now
     subscription.next_sync_at = now + timedelta(seconds=max(YOUTUBE_CHANNEL_SYNC_INTERVAL_SECONDS, 60))
@@ -212,19 +215,7 @@ async def _knowledge_sources_by_video_id(
     ).all()
     by_video_id: dict[str, AIKnowledgeSource] = {}
     for source in sources:
-        metadata = dict(source.metadata_json or {})
-        import_metadata = metadata.get("import")
-        youtube_metadata = metadata.get("youtube")
-        video_id = None
-        if isinstance(import_metadata, dict):
-            video_id = import_metadata.get("video_id")
-        if not video_id and isinstance(youtube_metadata, dict):
-            video_id = youtube_metadata.get("video_id")
-        if not video_id and source.source_url:
-            try:
-                video_id = normalize_youtube_video_url(source.source_url).video_id
-            except YouTubeUrlError:
-                continue
+        video_id = youtube_video_id_for_source(source)
         if isinstance(video_id, str) and video_id:
             by_video_id.setdefault(video_id, source)
     return by_video_id
@@ -274,5 +265,5 @@ def _parse_provider_datetime(value: str | None) -> datetime | None:
     except ValueError:
         return None
     if parsed.tzinfo is None:
-        return parsed
-    return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)

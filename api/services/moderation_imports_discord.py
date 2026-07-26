@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.services.discord_guilds import fetch_guild_audit_logs, fetch_guild_bans
-from api.services.moderation_core import naive_utcnow
+from api.services.moderation_core import utc_now
 from api.services.moderation_imports_service import (
     ImportedModerationActionPayload,
     create_import_run,
@@ -35,16 +35,16 @@ SUPPORTED_AUDIT_ACTION_TYPES = {
 
 def snowflake_datetime(snowflake_id: int | str) -> datetime:
     timestamp_ms = (int(snowflake_id) >> 22) + DISCORD_EPOCH_MS
-    return datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc).replace(tzinfo=None)
+    return datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
 
 
 def parse_discord_datetime(value: str | None) -> datetime | None:
     if not value:
         return None
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    if parsed.tzinfo is not None:
-        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
-    return parsed
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _user_display_name(user: dict | None) -> str | None:
@@ -79,7 +79,7 @@ async def fetch_all_guild_bans(server_id: int) -> list[dict]:
 
 
 async def fetch_recent_moderation_audit_entries(server_id: int, *, days: int = 45) -> tuple[list[dict], dict[str, dict]]:
-    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     entries: list[dict] = []
     users_by_id: dict[str, dict] = {}
     before: int | None = None
@@ -227,7 +227,7 @@ async def import_discord_baseline(
     }
 
     try:
-        now = naive_utcnow()
+        now = utc_now()
         current_bans = await fetch_all_guild_bans(server_id)
         current_banned_user_ids = {
             int((ban.get("user") or {}).get("id"))

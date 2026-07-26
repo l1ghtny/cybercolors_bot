@@ -8,8 +8,8 @@ from src.modules.ai.moderation_review import screen_message_with_ai
 from src.modules.moderation.moderation_helpers import check_if_server_exists, check_if_user_exists
 
 
-def _naive_utcnow() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 async def process_background_tasks(message, known_global_users):
@@ -36,7 +36,7 @@ async def process_background_tasks(message, known_global_users):
         if activity:
             activity.message_count += 1
             activity.channel_id = message.channel.id
-            activity.last_message_at = _naive_utcnow()
+            activity.last_message_at = _utc_now()
         else:
             session.add(
                 UserActivity(
@@ -44,7 +44,7 @@ async def process_background_tasks(message, known_global_users):
                     server_id=guild.id,
                     channel_id=message.channel.id,
                     message_count=1,
-                    last_message_at=_naive_utcnow(),
+                    last_message_at=_utc_now(),
                 )
             )
 

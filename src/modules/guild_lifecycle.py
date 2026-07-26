@@ -7,8 +7,8 @@ from src.db.database import get_async_session
 from src.db.models import Server
 
 
-def _naive_utcnow() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def _guild_icon_url(guild: discord.Guild) -> str | None:
@@ -17,7 +17,7 @@ def _guild_icon_url(guild: discord.Guild) -> str | None:
 
 
 async def mark_guild_presence(guild: discord.Guild, is_active: bool) -> None:
-    now = _naive_utcnow()
+    now = _utc_now()
     async with get_async_session() as session:
         server = await session.get(Server, guild.id)
         if not server:
@@ -47,7 +47,7 @@ async def mark_guild_presence(guild: discord.Guild, is_active: bool) -> None:
 
 
 async def sync_active_guild_presence(guilds: list[discord.Guild]) -> None:
-    now = _naive_utcnow()
+    now = _utc_now()
     active_ids = {guild.id for guild in guilds}
 
     async with get_async_session() as session:

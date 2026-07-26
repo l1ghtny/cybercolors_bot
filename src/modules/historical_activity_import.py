@@ -43,12 +43,12 @@ class HistoricalActivityImportStats:
     bot_messages_skipped: int = 0
 
 
-def _as_naive_utc(value: datetime | None) -> datetime | None:
+def _as_utc(value: datetime | None) -> datetime | None:
     if value is None:
         return None
-    if value.tzinfo is not None:
-        return value.astimezone(timezone.utc).replace(tzinfo=None)
-    return value
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def _discord_avatar_hash(user: discord.abc.User) -> str | None:
@@ -106,12 +106,12 @@ async def _ensure_user(session: AsyncSession, guild: discord.Guild, user: discor
             server_id=guild.id,
             user_id=user.id,
             server_nickname=member.display_name if member else None,
-            joined_server_at=_as_naive_utc(member.joined_at) if member and member.joined_at else None,
+            joined_server_at=_as_utc(member.joined_at) if member and member.joined_at else None,
             is_member=member is not None,
         )
     elif member is not None:
         membership.server_nickname = member.display_name
-        membership.joined_server_at = _as_naive_utc(member.joined_at) if member.joined_at else membership.joined_server_at
+        membership.joined_server_at = _as_utc(member.joined_at) if member.joined_at else membership.joined_server_at
         membership.left_server_at = None
         membership.flagged_absent_at = None
         membership.is_member = True
@@ -226,7 +226,7 @@ async def _import_channel_page(
         if getattr(author, "bot", False):
             skipped_bots += 1
             continue
-        created_at = _as_naive_utc(message.created_at)
+        created_at = _as_utc(message.created_at)
         if created_at is None:
             continue
         seen_users[author.id] = author
@@ -246,8 +246,8 @@ async def _import_channel_page(
     cursor.pages_scanned += 1
     cursor.messages_scanned += len(messages)
     cursor.messages_imported += imported
-    oldest_created_at = _as_naive_utc(oldest_message.created_at)
-    newest_created_at = _as_naive_utc(newest_message.created_at)
+    oldest_created_at = _as_utc(oldest_message.created_at)
+    newest_created_at = _as_utc(newest_message.created_at)
     if oldest_created_at is not None:
         cursor.oldest_message_at = (
             oldest_created_at

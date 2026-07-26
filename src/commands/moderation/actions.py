@@ -101,7 +101,7 @@ async def _revert_action(
         stored = await session.get(ModerationAction, action.id)
         if stored is not None:
             stored.is_active = False
-            stored.expires_at = stored.expires_at or datetime.now(timezone.utc).replace(tzinfo=None)
+            stored.expires_at = stored.expires_at or datetime.now(timezone.utc)
             session.add(stored)
             await session.commit()
             await send_action_revert_dm(

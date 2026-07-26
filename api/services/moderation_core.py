@@ -39,8 +39,8 @@ from src.db.models import (
 )
 
 
-def naive_utcnow() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def moderation_action_is_reverted(action_type: ActionType | str, is_active: bool) -> bool:
@@ -283,7 +283,7 @@ def _rule_refs_from_action(action: ModerationAction) -> list[ModerationRuleRef]:
     if action.rule_citations:
         sorted_citations = sorted(
             action.rule_citations,
-            key=lambda item: (item.cited_at or datetime.min.replace(tzinfo=None), str(item.id)),
+            key=lambda item: (item.cited_at or datetime.min.replace(tzinfo=timezone.utc), str(item.id)),
         )
         return [_rule_ref_from_action_citation(item) for item in sorted_citations]
     if action.rule is not None:

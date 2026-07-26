@@ -21,18 +21,18 @@ from src.db.models import (
 )
 
 
-def _as_naive_utc(value: datetime | None) -> datetime | None:
+def _as_utc(value: datetime | None) -> datetime | None:
     if value is None:
         return None
-    if value.tzinfo is not None:
-        return value.astimezone(timezone.utc).replace(tzinfo=None)
-    return value
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def _member_joined_server_at(user: d.Member | d.User) -> datetime | None:
     if not isinstance(user, d.Member):
         return None
-    return _as_naive_utc(getattr(user, "joined_at", None))
+    return _as_utc(getattr(user, "joined_at", None))
 
 async def ensure_message_foreign_keys(message: d.Message, session: AsyncSession) -> None:
     """
@@ -46,7 +46,7 @@ async def ensure_message_foreign_keys(message: d.Message, session: AsyncSession)
 
     server_icon = getattr(guild, "icon", None)
     icon_url = str(server_icon.url) if server_icon else None
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = datetime.now(timezone.utc)
     await session.exec(
         pg_insert(Server)
         .values(
@@ -177,7 +177,7 @@ async def check_if_server_exists(server: d.Guild, session: AsyncSession):
 
     server_icon = getattr(server, "icon", None)
     icon_url = str(server_icon.url) if server_icon else None
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = datetime.now(timezone.utc)
 
     if not server_in_db:
         session.add(
@@ -229,7 +229,7 @@ async def log_message(message: d.Message, session: AsyncSession):
             user_id=message.author.id,
             channel_id=message.channel.id,
             content=message.content,
-            created_at=message.created_at.replace(tzinfo=None),
+            created_at=_as_utc(message.created_at),
             reply_to_message_id=message.reference.message_id if message.reference else None,
             server_id=message.guild.id,
         )
@@ -268,7 +268,7 @@ async def claim_message_for_processing(message: d.Message) -> bool:
     """
     if message.guild is None or message.author is None:
         return False
-    created_at = _as_naive_utc(message.created_at) or datetime.now(timezone.utc).replace(tzinfo=None)
+    created_at = _as_utc(message.created_at) or datetime.now(timezone.utc)
     insert_stmt = (
         pg_insert(MessageClaim)
         .values(
@@ -394,7 +394,7 @@ async def handle_message_deletion(message_id: int, guild_id: int | None, session
             claim,
             guild_id,
             session,
-            deleted_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            deleted_at=datetime.now(timezone.utc),
         )
         await session.delete(claim)
         await session.commit()
@@ -426,7 +426,7 @@ async def handle_message_deletion(message_id: int, guild_id: int | None, session
         author_user_id=logged_msg.user_id,
         content=logged_msg.content,
         attachments_json=attachments_json,
-        deleted_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        deleted_at=datetime.now(timezone.utc),
     )
     session.add(deleted_message)
     await session.flush()
@@ -451,7 +451,7 @@ async def handle_bulk_message_deletion(message_ids: set[int], guild_id: int | No
 
     if missing_message_ids:
         claims_result = await session.exec(select(MessageClaim).where(MessageClaim.message_id.in_(missing_message_ids)))
-        deleted_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        deleted_at = datetime.now(timezone.utc)
         for claim in claims_result.all():
             await _record_deleted_message_from_claim(claim, guild_id, session, deleted_at=deleted_at)
             await session.delete(claim)
@@ -468,7 +468,7 @@ async def handle_bulk_message_deletion(message_ids: set[int], guild_id: int | No
     for attachment in attachment_rows:
         attachments_by_message_id.setdefault(attachment.message_id, []).append(attachment)
 
-    deleted_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    deleted_at = datetime.now(timezone.utc)
     for logged_msg in logged_messages:
         rows = attachments_by_message_id.get(logged_msg.message_id, [])
         attachments_json = (

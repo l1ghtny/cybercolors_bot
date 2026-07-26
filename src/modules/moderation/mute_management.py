@@ -7,8 +7,8 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from src.db.models import ActionType, ModerationAction, Server, ServerModerationSettings
 
 
-def naive_utcnow() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 async def get_or_create_moderation_settings(
@@ -57,7 +57,7 @@ async def deactivate_user_mutes(
     user_id: int,
 ) -> int:
     actions = await get_active_mute_actions_for_user(session=session, server_id=server_id, user_id=user_id)
-    now = naive_utcnow()
+    now = utc_now()
     for action in actions:
         action.is_active = False
         action.expires_at = action.expires_at or now
@@ -70,7 +70,7 @@ async def get_expired_active_mutes(
     session: AsyncSession,
     limit: int = 200,
 ) -> list[ModerationAction]:
-    now = naive_utcnow()
+    now = utc_now()
     statement = (
         select(ModerationAction)
         .where(
@@ -110,7 +110,7 @@ async def deactivate_user_bans(
     user_id: int,
 ) -> int:
     actions = await get_active_ban_actions_for_user(session=session, server_id=server_id, user_id=user_id)
-    now = naive_utcnow()
+    now = utc_now()
     for action in actions:
         action.is_active = False
         action.expires_at = action.expires_at or now
@@ -123,7 +123,7 @@ async def get_expired_active_bans(
     session: AsyncSession,
     limit: int = 200,
 ) -> list[ModerationAction]:
-    now = naive_utcnow()
+    now = utc_now()
     statement = (
         select(ModerationAction)
         .where(

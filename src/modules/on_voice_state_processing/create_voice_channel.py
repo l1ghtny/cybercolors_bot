@@ -21,8 +21,8 @@ logger = logger.logging.getLogger("bot")
 _recent_temp_voice_channels: set[tuple[int, int]] = set()
 
 
-def _naive_utcnow() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def _safe_channel_name(template: str, member: discord.Member) -> str:
@@ -75,7 +75,7 @@ async def _create_temp_log(
         trigger_channel_id=trigger_channel_id,
         owner_user_id=owner_user_id,
         channel_name=channel_name,
-        created_at=_naive_utcnow(),
+        created_at=_utc_now(),
     )
     session.add(temp_log)
     await session.flush()
@@ -131,7 +131,7 @@ async def _record_temp_voice_participation(
     if before_channel_id == after_channel_id:
         return
 
-    now = _naive_utcnow()
+    now = _utc_now()
     async with get_async_session() as session:
         await check_if_server_exists(member.guild, session)
         await check_if_user_exists(member, member.guild, session)
@@ -189,7 +189,7 @@ async def _create_temp_channel(member: discord.Member, after: discord.VoiceState
                     trigger_channel_id=settings.trigger_channel_id,
                     owner_user_id=member.id,
                     channel_name=temp_channel.name,
-                    created_at=_naive_utcnow(),
+                    created_at=_utc_now(),
                 )
             )
             temp_log = await _create_temp_log(
@@ -232,7 +232,7 @@ async def _delete_empty_temp_channel(member: discord.Member, before: discord.Voi
                         trigger_channel_id=active_channel.trigger_channel_id or settings.trigger_channel_id or before.channel.id,
                         owner_user_id=active_channel.owner_user_id or member.id,
                     )
-                temp_log.deleted_at = _naive_utcnow()
+                temp_log.deleted_at = _utc_now()
                 temp_log.archive_channel_id = None
                 temp_log.archive_message_id = None
                 session.add(temp_log)
@@ -247,7 +247,7 @@ async def _delete_empty_temp_channel(member: discord.Member, before: discord.Voi
                 for decision in decisions:
                     decision.archive_channel_id = None
                     decision.archive_message_id = None
-                    decision.updated_at = _naive_utcnow()
+                    decision.updated_at = _utc_now()
                     session.add(decision)
                 await session.delete(active_channel)
                 await session.commit()

@@ -1,7 +1,13 @@
 import asyncio
+from datetime import timezone
 from uuid import uuid4
 
-from src.db.models import AIKnowledgeSource, YouTubeChannelSubscription, YouTubeChannelVideo
+from sqlmodel import select
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+from src.db.database import engine
+from src.db.models import AIKnowledgeIndexJob, AIKnowledgeSource, Server, YouTubeChannelSubscription, YouTubeChannelVideo
+from src.modules.ai.youtube_channel_links import link_youtube_source_to_channel_video
 from src.modules.ai.youtube_channel_sync import sync_youtube_channel_subscription
 from src.modules.ai.youtube_data import YouTubeChannel, YouTubeDataError, YouTubeVideo
 
@@ -71,7 +77,7 @@ def _subscription() -> YouTubeChannelSubscription:
     )
 
 
-def test_initial_channel_sync_catalogues_and_links_without_auto_indexing():
+def test_initial_channel_sync_catalogues_and_links_without_auto_indexing(monkeypatch):
     source = AIKnowledgeSource(
         id=uuid4(),
         server_id=123,
@@ -97,6 +103,14 @@ def test_initial_channel_sync_catalogues_and_links_without_auto_indexing():
     session = _FakeSession([[], [source]])
     subscription = _subscription()
 
+    async def fake_upsert_profile(_session, _subscription):
+        return None
+
+    monkeypatch.setattr(
+        "src.modules.ai.youtube_channel_sync.upsert_youtube_channel_profile",
+        fake_upsert_profile,
+    )
+
     succeeded = asyncio.run(
         sync_youtube_channel_subscription(
             session,
@@ -112,8 +126,8 @@ def test_initial_channel_sync_catalogues_and_links_without_auto_indexing():
     assert succeeded is True
     assert len(catalogued) == 1
     assert catalogued[0].knowledge_source_id == source.id
-    assert catalogued[0].published_at.isoformat() == "2026-07-20T12:00:00"
-    assert catalogued[0].published_at.tzinfo is None
+    assert catalogued[0].published_at.isoformat() == "2026-07-20T12:00:00+00:00"
+    assert catalogued[0].published_at.tzinfo is timezone.utc
     assert created_sources == []
     assert subscription.status == "enabled"
     assert subscription.last_synced_at is not None
@@ -162,6 +176,14 @@ def test_subsequent_sync_auto_indexes_new_available_video(monkeypatch):
         "src.modules.ai.youtube_channel_sync._create_video_knowledge_source",
         fake_create_source,
     )
+
+    async def fake_upsert_profile(_session, _subscription):
+        return None
+
+    monkeypatch.setattr(
+        "src.modules.ai.youtube_channel_sync.upsert_youtube_channel_profile",
+        fake_upsert_profile,
+    )
     video = YouTubeVideo(
         video_id="new123DEF_0",
         channel_id="UC1234567890123456789012",
@@ -191,3 +213,93 @@ def test_subsequent_sync_auto_indexes_new_available_video(monkeypatch):
     assert succeeded is True
     assert created_for == ["new123DEF_0"]
     assert catalogued[0].knowledge_source_id == created_source.id
+
+
+async def _database_timezone_scenario() -> None:
+    await engine.dispose()
+    async with engine.connect() as connection:
+        transaction = await connection.begin()
+        try:
+            server_id = 8_000_000_000_000_000 + (uuid4().int % 100_000_000_000_000)
+            subscription = _subscription()
+            subscription.server_id = server_id
+            video = YouTubeVideo(
+                video_id="tz123DEF_00",
+                channel_id=subscription.channel_id,
+                canonical_url="https://www.youtube.com/watch?v=tz123DEF_00",
+                title="Timezone regression",
+                description="",
+                published_at="2026-07-20T14:00:00+02:00",
+                duration_seconds=60,
+                thumbnail_url=None,
+                availability="available",
+                captions_available=False,
+            )
+
+            async with AsyncSession(connection, expire_on_commit=False) as session:
+                session.add(Server(server_id=server_id, server_name="timezone-test", bot_active=True))
+                session.add(subscription)
+                await session.flush()
+
+                succeeded = await sync_youtube_channel_subscription(
+                    session,
+                    subscription,
+                    client=_FakeClient(channel=_channel(), videos=[video]),
+                    resolved_channel=_channel(),
+                    auto_index_new=False,
+                )
+                await session.flush()
+                session.expunge_all()
+                persisted = (
+                    await session.exec(
+                        select(YouTubeChannelVideo).where(
+                            YouTubeChannelVideo.subscription_id == subscription.id,
+                            YouTubeChannelVideo.video_id == video.video_id,
+                        )
+                    )
+                ).one()
+                profile = (
+                    await session.exec(
+                        select(AIKnowledgeSource).where(
+                            AIKnowledgeSource.server_id == server_id,
+                            AIKnowledgeSource.source_type == "youtube_channel",
+                        )
+                    )
+                ).one()
+                profile_job = (
+                    await session.exec(
+                        select(AIKnowledgeIndexJob).where(
+                            AIKnowledgeIndexJob.source_id == profile.id,
+                        )
+                    )
+                ).one()
+
+                assert succeeded is True
+                assert persisted.published_at.isoformat() == "2026-07-20T12:00:00+00:00"
+                assert persisted.published_at.utcoffset().total_seconds() == 0
+                assert profile.status == "queued"
+                assert "Known names and aliases: Studio Colors, @StudioColors, SC" in profile.content_text
+                assert profile_job.status == "pending"
+
+                transcript = AIKnowledgeSource(
+                    server_id=server_id,
+                    source_type="youtube",
+                    subject_type="server",
+                    status="ready",
+                    visibility="public_answer",
+                    title=video.title,
+                    source_url=video.canonical_url,
+                )
+                session.add(transcript)
+                await session.flush()
+                linked = await link_youtube_source_to_channel_video(session, transcript)
+
+                assert linked is not None
+                assert linked.knowledge_source_id == transcript.id
+        finally:
+            await transaction.rollback()
+    await engine.dispose()
+
+
+def test_channel_sync_persists_provider_timestamp_in_postgresql():
+    asyncio.run(_database_timezone_scenario())

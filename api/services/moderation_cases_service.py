@@ -32,7 +32,7 @@ from api.services.moderation_core import (
     ensure_case_writable_for_actions,
     get_case_or_404,
     get_system_actor,
-    naive_utcnow,
+    utc_now,
     to_case_read,
     to_moderation_history,
 )
@@ -312,7 +312,7 @@ async def _replace_case_action_link(
                 case_id=case_id,
                 moderation_action_id=action.id,
                 linked_by_user_id=linked_by_user_id,
-                linked_at=linked_at or naive_utcnow(),
+                linked_at=linked_at or utc_now(),
             )
         )
     await session.flush()
@@ -614,7 +614,7 @@ async def update_case_status(
             )
         await build_actor(session, server_id, closed_by_user_id, require_membership=True)
         moderation_case.status = body.status
-        moderation_case.closed_at = naive_utcnow()
+        moderation_case.closed_at = utc_now()
         moderation_case.closed_by_user_id = closed_by_user_id
 
     session.add(moderation_case)
@@ -871,7 +871,7 @@ async def link_action_to_case(
             session=session,
             moderation_case=moderation_case,
             rules=resolved_rules,
-            cited_at=naive_utcnow(),
+            cited_at=utc_now(),
         )
 
     await session.refresh(moderation_case)
@@ -891,7 +891,7 @@ async def upsert_case_rules(
         session=session,
         moderation_case=moderation_case,
         rules=rules,
-        cited_at=naive_utcnow(),
+        cited_at=utc_now(),
     )
     await session.refresh(moderation_case)
     return await to_case_read(moderation_case, session)

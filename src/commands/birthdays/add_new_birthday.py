@@ -14,7 +14,7 @@ def _interaction_joined_server_at(interaction) -> datetime | None:
     if joined_at is None:
         return None
     if getattr(joined_at, "tzinfo", None) is not None:
-        return joined_at.astimezone(timezone.utc).replace(tzinfo=None)
+        return joined_at.astimezone(timezone.utc)
     return joined_at
 
 def _birthday_date_error(month_value: str, day: int) -> str | None:

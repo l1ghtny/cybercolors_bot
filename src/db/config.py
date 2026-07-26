@@ -1,5 +1,18 @@
 import os
+import re
 from urllib.parse import quote_plus
+
+
+_POSTGRES_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def get_database_schema() -> str | None:
+    schema = (os.getenv("DB_SCHEMA") or "").strip()
+    if not schema:
+        return None
+    if not _POSTGRES_IDENTIFIER_RE.fullmatch(schema):
+        raise ValueError("DB_SCHEMA must be a valid unquoted PostgreSQL identifier")
+    return schema
 
 
 def get_database_url() -> str:
@@ -20,3 +33,11 @@ def get_database_url() -> str:
         )
 
     raise ValueError("DATABASE_URL or DB_HOST/DB_NAME/DB_USER/DB_PASSWORD environment variables are required")
+
+
+def get_database_connect_args() -> dict[str, object]:
+    """Return optional PostgreSQL session settings shared by app and Alembic."""
+    schema = get_database_schema()
+    if not schema:
+        return {}
+    return {"server_settings": {"search_path": schema}}

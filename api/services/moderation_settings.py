@@ -14,7 +14,7 @@ from api.services.discord_guilds import (
     fetch_channel,
     fetch_guild_roles,
 )
-from api.services.moderation_core import naive_utcnow
+from api.services.moderation_core import utc_now
 from src.db.models import Server, ServerLocalizationSettings, ServerModerationSettings
 from src.modules.localization.service import normalize_locale_code, tr
 
@@ -117,7 +117,7 @@ async def update_server_moderation_settings(
     if body.activity_excluded_channel_ids is not None:
         settings.activity_excluded_channel_ids = body.activity_excluded_channel_ids
 
-    settings.updated_at = naive_utcnow()
+    settings.updated_at = utc_now()
     session.add(settings)
     await session.flush()
     await session.refresh(settings)
@@ -140,7 +140,7 @@ async def create_mute_role_and_attach(
 
     settings = await get_or_create_server_moderation_settings(session, server_id, server_name=server_name)
     settings.mute_role_id = int(role_id)
-    settings.updated_at = naive_utcnow()
+    settings.updated_at = utc_now()
     session.add(settings)
     await session.flush()
     await session.refresh(settings)

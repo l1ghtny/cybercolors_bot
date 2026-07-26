@@ -36,7 +36,7 @@ def _make_discord_id() -> int:
 
 
 def _naive_now() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(timezone.utc)
 
 
 def test_deleted_message_action_route_uses_static_prefix_before_generic_action_details():

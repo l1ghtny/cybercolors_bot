@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import Enum
 from uuid import UUID
 
-from sqlalchemy import Column, Text
+from sqlalchemy import Column, Text, TIMESTAMP
 from sqlmodel import Field, SQLModel
 
 from src.db.models import utcnow_utc_tz
@@ -22,5 +22,11 @@ class ModerationRuleSyncState(SQLModel, table=True):
     source_content_hash: str | None = Field(default=None, nullable=True, max_length=64)
     source_segment_hash: str | None = Field(default=None, nullable=True, max_length=64)
     sync_note: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
-    created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
-    updated_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+    created_at: datetime = Field(
+        default_factory=utcnow_utc_tz,
+        sa_column=Column(TIMESTAMP(timezone=True), nullable=False),
+    )
+    updated_at: datetime = Field(
+        default_factory=utcnow_utc_tz,
+        sa_column=Column(TIMESTAMP(timezone=True), nullable=False),
+    )

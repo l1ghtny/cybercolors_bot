@@ -23,6 +23,10 @@ from src.db.models import (
     utcnow_utc_tz,
 )
 from src.modules.ai.youtube_channel_errors import public_youtube_channel_error
+from src.modules.ai.youtube_channel_profiles import (
+    delete_youtube_channel_profile,
+    upsert_youtube_channel_profile,
+)
 from src.modules.ai.youtube_channel_sync import sync_youtube_channel_subscription
 from src.modules.ai.youtube_data import YouTubeDataClient, YouTubeDataError
 
@@ -95,6 +99,8 @@ async def create_youtube_channel_subscription(
         description=channel.description or None,
         thumbnail_url=channel.thumbnail_url,
         uploads_playlist_id=channel.uploads_playlist_id,
+        aliases=body.aliases,
+        related_user_ids=body.related_user_ids,
         status="enabled",
         auto_index_new_videos=body.auto_index_new_videos,
         created_by_user_id=created_by_user_id,
@@ -128,9 +134,15 @@ async def update_youtube_channel_subscription(
             subscription.next_sync_at = utcnow_utc_tz()
     if body.auto_index_new_videos is not None:
         subscription.auto_index_new_videos = body.auto_index_new_videos
+    if body.aliases is not None:
+        subscription.aliases = body.aliases
+    if body.related_user_ids is not None:
+        subscription.related_user_ids = body.related_user_ids
     subscription.updated_at = utcnow_utc_tz()
     session.add(subscription)
     await session.flush()
+    if body.aliases is not None or body.related_user_ids is not None:
+        await upsert_youtube_channel_profile(session, subscription)
     count, linked = (await _video_counts(session, [subscription.id])).get(subscription.id, (0, 0))
     return _subscription_to_model(subscription, video_count=count, linked_video_count=linked)
 
@@ -142,6 +154,7 @@ async def delete_youtube_channel_subscription(
     subscription_id: UUID,
 ) -> None:
     subscription = await _get_subscription(session, server_id=server_id, subscription_id=subscription_id)
+    await delete_youtube_channel_profile(session, subscription)
     await session.exec(
         delete(YouTubeChannelVideo).where(YouTubeChannelVideo.subscription_id == subscription.id)
     )
@@ -287,6 +300,8 @@ def _subscription_to_model(
         title=subscription.title,
         description=subscription.description,
         thumbnail_url=subscription.thumbnail_url,
+        aliases=list(subscription.aliases or []),
+        related_user_ids=list(subscription.related_user_ids or []),
         status=subscription.status,
         auto_index_new_videos=subscription.auto_index_new_videos,
         video_count=video_count,

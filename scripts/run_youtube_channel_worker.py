@@ -3,6 +3,7 @@ import asyncio
 import os
 
 from src.db.database import get_async_session
+from src.modules.ai.youtube_channel_profiles import ensure_youtube_channel_profile_once
 from src.modules.ai.youtube_channel_sync import sync_due_youtube_channel_once
 
 
@@ -17,6 +18,9 @@ async def _run_batch(batch_size: int) -> int:
     processed = 0
     async with get_async_session() as session:
         for _ in range(batch_size):
+            if await ensure_youtube_channel_profile_once(session):
+                processed += 1
+                continue
             if not await sync_due_youtube_channel_once(session):
                 break
             processed += 1

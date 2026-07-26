@@ -51,16 +51,16 @@ _activity_member_roles_locks: dict[tuple[int, int], asyncio.Lock] = {}
 _activity_member_roles_locks_guard = asyncio.Lock()
 
 
-def _naive_utcnow() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
-def _as_naive_utc(value: datetime | None) -> datetime | None:
+def _as_utc(value: datetime | None) -> datetime | None:
     if value is None:
         return None
-    if value.tzinfo is not None:
-        return value.astimezone(timezone.utc).replace(tzinfo=None)
-    return value
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def _get_cached_activity_channel_ids(server_id: int) -> set[int] | None:
@@ -378,7 +378,7 @@ def _merge_leaderboard_rows(*row_sets: list[tuple[int, int, datetime | None]]) -
         for user_id, message_count, last_message_at in rows:
             user_key = int(user_id)
             previous_count, previous_last = merged.get(user_key, (0, None))
-            normalized_last = _as_naive_utc(last_message_at)
+            normalized_last = _as_utc(last_message_at)
             if previous_last is None or (normalized_last is not None and normalized_last > previous_last):
                 latest = normalized_last
             else:
@@ -545,12 +545,12 @@ async def _fetch_user_last_message_metadata(
     candidates: list[tuple[int, datetime]] = []
     if live_row:
         channel_id, created_at = live_row
-        normalized = _as_naive_utc(created_at)
+        normalized = _as_utc(created_at)
         if normalized is not None:
             candidates.append((int(channel_id), normalized))
     if historical_row:
         channel_id, created_at = historical_row
-        normalized = _as_naive_utc(created_at)
+        normalized = _as_utc(created_at)
         if normalized is not None:
             candidates.append((int(channel_id), normalized))
     if not candidates:
@@ -702,7 +702,7 @@ async def upsert_user_activity(
     )
 
     activity_row = await session.get(UserActivity, (user_id, server_id))
-    observed_at = body.observed_at or _naive_utcnow()
+    observed_at = body.observed_at or _utc_now()
     channel_id = int(body.channel_id)
     if not activity_row:
         activity_row = UserActivity(
@@ -1003,7 +1003,7 @@ async def get_server_activity_leaderboard(
         warnings_by_user.setdefault(int(target_user_id), []).append(
             UserActivityWarningModel(
                 action_id=str(action_id),
-                created_at=_as_naive_utc(created_at) or _naive_utcnow(),
+                created_at=_as_utc(created_at) or _utc_now(),
                 reason=reason,
             )
         )
@@ -1021,7 +1021,7 @@ async def get_server_activity_leaderboard(
                 server_nickname=server_nickname,
                 display_name=display_name,
                 message_count=int(message_count),
-                last_message_at=_as_naive_utc(last_message_at) or _naive_utcnow(),
+                last_message_at=_as_utc(last_message_at) or _utc_now(),
                 channels=channels_by_user.get(user_key, []),
                 warn_count=len(warnings_by_user.get(user_key, [])),
                 warnings=warnings_by_user.get(user_key, []),

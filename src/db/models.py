@@ -1,7 +1,7 @@
 import uuid
 from typing import List, Optional
 from uuid import UUID, uuid4, uuid7
-from datetime import date, datetime, UTC, timezone
+from datetime import UTC, date, datetime
 
 import sqlalchemy as sa
 from pgvector.sqlalchemy import Vector
@@ -9,8 +9,9 @@ from sqlalchemy import BigInteger, Column, ForeignKey, Index, JSON, String, TIME
 from sqlmodel import Field, Relationship, SQLModel
 
 
-def utcnow_utc_tz():
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+def utcnow_utc_tz() -> datetime:
+    """Return the current instant as an aware UTC datetime."""
+    return datetime.now(UTC)
 
 
 def uuid7_primary_key_field():
@@ -205,10 +206,10 @@ class DashboardSession(SQLModel, table=True):
     discord_access_token: str = Field(sa_column=Column(Text, nullable=False))
     discord_refresh_token: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     discord_token_expires_at: datetime = Field(
-        sa_column=Column(TIMESTAMP(timezone=False), nullable=False)
+        sa_column=Column(TIMESTAMP(timezone=True), nullable=False)
     )
     expires_at: datetime = Field(
-        sa_column=Column(TIMESTAMP(timezone=False), nullable=False, index=True)
+        sa_column=Column(TIMESTAMP(timezone=True), nullable=False, index=True)
     )
     created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
     last_seen_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
@@ -553,6 +554,8 @@ class YouTubeChannelSubscription(SQLModel, table=True):
     description: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     thumbnail_url: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     uploads_playlist_id: str = Field(sa_column=Column(String(length=64), nullable=False))
+    aliases: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    related_user_ids: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
     status: str = Field(
         default="enabled",
         sa_column=Column(String(length=30), nullable=False, index=True, server_default="enabled"),
@@ -816,7 +819,7 @@ class ModerationAction(SQLModel, table=True):
 
     reason: str
     commentary: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
-    created_at: datetime = Field(default_factory= datetime.now)
+    created_at: datetime = Field(default_factory=utcnow_utc_tz)
     expires_at: Optional[datetime] = None  # For temporary mutes/bans
     is_active: bool = True  # To mark if a ban/mute has been cancelled
 
@@ -1405,7 +1408,7 @@ class UserActivity(SQLModel, table=True):
     channel_id: int = Field(sa_column=Column(BigInteger))
 
     message_count: int = 0
-    last_message_at: datetime = Field(default_factory= datetime.now)
+    last_message_at: datetime = Field(default_factory=utcnow_utc_tz)
 
     server: Server = Relationship(back_populates="user_activity")
     global_user: GlobalUser = Relationship(back_populates="user_activity")
@@ -1418,7 +1421,7 @@ class HistoricalUserActivityDaily(SQLModel, table=True):
     activity_date: date = Field(sa_column=Column(sa.Date, primary_key=True))
 
     message_count: int = Field(default=0, nullable=False)
-    last_message_at: datetime = Field(sa_column=Column(TIMESTAMP(timezone=False), nullable=False))
+    last_message_at: datetime = Field(sa_column=Column(TIMESTAMP(timezone=True), nullable=False))
     created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
     updated_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
 
@@ -1482,7 +1485,7 @@ class MessageClaim(SQLModel, table=True):
     server_id: int = Field(sa_column=Column(BigInteger, nullable=False))
     channel_id: int = Field(sa_column=Column(BigInteger, nullable=False))
     user_id: int = Field(sa_column=Column(BigInteger, nullable=False))
-    created_at: datetime = Field(sa_column=Column(TIMESTAMP(timezone=False), nullable=False))
+    created_at: datetime = Field(sa_column=Column(TIMESTAMP(timezone=True), nullable=False))
     claimed_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
 
 class MessageLog(SQLModel, table=True):
@@ -1523,3 +1526,19 @@ class Triggers(SQLModel, table=True):
     reply_id: UUID = Field(nullable=False, foreign_key="replies.id")
 
     reply: Replies = Relationship(back_populates="triggers")
+
+
+def _apply_timezone_aware_timestamp_policy() -> None:
+    """Store every modeled datetime instant as PostgreSQL TIMESTAMPTZ.
+
+    SQLModel maps bare ``datetime`` annotations to timezone-naive ``DateTime``
+    columns. All datetime fields in this schema represent real instants; local
+    calendar values use ``date``/``sa.Date`` and are intentionally unaffected.
+    """
+    for table in SQLModel.metadata.tables.values():
+        for column in table.columns:
+            if isinstance(column.type, sa.DateTime):
+                column.type = TIMESTAMP(timezone=True)
+
+
+_apply_timezone_aware_timestamp_policy()

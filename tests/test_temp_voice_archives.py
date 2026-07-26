@@ -34,7 +34,7 @@ async def _temp_voice_archive_scenario() -> None:
     channel_id = _make_discord_id()
     message_id = _make_discord_id()
     deleted_message_id = _make_discord_id()
-    now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     temp_log_id = uuid4()
 
     async with get_async_session() as session:
@@ -138,7 +138,7 @@ async def _delete_active_temp_voice_channel_scenario(monkeypatch) -> None:
     owner_id = _make_discord_id()
     channel_id = _make_discord_id()
     trigger_channel_id = _make_discord_id()
-    now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     temp_log_id = uuid4()
     deleted_channels: list[int] = []
 

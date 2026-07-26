@@ -5,7 +5,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.services.discord_guilds import fetch_guild_member
-from api.services.moderation_core import naive_utcnow
+from api.services.moderation_core import utc_now
 from api.services.newcomer_probation import promote_newcomer_member
 from src.db.models import MonitoredUser, MonitoredUserStatusEvent, ServerSecuritySettings
 from src.modules.logs_setup import logger
@@ -19,7 +19,7 @@ async def list_due_newcomer_releases(
     now: datetime | None = None,
     limit: int = 100,
 ) -> list[tuple[MonitoredUser, ServerSecuritySettings]]:
-    release_time = now or naive_utcnow()
+    release_time = now or utc_now()
     rows = (
         await session.exec(
             select(MonitoredUser, ServerSecuritySettings)
@@ -75,7 +75,7 @@ async def process_due_newcomer_releases(
     now: datetime | None = None,
     limit: int = 100,
 ) -> tuple[int, int]:
-    release_time = now or naive_utcnow()
+    release_time = now or utc_now()
     processed = 0
     failed = 0
     rows = await list_due_newcomer_releases(session, now=release_time, limit=limit)

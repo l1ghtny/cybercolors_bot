@@ -6,10 +6,10 @@ from src.db.database import get_async_session
 from src.db.models import User, utcnow_utc_tz
 
 
-def normalize_utc_naive(dt: datetime.datetime) -> datetime.datetime:
+def normalize_utc(dt: datetime.datetime) -> datetime.datetime:
     if dt.tzinfo is None:
-        return dt
-    return dt.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+        return dt.replace(tzinfo=datetime.timezone.utc)
+    return dt.astimezone(datetime.timezone.utc)
 
 
 async def remove_old_flagged_users():
@@ -25,7 +25,7 @@ async def remove_old_flagged_users():
         if flagged_time is None:
             continue
         utc_now = utcnow_utc_tz()
-        timedelta = utc_now - normalize_utc_naive(flagged_time)
+        timedelta = utc_now - normalize_utc(flagged_time)
         if timedelta.days > 365:
             await remove_user_from_table(server_id, user_id)
 

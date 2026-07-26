@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -21,6 +21,9 @@ from src.modules.ai.knowledge import queue_knowledge_index_job, run_knowledge_in
 from src.modules.ai.knowledge_errors import public_knowledge_error
 from src.modules.ai.knowledge_imports import KnowledgeImportError, store_knowledge_upload
 from src.modules.ai.youtube_urls import YouTubeUrlError, normalize_youtube_video_url
+
+
+_SYSTEM_MANAGED_SOURCE_TYPES = {"youtube_channel"}
 
 
 async def _ensure_server(session: AsyncSession, server_id: int) -> None:
@@ -114,7 +117,11 @@ def _job_to_model(
 
 async def _get_source(session: AsyncSession, server_id: int, source_id: UUID) -> AIKnowledgeSource:
     source = await session.get(AIKnowledgeSource, source_id)
-    if source is None or source.server_id != server_id:
+    if (
+        source is None
+        or source.server_id != server_id
+        or source.source_type in _SYSTEM_MANAGED_SOURCE_TYPES
+    ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="AI knowledge source not found")
     return source
 
@@ -131,7 +138,10 @@ async def list_knowledge_sources(
     include_deleted: bool = False,
     limit: int = 100,
 ) -> AIKnowledgeSourceListModel:
-    statement = select(AIKnowledgeSource).where(AIKnowledgeSource.server_id == server_id)
+    statement = select(AIKnowledgeSource).where(
+        AIKnowledgeSource.server_id == server_id,
+        AIKnowledgeSource.source_type.notin_(_SYSTEM_MANAGED_SOURCE_TYPES),
+    )
     if not include_deleted:
         statement = statement.where(AIKnowledgeSource.deleted_at.is_(None))
     if status_filter and status_filter != "all":
@@ -371,6 +381,16 @@ async def list_knowledge_jobs(
     limit: int = 100,
 ) -> AIKnowledgeJobListModel:
     statement = select(AIKnowledgeIndexJob).where(AIKnowledgeIndexJob.server_id == server_id)
+    managed_source_ids = select(AIKnowledgeSource.id).where(
+        AIKnowledgeSource.server_id == server_id,
+        AIKnowledgeSource.source_type.in_(_SYSTEM_MANAGED_SOURCE_TYPES),
+    )
+    statement = statement.where(
+        or_(
+            AIKnowledgeIndexJob.source_id.is_(None),
+            ~AIKnowledgeIndexJob.source_id.in_(managed_source_ids),
+        )
+    )
     if status_filter and status_filter != "all":
         statement = statement.where(AIKnowledgeIndexJob.status == status_filter)
     if source_id is not None:

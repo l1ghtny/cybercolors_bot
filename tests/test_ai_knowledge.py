@@ -344,6 +344,18 @@ async def _knowledge_api_service_scenario() -> None:
         assert admin_source.subject_type == "admin"
         assert admin_source.subject_user_id == str(actor_id)
 
+        session.add(
+            AIKnowledgeSource(
+                server_id=server_id,
+                source_type="youtube_channel",
+                subject_type="server",
+                status="ready",
+                title="System-managed channel profile",
+                content_text="This profile is retrieved by the bot but managed with the channel subscription.",
+            )
+        )
+        await session.flush()
+
         listed = await list_knowledge_sources(session=session, server_id=server_id, subject_type="server")
         assert [item.id for item in listed.items] == [source.id]
 

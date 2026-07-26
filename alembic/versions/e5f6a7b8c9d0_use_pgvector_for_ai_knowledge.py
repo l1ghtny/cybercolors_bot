@@ -26,7 +26,7 @@ def upgrade() -> None:
         """
         ALTER TABLE ai_knowledge_chunks
         ALTER COLUMN embedding DROP NOT NULL,
-        ALTER COLUMN embedding TYPE vector(1536) USING NULL
+        ALTER COLUMN embedding TYPE public.vector(1536) USING NULL
         """
     )
     if not _index_exists("ai_knowledge_chunks", "ix_ai_knowledge_chunks_embedding_hnsw"):
@@ -34,7 +34,7 @@ def upgrade() -> None:
             """
             CREATE INDEX ix_ai_knowledge_chunks_embedding_hnsw
             ON ai_knowledge_chunks
-            USING hnsw (embedding vector_cosine_ops)
+            USING hnsw (embedding public.vector_cosine_ops)
             WHERE embedding IS NOT NULL
             """
         )

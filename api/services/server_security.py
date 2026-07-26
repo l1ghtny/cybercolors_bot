@@ -27,7 +27,7 @@ from api.services.discord_guilds import (
     update_guild_incident_actions,
     update_channel_slowmode,
 )
-from api.services.moderation_core import naive_utcnow
+from api.services.moderation_core import utc_now
 from api.services.newcomer_probation import (
     apply_newcomer_restriction_template,
     promote_newcomer_member,
@@ -177,7 +177,7 @@ async def update_verified_role(
 
     if not body.role_id:
         settings.verified_role_id = None
-        settings.updated_at = naive_utcnow()
+        settings.updated_at = utc_now()
         session.add(settings)
         await session.flush()
         await session.refresh(settings)
@@ -188,7 +188,7 @@ async def update_verified_role(
     settings.verified_role_id = role_id
     if settings.normal_permissions is None and current_permissions is not None:
         settings.normal_permissions = current_permissions
-    settings.updated_at = naive_utcnow()
+    settings.updated_at = utc_now()
     session.add(settings)
     await session.flush()
     await session.refresh(settings)
@@ -255,7 +255,7 @@ async def update_newcomer_role(
             detail="Configure both the newcomer and member roles before enabling probation",
         )
 
-    settings.updated_at = naive_utcnow()
+    settings.updated_at = utc_now()
     session.add(settings)
     await session.flush()
     await session.refresh(settings)
@@ -289,7 +289,7 @@ async def create_newcomer_role_and_attach(
     settings.newcomer_auto_release_minutes = (
         body.auto_release_minutes if body.auto_release_minutes and body.auto_release_minutes > 0 else None
     )
-    settings.updated_at = naive_utcnow()
+    settings.updated_at = utc_now()
     session.add(settings)
     await session.flush()
     await session.refresh(settings)
@@ -306,7 +306,7 @@ async def apply_newcomer_restrictions(
         server_id=server_id,
         settings=settings,
     )
-    settings.updated_at = naive_utcnow()
+    settings.updated_at = utc_now()
     session.add(settings)
     await session.flush()
     return ServerSecurityNewcomerRestrictionApplyResult(
@@ -369,7 +369,7 @@ async def apply_newcomer_member_action(
             detail="duration_minutes is required when no default release duration is configured",
         )
     release_due_at = (
-        naive_utcnow() + timedelta(minutes=duration_minutes)
+        utc_now() + timedelta(minutes=duration_minutes)
         if duration_minutes
         else None
     )
@@ -402,7 +402,7 @@ async def update_permission_templates(
         settings.normal_permissions = int(body.normal_permissions) if body.normal_permissions else None
     if body.lockdown_permissions is not None:
         settings.lockdown_permissions = int(body.lockdown_permissions) if body.lockdown_permissions else None
-    settings.updated_at = naive_utcnow()
+    settings.updated_at = utc_now()
     session.add(settings)
     await session.flush()
     await session.refresh(settings)
@@ -503,7 +503,7 @@ async def apply_lockdown_state(
         raise
 
     settings.lockdown_enabled = body.enabled
-    settings.updated_at = naive_utcnow()
+    settings.updated_at = utc_now()
     session.add(settings)
     await session.flush()
     await session.refresh(settings)

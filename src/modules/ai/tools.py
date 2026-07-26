@@ -97,6 +97,8 @@ async def _youtube_channel_catalog_tool(
     server_id: int,
     channel_query: str | None = None,
     video_query: str | None = None,
+    content_query: str | None = None,
+    mode: str = "channel_info",
     limit: int = 10,
 ) -> dict[str, Any]:
     return await search_youtube_channel_catalog(
@@ -104,6 +106,8 @@ async def _youtube_channel_catalog_tool(
         server_id=server_id,
         channel_query=channel_query,
         video_query=video_query,
+        content_query=content_query,
+        mode=mode,
         limit=min(max(int(limit), 1), 20),
     )
 
@@ -178,11 +182,11 @@ def build_default_tool_registry() -> AIToolRegistry:
         AITool(
             name="search_youtube_channel_catalog",
             description=(
-                "Look up followed YouTube channels and their video catalogues for this Discord server. "
-                "Use this for questions about channel identity, descriptions, latest or historical videos, "
-                "publication dates, video URLs, and whether an indexed transcript is available. "
-                "Use channel_query for a channel name, handle, or channel ID; use video_query for words in a "
-                "video title or description. Omit both queries to list followed channels and their newest videos."
+                "Query followed YouTube channel knowledge for this Discord server. The tool resolves names, "
+                "handles, abbreviations, aliases, and grammatical variants; returns public channel metadata or "
+                "structured video dates; and can semantically search all linked indexed video transcripts. "
+                "Choose list_channels for channel names only, channel_info for a profile, latest_videos for recent "
+                "uploads, search_videos for title/description matching, or search_transcripts for video contents."
             ),
             parameters={
                 "type": "object",
@@ -190,9 +194,23 @@ def build_default_tool_registry() -> AIToolRegistry:
                     "server_id": {"type": "integer"},
                     "channel_query": {"type": "string"},
                     "video_query": {"type": "string"},
+                    "content_query": {
+                        "type": "string",
+                        "description": "Natural-language topic to search across linked indexed transcripts.",
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": [
+                            "list_channels",
+                            "channel_info",
+                            "latest_videos",
+                            "search_videos",
+                            "search_transcripts",
+                        ],
+                    },
                     "limit": {"type": "integer", "minimum": 1, "maximum": 20},
                 },
-                "required": ["server_id"],
+                "required": ["server_id", "mode"],
                 "additionalProperties": False,
             },
             handler=_youtube_channel_catalog_tool,

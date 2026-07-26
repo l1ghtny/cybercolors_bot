@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.db.config import get_database_url
+from src.db.config import get_database_connect_args, get_database_url
 
 load_dotenv()
 
@@ -27,6 +27,7 @@ engine = create_async_engine(
     echo=DB_ECHO,
     pool_pre_ping=True,
     pool_recycle=DB_POOL_RECYCLE_SECONDS,
+    connect_args=get_database_connect_args(),
 )
 
 

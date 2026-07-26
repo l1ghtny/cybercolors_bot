@@ -76,8 +76,8 @@ def _get_bot_token_for_auth() -> str:
     return token
 
 
-def _naive_utcnow() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def _extract_guild_id(guild: dict) -> int | None:
@@ -228,7 +228,7 @@ async def _apply_bot_presence_snapshot(
     session: AsyncSession,
     bot_guild_ids: set[int],
 ) -> None:
-    now = _naive_utcnow()
+    now = _utc_now()
 
     existing_rows = (
         await session.exec(select(Server).where(Server.server_id.in_(list(bot_guild_ids))))

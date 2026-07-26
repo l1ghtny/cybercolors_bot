@@ -4,7 +4,7 @@ from api.models.server_overview_settings import (
     ServerOverviewSettingsReadModel,
     ServerOverviewSettingsUpdateModel,
 )
-from api.services.moderation_core import naive_utcnow
+from api.services.moderation_core import utc_now
 from src.db.models import Server, ServerOverviewSettings
 
 
@@ -46,7 +46,7 @@ async def update_server_overview_settings(
 ) -> ServerOverviewSettings:
     settings = await get_or_create_server_overview_settings(session, server_id)
     settings.role_ids = body.role_ids
-    settings.updated_at = naive_utcnow()
+    settings.updated_at = utc_now()
     session.add(settings)
     await session.flush()
     await session.refresh(settings)

@@ -49,7 +49,7 @@ from api.services.moderation_core import (
     get_nickname_history,
     get_or_create_server_record,
     get_or_create_user_membership,
-    naive_utcnow,
+    utc_now,
     to_nickname_record,
 )
 from api.services.moderation_users_service import (
@@ -103,7 +103,7 @@ async def log_user_nickname(
         discord_name=body.nickname,
         server_name=body.server_name or server.server_name or str(server_id),
         server_id=server_id,
-        recorded_at=body.recorded_at or naive_utcnow(),
+        recorded_at=body.recorded_at or utc_now(),
     )
     session.add(nickname_record)
 

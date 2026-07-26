@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
 from uuid import uuid4
 
@@ -30,8 +30,8 @@ async def _join_and_rejoin_scenario() -> None:
     await engine.dispose()
     server_id = _make_discord_id()
     user_id = _make_discord_id()
-    first_joined_at = datetime(2026, 7, 1, 12, 0, 0)
-    second_joined_at = datetime(2026, 7, 16, 9, 30, 0)
+    first_joined_at = datetime(2026, 7, 1, 12, 0, 0, tzinfo=timezone.utc)
+    second_joined_at = datetime(2026, 7, 16, 9, 30, 0, tzinfo=timezone.utc)
 
     guild = Mock(spec=discord.Guild)
     guild.id = server_id
@@ -62,7 +62,7 @@ async def _join_and_rejoin_scenario() -> None:
         assert membership.is_member is True
 
         membership.is_member = False
-        membership.left_server_at = datetime(2026, 7, 10, 18, 0, 0)
+        membership.left_server_at = datetime(2026, 7, 10, 18, 0, 0, tzinfo=timezone.utc)
         session.add(membership)
         await session.commit()
 

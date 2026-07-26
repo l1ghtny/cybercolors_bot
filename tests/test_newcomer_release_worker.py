@@ -25,7 +25,7 @@ async def _insert_newcomer(*, lockdown_enabled: bool = False):
     user_id = _make_discord_id()
     newcomer_role_id = _make_discord_id()
     member_role_id = _make_discord_id()
-    now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     async with get_async_session() as session:
         session.add(Server(server_id=server_id, server_name="newcomer-worker", bot_active=True))
         session.add(GlobalUser(discord_id=user_id, username="newcomer"))

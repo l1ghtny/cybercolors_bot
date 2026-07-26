@@ -62,8 +62,8 @@ ACTIONABLE_AI_ACTIONS = {
 AI_RULE_SELECTION_LIMIT = 25
 
 
-def _naive_utcnow() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def _truncate(value: str | None, limit: int) -> str:
@@ -199,13 +199,13 @@ async def _referenced_message_for_moderation(message: discord.Message):
     return fetched if fetched is not None and getattr(fetched, "id", None) is not None else None
 
 
-def _message_created_at_naive_utc(message: discord.Message) -> datetime | None:
+def _message_created_at_utc(message: discord.Message) -> datetime | None:
     created_at = getattr(message, "created_at", None)
     if created_at is None:
         return None
-    if getattr(created_at, "tzinfo", None) is not None:
-        return created_at.astimezone(timezone.utc).replace(tzinfo=None)
-    return created_at
+    if getattr(created_at, "tzinfo", None) is None:
+        return created_at.replace(tzinfo=timezone.utc)
+    return created_at.astimezone(timezone.utc)
 
 
 def _message_log_context_item(log: MessageLog, *, target_author_id: int | None) -> dict[str, str | bool | None]:
@@ -229,8 +229,8 @@ async def _recent_message_context_payload(session, message: discord.Message) -> 
     if guild_id is None or channel_id is None or message_id is None:
         return {}
 
-    created_at = _message_created_at_naive_utc(message)
-    cutoff = (created_at or _naive_utcnow()) - timedelta(minutes=5)
+    created_at = _message_created_at_utc(message)
+    cutoff = (created_at or _utc_now()) - timedelta(minutes=5)
     filters = [
         MessageLog.server_id == int(guild_id),
         MessageLog.channel_id == int(channel_id),
@@ -512,7 +512,7 @@ def _bot_can_send_ai_mod_log(guild: discord.Guild, channel) -> bool:
 async def _daily_ai_moderation_tokens_used(session, *, server_id: int, now: datetime | None = None) -> int:
     if not hasattr(session, "exec"):
         return 0
-    now = now or _naive_utcnow()
+    now = now or _utc_now()
     day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     result = await session.exec(
         select(func.coalesce(func.sum(AIModerationDecision.total_tokens), 0)).where(
@@ -798,8 +798,8 @@ async def _set_decision_status(
             return None
         decision.status = status
         decision.reviewed_by_user_id = reviewer_id
-        decision.reviewed_at = _naive_utcnow()
-        decision.updated_at = _naive_utcnow()
+        decision.reviewed_at = _utc_now()
+        decision.updated_at = _utc_now()
         if linked_case_id is not None:
             decision.linked_case_id = linked_case_id
         if selected_action is not None:
@@ -1246,8 +1246,8 @@ class AIWatchConfirmModal(discord.ui.Modal):
                 )
                 decision.status = "action_applied"
                 decision.reviewed_by_user_id = interaction.user.id
-                decision.reviewed_at = _naive_utcnow()
-                decision.updated_at = _naive_utcnow()
+                decision.reviewed_at = _utc_now()
+                decision.updated_at = _utc_now()
                 decision.selected_action = "watch"
                 decision.action_reason = reason
                 decision.action_override = _is_action_override(decision, "watch")
@@ -1379,8 +1379,8 @@ class AIActionConfirmModal(discord.ui.Modal):
                 )
                 decision.status = "action_applied"
                 decision.reviewed_by_user_id = interaction.user.id
-                decision.reviewed_at = _naive_utcnow()
-                decision.updated_at = _naive_utcnow()
+                decision.reviewed_at = _utc_now()
+                decision.updated_at = _utc_now()
                 decision.linked_action_id = action.id
                 decision.selected_action = self.action_type.value
                 decision.action_reason = reason
@@ -1485,8 +1485,8 @@ class AICreateCaseButton(discord.ui.Button):
                 decision.status = "case_created"
                 decision.linked_case_id = UUID(created.id)
                 decision.reviewed_by_user_id = interaction.user.id
-                decision.reviewed_at = _naive_utcnow()
-                decision.updated_at = _naive_utcnow()
+                decision.reviewed_at = _utc_now()
+                decision.updated_at = _utc_now()
                 session.add(decision)
                 await session.commit()
             except Exception as error:
@@ -1569,7 +1569,7 @@ async def send_ai_moderation_review(
             if stored_decision is not None:
                 stored_decision.review_channel_id = getattr(getattr(sent_message, "channel", None), "id", None) or getattr(channel, "id", None)
                 stored_decision.review_message_id = getattr(sent_message, "id", None)
-                stored_decision.updated_at = _naive_utcnow()
+                stored_decision.updated_at = _utc_now()
                 session.add(stored_decision)
                 await session.commit()
         return True

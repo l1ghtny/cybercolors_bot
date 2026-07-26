@@ -20,7 +20,7 @@ def _make_discord_id() -> int:
 
 
 def _naive_now() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(timezone.utc)
 
 
 def _assert_route(path: str, method: str, expected_path: str):

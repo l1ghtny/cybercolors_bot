@@ -9,7 +9,7 @@ from uuid import UUID
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from api.services.moderation_core import get_or_create_server_record, naive_utcnow
+from api.services.moderation_core import get_or_create_server_record, utc_now
 from api.services.moderation_action_numbers import allocate_moderation_action_number
 from api.services.moderation_import_metadata import unknown_source_date_note
 from src.db.models import (
@@ -163,7 +163,7 @@ async def create_import_run(
         status=ModerationImportRunStatus.RUNNING.value,
         dry_run=dry_run,
         started_by_user_id=started_by_user_id,
-        started_at=naive_utcnow(),
+        started_at=utc_now(),
     )
     session.add(run)
     await session.flush()
@@ -177,7 +177,7 @@ async def finish_import_run(
     summary: dict | None = None,
     error_message: str | None = None,
 ) -> ModerationImportRun:
-    run.completed_at = naive_utcnow()
+    run.completed_at = utc_now()
     run.summary_json = summary or {}
     if error_message:
         run.status = ModerationImportRunStatus.FAILED.value
@@ -334,7 +334,7 @@ async def import_moderation_action(
         rule_id=resolved_rules[0].id if resolved_rules else None,
         reason=(payload.reason or f"Imported {payload.action_type.value} from {payload.source.value}").strip(),
         commentary=payload.commentary,
-        created_at=payload.created_at or naive_utcnow(),
+        created_at=payload.created_at or utc_now(),
         expires_at=payload.expires_at,
         is_active=payload.is_active,
     )

@@ -23,8 +23,8 @@ from src.modules.localization.service import get_server_locale, tr
 from src.modules.moderation.bot_rbac import ensure_bot_permission
 
 
-def _utcnow_naive() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 async def _get_or_create_security_settings(server_id: int, server_name: str | None = None) -> ServerSecuritySettings:
@@ -64,7 +64,7 @@ async def security_set_verified_role(interaction: discord.Interaction, role: dis
         settings.verified_role_id = role.id
         if settings.normal_permissions is None:
             settings.normal_permissions = role.permissions.value
-        settings.updated_at = _utcnow_naive()
+        settings.updated_at = _utc_now()
         session.add(settings)
         await session.commit()
 

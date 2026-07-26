@@ -94,7 +94,7 @@ def build_unmute_log_message(
             f"**{tr(locale, 'modlog.reason_label')}:** {_truncate(reason, 1000)}",
             f"**{tr(locale, 'modlog.removed_role_label')}:** `{removed_role}`",
             f"**{tr(locale, 'modlog.closed_actions_label')}:** `{closed_actions}`",
-            f"**{tr(locale, 'modlog.logged_at_label')}:** `{_format_dt(datetime.now(timezone.utc).replace(tzinfo=None))}`",
+            f"**{tr(locale, 'modlog.logged_at_label')}:** `{_format_dt(datetime.now(timezone.utc))}`",
         ]
     )
     message = tr(locale, "modlog.header") + "\n" + "\n".join(lines)

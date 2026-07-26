@@ -22,7 +22,7 @@ from api.models.monitoring import (
     ServerMonitoringSettingsReadModel,
     ServerMonitoringSettingsUpdateModel,
 )
-from api.services.moderation_core import build_actor, get_case_or_404, naive_utcnow
+from api.services.moderation_core import build_actor, get_case_or_404, utc_now
 from api.services.discord_guilds import TEXT_CHANNEL_TYPES, fetch_channel
 from src.db.models import (
     CaseStatus,
@@ -255,7 +255,7 @@ async def upsert_monitored_user(
         existing.notification_snoozed_until = None
         existing.last_notification_at = None
         existing.added_by_user_id = added_by_user_id
-        existing.updated_at = naive_utcnow()
+        existing.updated_at = utc_now()
         session.add(existing)
         if previous_active is not True:
             _append_status_event(
@@ -324,12 +324,12 @@ async def update_monitored_user(
             if is_active:
                 item.released_at = None
             else:
-                item.released_at = naive_utcnow()
+                item.released_at = utc_now()
                 item.release_due_at = None
                 item.release_error = None
     if snooze_minutes is not None:
         item.notification_snoozed_until = (
-            naive_utcnow() + timedelta(minutes=snooze_minutes)
+            utc_now() + timedelta(minutes=snooze_minutes)
             if snooze_minutes > 0
             else None
         )
@@ -341,7 +341,7 @@ async def update_monitored_user(
             from_is_active=previous_active,
             to_is_active=is_active,
         )
-    item.updated_at = naive_utcnow()
+    item.updated_at = utc_now()
     session.add(item)
     await session.flush()
     await session.refresh(item)
@@ -354,7 +354,7 @@ def monitoring_notifications_snoozed(
     now: datetime | None = None,
 ) -> bool:
     snoozed_until = monitored_user.notification_snoozed_until
-    return snoozed_until is not None and snoozed_until > (now or naive_utcnow())
+    return snoozed_until is not None and snoozed_until > (now or utc_now())
 
 
 def monitoring_notification_cooldown_active(
@@ -366,7 +366,7 @@ def monitoring_notification_cooldown_active(
     if cooldown_minutes <= 0 or monitored_user.last_notification_at is None:
         return False
     return monitored_user.last_notification_at > (
-        (now or naive_utcnow()) - timedelta(minutes=cooldown_minutes)
+        (now or utc_now()) - timedelta(minutes=cooldown_minutes)
     )
 
 
@@ -415,7 +415,7 @@ async def add_monitored_user_comment(
     )
     session.add(row)
 
-    monitored_user.updated_at = naive_utcnow()
+    monitored_user.updated_at = utc_now()
     session.add(monitored_user)
 
     await session.flush()
@@ -560,7 +560,7 @@ async def add_monitored_user_from_case(
     if existing and existing.is_active:
         return await _to_monitored_user_read(session, existing)
 
-    now = naive_utcnow()
+    now = utc_now()
     if existing:
         previous_active = existing.is_active
         existing.is_active = True
@@ -749,7 +749,7 @@ async def update_server_monitoring_settings(
     if body.auto_monitor_reason is not None:
         settings.auto_monitor_reason = body.auto_monitor_reason.strip()
 
-    settings.updated_at = naive_utcnow()
+    settings.updated_at = utc_now()
     session.add(settings)
     await session.flush()
     await session.refresh(settings)
@@ -789,7 +789,7 @@ async def update_monitored_user_notification_settings(
         row = MonitoredUserNotificationSettings(monitored_user_id=monitored_user.id)
     for key, value in body.model_dump().items():
         setattr(row, key, value)
-    row.updated_at = naive_utcnow()
+    row.updated_at = utc_now()
     session.add(row)
     await session.flush()
     await session.refresh(row)
@@ -897,7 +897,7 @@ async def record_monitored_user_activity(
         metadata_json=metadata or {},
     )
     session.add(event)
-    monitored_user.updated_at = naive_utcnow()
+    monitored_user.updated_at = utc_now()
     session.add(monitored_user)
     await session.flush()
 
@@ -936,7 +936,7 @@ async def record_monitored_user_activity(
         session.add(event)
         await session.flush()
 
-    now = naive_utcnow()
+    now = utc_now()
     if monitoring_notification_cooldown_active(
         monitored_user,
         server_settings.notification_cooldown_minutes,

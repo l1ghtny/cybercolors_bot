@@ -23,7 +23,7 @@ SESSION_TOUCH_INTERVAL_SECONDS = int(os.getenv("DASHBOARD_SESSION_TOUCH_INTERVAL
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(timezone.utc)
 
 
 def _token_hash(token: str) -> str:

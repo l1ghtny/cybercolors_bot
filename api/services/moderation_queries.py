@@ -14,10 +14,10 @@ from src.db.models import (
 )
 
 
-def _naive_utc(value: datetime) -> datetime:
+def _as_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
-        return value
-    return value.astimezone(timezone.utc).replace(tzinfo=None)
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 async def query_deleted_messages(
@@ -34,7 +34,7 @@ async def query_deleted_messages(
     if channel_id is not None:
         statement = statement.where(DeletedMessage.channel_id == channel_id)
     if since is not None:
-        statement = statement.where(DeletedMessage.deleted_at >= _naive_utc(since))
+        statement = statement.where(DeletedMessage.deleted_at >= _as_utc(since))
 
     statement = statement.order_by(DeletedMessage.deleted_at.desc()).limit(limit)
     return (await session.exec(statement)).all()

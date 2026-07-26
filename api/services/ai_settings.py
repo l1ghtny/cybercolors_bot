@@ -3,7 +3,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.models.ai_settings import ServerAISettingsReadModel, ServerAISettingsUpdateModel
 from api.services.discord_guilds import TEXT_CHANNEL_TYPES, fetch_channel
-from api.services.moderation_core import naive_utcnow
+from api.services.moderation_core import utc_now
 from src.db.models import Server, ServerAISettings
 
 
@@ -151,7 +151,7 @@ async def update_server_ai_settings(
             detail="moderation_excluded_channel_ids cannot be empty when mode is exclude_selected",
         )
 
-    settings.updated_at = naive_utcnow()
+    settings.updated_at = utc_now()
     session.add(settings)
     await session.flush()
     await session.refresh(settings)

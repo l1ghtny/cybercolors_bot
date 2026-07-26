@@ -26,7 +26,7 @@ from api.models.moderation_actions import ModerationActionCreate
 from api.services.discord_guilds import edit_channel_message, fetch_channel_message
 from api.services.monitoring_service import upsert_monitored_user
 from api.services.moderation_actions_service import create_action
-from api.services.moderation_core import build_optional_actor, naive_utcnow, to_moderation_history
+from api.services.moderation_core import build_optional_actor, utc_now, to_moderation_history
 from src.modules.localization.service import normalize_locale_code, tr
 from src.db.models import AIModerationDecision, ActionType, GlobalUser, ModerationAction, Server, ServerLocalizationSettings, ServerModerationSettings, TempVoiceLog, User
 
@@ -51,7 +51,12 @@ def _decode_cursor(cursor: str | None) -> tuple[datetime, UUID] | None:
     padded = cursor + "=" * (-len(cursor) % 4)
     try:
         payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
-        return datetime.fromisoformat(payload["created_at"]), UUID(payload["id"])
+        created_at = datetime.fromisoformat(payload["created_at"])
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        else:
+            created_at = created_at.astimezone(timezone.utc)
+        return created_at, UUID(payload["id"])
     except Exception:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid cursor")
 
@@ -410,7 +415,7 @@ async def _build_action_payload_for_decision(
             case_id=str(decision.linked_case_id) if decision.linked_case_id else None,
             target_user_id=decision.author_user_id,
             target_user_name=(global_user.username if global_user and global_user.username else str(decision.author_user_id)),
-            target_user_joined_at=naive_utcnow(),
+            target_user_joined_at=utc_now(),
             target_user_server_nickname=membership.server_nickname if membership else None,
             server_id=decision.server_id,
             server_name=server.server_name if server and server.server_name else str(decision.server_id),
@@ -551,8 +556,8 @@ async def _apply_decision_action(
         )
         decision.status = "action_applied"
         decision.reviewed_by_user_id = moderator_user_id
-        decision.reviewed_at = naive_utcnow()
-        decision.updated_at = naive_utcnow()
+        decision.reviewed_at = utc_now()
+        decision.updated_at = utc_now()
         decision.selected_action = "watch"
         decision.action_reason = reason
         decision.action_override = (decision.suggested_action or "none") != "watch"
@@ -584,8 +589,8 @@ async def _apply_decision_action(
 
     decision.status = "action_applied"
     decision.reviewed_by_user_id = moderator_user_id
-    decision.reviewed_at = naive_utcnow()
-    decision.updated_at = naive_utcnow()
+    decision.reviewed_at = utc_now()
+    decision.updated_at = utc_now()
     decision.linked_action_id = moderation_action.id
     decision.selected_action = action_type.value
     decision.action_reason = payload.reason
@@ -647,7 +652,7 @@ def _mark_ai_suggestion_dismissed(
     moderator_user_id: int,
     reason: str | None,
 ) -> None:
-    now = naive_utcnow()
+    now = utc_now()
     decision.status = "dismissed"
     decision.reviewed_by_user_id = moderator_user_id
     decision.reviewed_at = now

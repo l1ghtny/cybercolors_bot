@@ -53,7 +53,7 @@ def _make_discord_id() -> int:
 
 
 def _rule_model(*, rule_id: str, code: str | None, title: str) -> ModerationRuleReadModel:
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = datetime.now(timezone.utc)
     return ModerationRuleReadModel(
         id=rule_id,
         server_id="123",
@@ -105,7 +105,7 @@ def test_build_action_payload_uses_rule_id_without_bot_api_url(monkeypatch):
     assert payload.rule_id == rule_id
     assert payload.rule_ids == []
     assert payload.moderator_user_id == 111
-    assert payload.target_user_joined_at.tzinfo is None
+    assert payload.target_user_joined_at.tzinfo is timezone.utc
 
 
 def test_build_moderator_action_receipt_has_private_details(monkeypatch):
@@ -448,7 +448,7 @@ async def _mute_effect_scenario(added_roles: list[dict]) -> None:
             reason="new mute",
             target_user_id=target_id,
             target_user_name="target",
-            target_user_joined_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            target_user_joined_at=datetime.now(timezone.utc),
             target_user_server_nickname="target-nick",
             server_id=server_id,
             server_name="mute-effect-server",
@@ -509,7 +509,7 @@ async def _action_message_cleanup_scenario(deleted_messages: list[dict]) -> None
     selected_message_id = _make_discord_id()
     recent_message_id = _make_discord_id()
     other_message_id = _make_discord_id()
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = datetime.now(timezone.utc)
 
     try:
         async with get_async_session() as session:
@@ -627,7 +627,7 @@ async def _live_message_action_link_migrates_on_delete_scenario() -> None:
     target_id = _make_discord_id()
     channel_id = _make_discord_id()
     message_id = _make_discord_id()
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = datetime.now(timezone.utc)
 
     async with get_async_session() as session:
         session.add(Server(server_id=server_id, server_name="link-server", bot_active=True))
@@ -759,7 +759,7 @@ async def _discord_effect_runs_after_action_flush_scenario(effect_observations: 
                 reason="ordered mute",
                 target_user_id=target_id,
                 target_user_name="target",
-                target_user_joined_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                target_user_joined_at=datetime.now(timezone.utc),
                 target_user_server_nickname="target-nick",
                 server_id=server_id,
                 server_name="effect-order-server",
@@ -1088,7 +1088,7 @@ async def _ban_effect_scenario(banned_users: list[dict]) -> None:
                 reason="temporary ban",
                 target_user_id=target_id,
                 target_user_name="target",
-                target_user_joined_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                target_user_joined_at=datetime.now(timezone.utc),
                 target_user_server_nickname="target-nick",
                 server_id=server_id,
                 server_name="ban-effect-server",
