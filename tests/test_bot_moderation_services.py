@@ -15,6 +15,7 @@ from api.services.moderation_actions_service import (
     _build_action_log_embed,
     _build_action_log_message,
     _build_action_revert_log_embed,
+    _rules_label,
     build_action_log_components,
     create_action,
     get_deleted_messages_for_action,
@@ -251,6 +252,36 @@ def test_build_action_log_message_links_dashboard_and_uses_rule_label(monkeypatc
         target_username="target",
     )
     assert [field["name"] for field in duplicate_embed["fields"]] == ["Target", "Moderator", "Rule", "Commentary", "Case"]
+
+    russian_numbered_rule = SimpleNamespace(code="1", title="Правило 1\ufe0f\u20e3")
+    assert _rules_label([russian_numbered_rule], fallback_reason="fallback", locale="ru") == "Правило 1\ufe0f\u20e3"
+
+    russian_numbered_action = SimpleNamespace(
+        **{
+            **action.__dict__,
+            "rule": russian_numbered_rule,
+            "rule_citations": [
+                SimpleNamespace(
+                    id=uuid4(),
+                    rule_id=rule_id,
+                    rule=russian_numbered_rule,
+                    rule_code_snapshot="1",
+                    rule_title_snapshot="Правило 1\ufe0f\u20e3",
+                    cited_at=datetime(2026, 1, 1),
+                )
+            ],
+        }
+    )
+    russian_numbered_embed = _build_action_log_embed(
+        action=russian_numbered_action,
+        moderator_username="moderator",
+        target_username="target",
+        locale="ru",
+    )
+    rule_field = next(
+        field for field in russian_numbered_embed["fields"] if field["name"] == tr("ru", "modlog.rule_label")
+    )
+    assert rule_field["value"] == "`Правило 1\ufe0f\u20e3`"
 
 
 def test_action_log_components_include_safe_action_controls(monkeypatch):
