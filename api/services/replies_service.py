@@ -12,10 +12,16 @@ from api.models.bot_replies import (
     ReplyIntentUpdateModel,
     ReplySettingsModel,
     ReplySettingsUpdateModel,
+    ReplyTriggerCoverageItemModel,
+    ReplyTriggerCoveragePhraseModel,
+    ReplyTriggerCoverageResponseModel,
 )
 from src.db.models import GlobalUser, Replies, ReplyConcept, Server, ServerReplySettings, Triggers
 from src.modules.on_message_processing.processing_methods import normalize_reply_text
-from src.modules.on_message_processing.reply_matcher import CONCEPT_PLACEHOLDER_RE
+from src.modules.on_message_processing.reply_matcher import (
+    CONCEPT_PLACEHOLDER_RE,
+    analyze_reply_trigger_coverage,
+)
 
 
 class ReplyConfigurationConflict(ValueError):
@@ -223,28 +229,99 @@ async def delete_reply_concept(
     return True
 
 
-async def _validate_intent_triggers(
+async def preview_reply_trigger_coverage(
     session: AsyncSession,
     server_id: int,
-    representative_questions: list[str],
-    generated_variations: list[str],
-    *,
-    exclude_reply_id: UUID | None = None,
-) -> None:
-    concepts = {concept.name for concept in await list_reply_concepts(session, server_id)}
-    all_phrases = representative_questions + generated_variations
+    phrases: list[ReplyTriggerCoveragePhraseModel],
+) -> ReplyTriggerCoverageResponseModel:
+    concepts = await list_reply_concepts(session, server_id)
+    concepts_by_name = {
+        concept.name.casefold(): tuple(concept.variants or []) for concept in concepts
+    }
     missing_concepts = sorted(
         {
             match.group(1).casefold()
-            for phrase in all_phrases
-            for match in CONCEPT_PLACEHOLDER_RE.finditer(phrase)
-            if match.group(1).casefold() not in concepts
+            for phrase in phrases
+            for match in CONCEPT_PLACEHOLDER_RE.finditer(phrase.text)
+            if match.group(1).casefold() not in concepts_by_name
         }
     )
     if missing_concepts:
         raise ReplyConfigurationConflict(
             "Unknown concepts: " + ", ".join(missing_concepts)
         )
+
+    coverage = analyze_reply_trigger_coverage(
+        [(phrase.id, phrase.text, phrase.source) for phrase in phrases],
+        concepts_by_name,
+    )
+    return ReplyTriggerCoverageResponseModel(
+        items=[
+            ReplyTriggerCoverageItemModel(
+                id=item.id,
+                text=item.text,
+                source=item.source,
+                normalized_text=item.normalized_text,
+                covered_by_id=item.covered_by_id,
+                reason=item.reason,
+            )
+            for item in coverage
+        ]
+    )
+
+
+async def _prepare_intent_triggers(
+    session: AsyncSession,
+    server_id: int,
+    representative_questions: list[str],
+    manual_triggers: list[str],
+    generated_variations: list[str],
+    *,
+    exclude_reply_id: UUID | None = None,
+) -> tuple[list[str], list[str], list[str]]:
+    phrases = [
+        *[
+            ReplyTriggerCoveragePhraseModel(
+                id=f"representative:{index}", text=text, source="representative"
+            )
+            for index, text in enumerate(representative_questions)
+        ],
+        *[
+            ReplyTriggerCoveragePhraseModel(
+                id=f"manual:{index}", text=text, source="manual"
+            )
+            for index, text in enumerate(manual_triggers)
+        ],
+        *[
+            ReplyTriggerCoveragePhraseModel(
+                id=f"generated:{index}", text=text, source="generated"
+            )
+            for index, text in enumerate(generated_variations)
+        ],
+    ]
+    coverage = await preview_reply_trigger_coverage(session, server_id, phrases)
+    covered_ids = {item.id for item in coverage.items if item.covered_by_id is not None}
+    covered_representative = [
+        item.text
+        for item in coverage.items
+        if item.source == "representative" and item.covered_by_id is not None
+    ]
+    if covered_representative:
+        raise ReplyConfigurationConflict(
+            "Representative questions must be distinct after language matching: "
+            + ", ".join(covered_representative[:5])
+        )
+
+    prepared_representative = list(representative_questions)
+    prepared_manual = [
+        text for index, text in enumerate(manual_triggers) if f"manual:{index}" not in covered_ids
+    ]
+    prepared_generated = [
+        text
+        for index, text in enumerate(generated_variations)
+        if f"generated:{index}" not in covered_ids
+    ]
+    all_phrases = prepared_representative + prepared_manual + prepared_generated
 
     desired_keys = {normalize_reply_text(phrase) for phrase in all_phrases}
     collisions: list[str] = []
@@ -257,6 +334,7 @@ async def _validate_intent_triggers(
         raise ReplyConfigurationConflict(
             "These triggers are already used by another reply: " + ", ".join(collisions[:5])
         )
+    return prepared_representative, prepared_manual, prepared_generated
 
 
 async def create_reply_intent(
@@ -266,10 +344,11 @@ async def create_reply_intent(
 ) -> Replies:
     await _ensure_server_exists(session, server_id)
     await _ensure_global_user_exists(session, int(body.admin_id))
-    await _validate_intent_triggers(
+    representative, manual, generated = await _prepare_intent_triggers(
         session,
         server_id,
         body.representative_questions,
+        body.manual_triggers,
         body.generated_variations,
     )
     reply = Replies(
@@ -279,9 +358,11 @@ async def create_reply_intent(
     )
     session.add(reply)
     await session.flush()
-    for message in body.representative_questions:
+    for message in representative:
         session.add(Triggers(message=message, reply_id=reply.id, source="representative"))
-    for message in body.generated_variations:
+    for message in manual:
+        session.add(Triggers(message=message, reply_id=reply.id, source="manual"))
+    for message in generated:
         session.add(Triggers(message=message, reply_id=reply.id, source="generated"))
     await session.flush()
     return reply
@@ -300,10 +381,11 @@ async def update_reply_intent(
     ).first()
     if reply is None:
         return None
-    await _validate_intent_triggers(
+    representative, manual, generated = await _prepare_intent_triggers(
         session,
         server_id,
         body.representative_questions,
+        body.manual_triggers,
         body.generated_variations,
         exclude_reply_id=reply_id,
     )
@@ -311,8 +393,9 @@ async def update_reply_intent(
         (await session.exec(select(Triggers).where(Triggers.reply_id == reply_id))).all()
     )
     desired = {
-        **{message: "representative" for message in body.representative_questions},
-        **{message: "generated" for message in body.generated_variations},
+        **{message: "representative" for message in representative},
+        **{message: "manual" for message in manual},
+        **{message: "generated" for message in generated},
     }
     existing_by_message = {trigger.message: trigger for trigger in existing}
     for trigger in existing:

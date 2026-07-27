@@ -10,7 +10,10 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.db.database import engine
 from src.db.models import Replies, ReplyConcept, ServerReplySettings, Triggers
-from src.modules.on_message_processing.processing_methods import normalize_and_stem_reply_text
+from src.modules.on_message_processing.processing_methods import (
+    normalize_and_stem_reply_text,
+    normalize_reply_text,
+)
 
 
 CONCEPT_PLACEHOLDER_RE = re.compile(r"{{\s*([\wа-яё-]+)\s*}}", re.IGNORECASE)
@@ -50,6 +53,16 @@ class GuildReplyMatcher:
             if rule.pattern.search(normalized_message):
                 return rule
         return None
+
+
+@dataclass(frozen=True, slots=True)
+class ReplyTriggerCoverage:
+    id: str
+    text: str
+    source: str
+    normalized_text: str
+    covered_by_id: str | None = None
+    reason: str | None = None
 
 
 @dataclass(slots=True)
@@ -122,6 +135,58 @@ def _compile_trigger_pattern(
     return re.compile(expression, re.UNICODE), specificity
 
 
+def analyze_reply_trigger_coverage(
+    phrases: list[tuple[str, str, str]],
+    concepts: dict[str, tuple[str, ...]],
+) -> list[ReplyTriggerCoverage]:
+    """Explain redundant triggers using the exact patterns used by the live matcher.
+
+    Representative questions win over manual triggers, which win over generated
+    variations. Within one source, the original order wins. A later phrase is
+    covered when an earlier matcher pattern recognizes it or both compile to the
+    same pattern (important for concept placeholders).
+    """
+    source_priority = {"representative": 0, "manual": 1, "generated": 2}
+    indexed = list(enumerate(phrases))
+    indexed.sort(key=lambda item: (source_priority.get(item[1][2], 99), item[0]))
+
+    canonical: list[tuple[str, str, Pattern[str]]] = []
+    results: dict[str, ReplyTriggerCoverage] = {}
+    for _index, (phrase_id, phrase_text, source) in indexed:
+        normalized_text = normalize_and_stem_reply_text(phrase_text)
+        compiled = _compile_trigger_pattern(phrase_text, concepts)
+        covered_by_id: str | None = None
+        reason: str | None = None
+        if compiled is not None:
+            pattern, _specificity = compiled
+            for canonical_id, canonical_text, canonical_pattern in canonical:
+                if (
+                    canonical_pattern.pattern == pattern.pattern
+                    or canonical_pattern.search(normalized_text)
+                ):
+                    covered_by_id = canonical_id
+                    reason = (
+                        "exact_duplicate"
+                        if normalize_reply_text(canonical_text)
+                        == normalize_reply_text(phrase_text)
+                        else "language_matching"
+                    )
+                    break
+            if covered_by_id is None:
+                canonical.append((phrase_id, phrase_text, pattern))
+
+        results[phrase_id] = ReplyTriggerCoverage(
+            id=phrase_id,
+            text=phrase_text,
+            source=source,
+            normalized_text=normalized_text,
+            covered_by_id=covered_by_id,
+            reason=reason,
+        )
+
+    return [results[phrase_id] for phrase_id, _text, _source in phrases]
+
+
 def compile_guild_reply_matcher(
     server_id: int,
     settings: ServerReplySettings | None,
@@ -151,9 +216,10 @@ def compile_guild_reply_matcher(
             )
         )
 
+    source_priority = {"representative": 2, "manual": 1, "generated": 0}
     rules.sort(
         key=lambda rule: (
-            rule.source == "representative",
+            source_priority.get(rule.source, -1),
             rule.specificity,
             len(rule.trigger_text),
             rule.reply_id,

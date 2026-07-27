@@ -23,6 +23,8 @@ from api.models.bot_replies import (
     ReplyMutationResponseModel,
     ReplySettingsModel,
     ReplySettingsUpdateModel,
+    ReplyTriggerCoverageRequestModel,
+    ReplyTriggerCoverageResponseModel,
     ReplyVariationSuggestionRequestModel,
     ReplyVariationSuggestionResponseModel,
 )
@@ -36,6 +38,7 @@ from api.services.replies_service import (
     duplicate_selected_replies,
     get_or_create_reply_settings,
     list_reply_concepts,
+    preview_reply_trigger_coverage,
     to_reply_concept_model,
     to_reply_settings_model,
     update_reply_concept,
@@ -136,6 +139,8 @@ async def get_replies_by_server_id(server_id: int, session: AsyncSession = Depen
             grouped[reply.id].user_messages.append(trigger.message)
             if trigger.source == "generated":
                 grouped[reply.id].generated_variations.append(trigger.message)
+            elif trigger.source == "manual":
+                grouped[reply.id].manual_triggers.append(trigger.message)
             else:
                 grouped[reply.id].representative_questions.append(trigger.message)
 
@@ -241,6 +246,22 @@ async def remove_reply_concept(
 
 
 @replies.post(
+    "/{server_id}/coverage",
+    response_model=ReplyTriggerCoverageResponseModel,
+    dependencies=[Depends(require_server_permission("replies.manage"))],
+)
+async def preview_trigger_coverage(
+    server_id: int,
+    body: ReplyTriggerCoverageRequestModel,
+    session: AsyncSession = Depends(get_session),
+):
+    try:
+        return await preview_reply_trigger_coverage(session, server_id, body.phrases)
+    except ReplyConfigurationConflict as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+@replies.post(
     "/{server_id}/suggest-variations",
     response_model=ReplyVariationSuggestionResponseModel,
     dependencies=[Depends(require_server_permission("replies.manage"))],
@@ -288,8 +309,17 @@ async def add_reply_intent(
     await session.commit()
     invalidate_reply_matcher(server_id)
     return ReplyMutationResponseModel(
-        processed=len(body.representative_questions) + len(body.generated_variations),
-        created=1 + len(body.representative_questions) + len(body.generated_variations),
+        processed=(
+            len(body.representative_questions)
+            + len(body.manual_triggers)
+            + len(body.generated_variations)
+        ),
+        created=(
+            1
+            + len(body.representative_questions)
+            + len(body.manual_triggers)
+            + len(body.generated_variations)
+        ),
     )
 
 
@@ -313,7 +343,11 @@ async def edit_reply_intent(
     await session.commit()
     invalidate_reply_matcher(server_id)
     return ReplyMutationResponseModel(
-        processed=len(body.representative_questions) + len(body.generated_variations),
+        processed=(
+            len(body.representative_questions)
+            + len(body.manual_triggers)
+            + len(body.generated_variations)
+        ),
         updated=1,
     )
 

@@ -4,6 +4,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
+from api.services import replies_service
 from api.models.bot_replies import ReplyConceptCreateModel, ReplyIntentCreateModel
 from api.services.reply_variations import suggest_reply_variations
 from src.db.models import Replies, ReplyConcept, Triggers
@@ -12,7 +13,10 @@ from src.modules.on_message_processing.processing_methods import (
     normalize_and_stem_reply_text,
     normalize_reply_text,
 )
-from src.modules.on_message_processing.reply_matcher import compile_guild_reply_matcher
+from src.modules.on_message_processing.reply_matcher import (
+    analyze_reply_trigger_coverage,
+    compile_guild_reply_matcher,
+)
 
 
 def test_intent_payload_requires_two_distinct_representative_questions():
@@ -30,7 +34,21 @@ def test_intent_payload_requires_two_distinct_representative_questions():
         admin_id="123",
     )
     assert payload.bot_reply == "Answer"
+    assert payload.manual_triggers == []
     assert payload.generated_variations == ["Tell me how it works"]
+
+
+def test_intent_payload_deduplicates_manual_before_generated_variations():
+    payload = ReplyIntentCreateModel(
+        bot_reply="Answer",
+        representative_questions=["What is it?", "How does it work?"],
+        manual_triggers=["What is it?", "Tell me more"],
+        generated_variations=["Tell me more", "Explain this"],
+        admin_id="123",
+    )
+
+    assert payload.manual_triggers == ["Tell me more"]
+    assert payload.generated_variations == ["Explain this"]
 
 
 def test_concept_payload_normalizes_name_and_variants():
@@ -83,6 +101,54 @@ def test_compiled_matcher_ignores_trigger_with_unknown_concept():
     )
     matcher = compile_guild_reply_matcher(1, None, [], [(trigger, reply)])
     assert matcher.rules == ()
+
+
+def test_coverage_uses_live_language_matching_and_source_priority():
+    coverage = analyze_reply_trigger_coverage(
+        [
+            ("generated:0", "когда дают постоянного участника", "generated"),
+            ("manual:0", "когда дают завсегдатая?", "manual"),
+            ("representative:0", "когда дают {{role}}", "representative"),
+        ],
+        {"role": ("завсегдатай", "постоянный участник")},
+    )
+
+    by_id = {item.id: item for item in coverage}
+    assert by_id["representative:0"].covered_by_id is None
+    assert by_id["manual:0"].covered_by_id == "representative:0"
+    assert by_id["manual:0"].reason == "language_matching"
+    assert by_id["generated:0"].covered_by_id == "representative:0"
+
+
+def test_intent_save_drops_manual_and_generated_triggers_already_covered(monkeypatch):
+    async def fake_concepts(_session, _server_id):
+        return [
+            ReplyConcept(
+                server_id=1,
+                name="role",
+                variants=["завсегдатай", "постоянный участник"],
+            )
+        ]
+
+    async def fake_server_trigger_rows(_session, _server_id):
+        return []
+
+    monkeypatch.setattr(replies_service, "list_reply_concepts", fake_concepts)
+    monkeypatch.setattr(replies_service, "_server_trigger_rows", fake_server_trigger_rows)
+
+    representative, manual, generated = asyncio.run(
+        replies_service._prepare_intent_triggers(
+            object(),
+            1,
+            ["когда дают {{role}}", "зачем нужна эта роль"],
+            ["когда дают завсегдатая", "расскажи про привилегии"],
+            ["когда дают постоянного участника", "какие бонусы у роли"],
+        )
+    )
+
+    assert representative == ["когда дают {{role}}", "зачем нужна эта роль"]
+    assert manual == ["расскажи про привилегии"]
+    assert generated == ["какие бонусы у роли"]
 
 
 def test_variation_generation_uses_structured_output_and_deduplicates():

@@ -11,14 +11,14 @@ class ReplyAddModel(BaseModel):
     bot_reply: str
     server_id: str
     admin_id: str
-    source: Literal["representative", "generated"] = "representative"
+    source: Literal["representative", "manual", "generated"] = "representative"
 
 
 class ReplyEditModel(BaseModel):
     id: UUID
     user_message: str
     bot_reply: str
-    source: Literal["representative", "generated"] = "representative"
+    source: Literal["representative", "manual", "generated"] = "representative"
 
 
 class UserAvatarModel(BaseModel):
@@ -33,6 +33,7 @@ class ReplyModel(BaseModel):
     created_at: datetime
     created_by: UserAvatarModel
     representative_questions: list[str] = Field(default_factory=list)
+    manual_triggers: list[str] = Field(default_factory=list)
     generated_variations: list[str] = Field(default_factory=list)
 
 
@@ -56,6 +57,7 @@ def _normalize_phrases(values: list[str], *, max_items: int) -> list[str]:
 class ReplyIntentCreateModel(BaseModel):
     bot_reply: str = Field(min_length=1, max_length=4000)
     representative_questions: list[str] = Field(min_length=2, max_length=5)
+    manual_triggers: list[str] = Field(default_factory=list, max_length=100)
     generated_variations: list[str] = Field(default_factory=list, max_length=100)
     admin_id: str = Field(pattern=r"^\d+$")
 
@@ -67,9 +69,9 @@ class ReplyIntentCreateModel(BaseModel):
             raise ValueError("Provide at least 2 distinct representative questions")
         return normalized
 
-    @field_validator("generated_variations")
+    @field_validator("manual_triggers", "generated_variations")
     @classmethod
-    def normalize_generated_variations(cls, value: list[str]) -> list[str]:
+    def normalize_optional_triggers(cls, value: list[str]) -> list[str]:
         return _normalize_phrases(value, max_items=100)
 
     @field_validator("bot_reply")
@@ -78,10 +80,14 @@ class ReplyIntentCreateModel(BaseModel):
         return value.strip()
 
     @model_validator(mode="after")
-    def remove_generated_duplicates(self):
+    def remove_lower_priority_duplicates(self):
         representative = {item.casefold() for item in self.representative_questions}
+        self.manual_triggers = [
+            item for item in self.manual_triggers if item.casefold() not in representative
+        ]
+        claimed = representative | {item.casefold() for item in self.manual_triggers}
         self.generated_variations = [
-            item for item in self.generated_variations if item.casefold() not in representative
+            item for item in self.generated_variations if item.casefold() not in claimed
         ]
         return self
 
@@ -138,6 +144,44 @@ class ReplyVariationSuggestionRequestModel(BaseModel):
 class ReplyVariationSuggestionResponseModel(BaseModel):
     variations: list[str]
     model: str
+
+
+ReplyTriggerSource = Literal["representative", "manual", "generated"]
+
+
+class ReplyTriggerCoveragePhraseModel(BaseModel):
+    id: str = Field(min_length=1, max_length=128)
+    text: str = Field(min_length=1, max_length=1000)
+    source: ReplyTriggerSource
+
+    @field_validator("text")
+    @classmethod
+    def normalize_text(cls, value: str) -> str:
+        normalized = " ".join(value.split()).strip()
+        if not normalized:
+            raise ValueError("Trigger text cannot be empty")
+        return normalized
+
+
+class ReplyTriggerCoverageRequestModel(BaseModel):
+    phrases: list[ReplyTriggerCoveragePhraseModel] = Field(max_length=305)
+
+    @model_validator(mode="after")
+    def require_unique_ids(self):
+        ids = [phrase.id for phrase in self.phrases]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Coverage phrase IDs must be unique")
+        return self
+
+
+class ReplyTriggerCoverageItemModel(ReplyTriggerCoveragePhraseModel):
+    normalized_text: str
+    covered_by_id: str | None = None
+    reason: Literal["exact_duplicate", "language_matching"] | None = None
+
+
+class ReplyTriggerCoverageResponseModel(BaseModel):
+    items: list[ReplyTriggerCoverageItemModel]
 
 
 def _normalize_discord_ids(value: list[str], field_name: str) -> list[str]:

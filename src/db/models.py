@@ -1576,7 +1576,7 @@ class Triggers(SQLModel, table=True):
     __table_args__ = (
         UniqueConstraint("reply_id", "message", name="uq_triggers_reply_message"),
         sa.CheckConstraint(
-            "source IN ('representative', 'generated')",
+            "source IN ('representative', 'manual', 'generated')",
             name="ck_triggers_source",
         ),
     )
