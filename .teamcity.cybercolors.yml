@@ -18,12 +18,31 @@ jobs:
           IMAGE="$PUSH_REGISTRY/cybercolors-backend"
           TAG="%build.number%"
 
+          push_with_retry() {
+            local image="$1"
+            local attempt
+            local delay=2
+
+            for attempt in 1 2 3 4 5; do
+              if docker push "$image"; then
+                return 0
+              fi
+              if [ "$attempt" -eq 5 ]; then
+                echo "Failed to push $image after $attempt attempts." >&2
+                return 1
+              fi
+              echo "Push attempt $attempt for $image failed; retrying in ${delay}s..." >&2
+              sleep "$delay"
+              delay=$((delay * 2))
+            done
+          }
+
           rm -rf cybercolors_bot
           git clone --depth 1 --branch master https://github.com/l1ghtny/cybercolors_bot.git cybercolors_bot
           cd cybercolors_bot
           docker build -f docker/Dockerfile -t "$IMAGE:$TAG" -t "$IMAGE:latest" .
-          docker push "$IMAGE:$TAG"
-          docker push "$IMAGE:latest"
+          push_with_retry "$IMAGE:$TAG"
+          push_with_retry "$IMAGE:latest"
     repositories:
       - main:
           enabled: false
@@ -45,6 +64,25 @@ jobs:
           fi
 
           IMAGE="$PUSH_REGISTRY/cybercolors-indexer"
+
+          push_with_retry() {
+            local image="$1"
+            local attempt
+            local delay=2
+
+            for attempt in 1 2 3 4 5; do
+              if docker push "$image"; then
+                return 0
+              fi
+              if [ "$attempt" -eq 5 ]; then
+                echo "Failed to push $image after $attempt attempts." >&2
+                return 1
+              fi
+              echo "Push attempt $attempt for $image failed; retrying in ${delay}s..." >&2
+              sleep "$delay"
+              delay=$((delay * 2))
+            done
+          }
 
           rm -rf cybercolors_bot
           git clone --depth 1 --branch master https://github.com/l1ghtny/cybercolors_bot.git cybercolors_bot
@@ -68,14 +106,14 @@ jobs:
           )"
           TAG="idx-$INDEXER_HASH"
 
-          if docker manifest inspect "$IMAGE:$TAG" >/dev/null 2>&1; then
+          if docker manifest inspect --insecure "$IMAGE:$TAG" >/dev/null 2>&1; then
             echo "Indexer image $IMAGE:$TAG already exists; skipping build."
             exit 0
           fi
 
           docker build -f docker/Dockerfile.indexer -t "$IMAGE:$TAG" -t "$IMAGE:latest" .
-          docker push "$IMAGE:$TAG"
-          docker push "$IMAGE:latest"
+          push_with_retry "$IMAGE:$TAG"
+          push_with_retry "$IMAGE:latest"
     repositories:
       - main:
           enabled: false
@@ -98,6 +136,25 @@ jobs:
 
           IMAGE="$PUSH_REGISTRY/cybercolors-embeddings"
 
+          push_with_retry() {
+            local image="$1"
+            local attempt
+            local delay=2
+
+            for attempt in 1 2 3 4 5; do
+              if docker push "$image"; then
+                return 0
+              fi
+              if [ "$attempt" -eq 5 ]; then
+                echo "Failed to push $image after $attempt attempts." >&2
+                return 1
+              fi
+              echo "Push attempt $attempt for $image failed; retrying in ${delay}s..." >&2
+              sleep "$delay"
+              delay=$((delay * 2))
+            done
+          }
+
           rm -rf cybercolors_bot
           git clone --depth 1 --branch master https://github.com/l1ghtny/cybercolors_bot.git cybercolors_bot
           cd cybercolors_bot
@@ -119,14 +176,14 @@ jobs:
           )"
           TAG="emb-$EMBEDDINGS_HASH"
 
-          if docker manifest inspect "$IMAGE:$TAG" >/dev/null 2>&1; then
+          if docker manifest inspect --insecure "$IMAGE:$TAG" >/dev/null 2>&1; then
             echo "Embeddings image $IMAGE:$TAG already exists; skipping build."
             exit 0
           fi
 
           docker build -f docker/Dockerfile.embeddings -t "$IMAGE:$TAG" -t "$IMAGE:latest" .
-          docker push "$IMAGE:$TAG"
-          docker push "$IMAGE:latest"
+          push_with_retry "$IMAGE:$TAG"
+          push_with_retry "$IMAGE:latest"
     repositories:
       - main:
           enabled: false
@@ -162,6 +219,25 @@ jobs:
           IMAGE="$PUSH_REGISTRY/cybercolors-frontend"
           TAG="%build.number%"
 
+          push_with_retry() {
+            local image="$1"
+            local attempt
+            local delay=2
+
+            for attempt in 1 2 3 4 5; do
+              if docker push "$image"; then
+                return 0
+              fi
+              if [ "$attempt" -eq 5 ]; then
+                echo "Failed to push $image after $attempt attempts." >&2
+                return 1
+              fi
+              echo "Push attempt $attempt for $image failed; retrying in ${delay}s..." >&2
+              sleep "$delay"
+              delay=$((delay * 2))
+            done
+          }
+
           cat > Dockerfile <<'DOCKERFILE'
           FROM node:22-alpine AS build
           WORKDIR /app
@@ -187,8 +263,8 @@ jobs:
           DOCKERFILE
 
           docker build -t "$IMAGE:$TAG" -t "$IMAGE:latest" .
-          docker push "$IMAGE:$TAG"
-          docker push "$IMAGE:latest"
+          push_with_retry "$IMAGE:$TAG"
+          push_with_retry "$IMAGE:latest"
     repositories:
       - CyberColors_FrontendGit:
           path: bot-command-center
