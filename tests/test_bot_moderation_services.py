@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import discord
 from sqlmodel import select
@@ -497,6 +497,122 @@ def test_member_action_add_warn_reuses_new_case_and_skips_duplicate_dm(monkeypat
     assert [payload.case_id for payload, _ in created_payloads] == [str(case_id), str(case_id)]
     assert [apply_effects for _, apply_effects in created_payloads] == [True, False]
     assert created_payloads[0][0].commentary == created_payloads[1][0].commentary == "same context"
+    session.commit.assert_awaited_once()
+
+
+def test_mute_add_warn_reuses_new_case_and_skips_duplicate_dm(monkeypatch):
+    import src.commands.moderation.mute as mute_module
+
+    rule = _rule_model(rule_id=str(uuid4()), code="1", title="No insults")
+    case_id = uuid4()
+    mute_action_id = uuid4()
+    warn_action_id = uuid4()
+    session = SimpleNamespace(commit=AsyncMock())
+    selected_cases: list[str | None] = []
+    linked_warn_calls: list[tuple[ModerationActionCreate, bool]] = []
+    receipt_kwargs: dict = {}
+
+    @asynccontextmanager
+    async def fake_session_context():
+        yield session
+
+    async def fake_resolve_case(*, selected_case, **_kwargs):
+        selected_cases.append(selected_case)
+        return case_id
+
+    async def fake_create_linked_warn(*, action, apply_discord_effects, **_kwargs):
+        linked_warn_calls.append((action, apply_discord_effects))
+        return SimpleNamespace(id=warn_action_id, action_number=102)
+
+    def fake_build_receipt(**kwargs):
+        receipt_kwargs.update(kwargs)
+        return "receipt"
+
+    class FakeRole:
+        def __init__(self, role_id: int, position: int):
+            self.id = role_id
+            self.position = position
+
+        def __ge__(self, other):
+            return self.position >= other.position
+
+    mute_role = FakeRole(10, 10)
+    bot_role = FakeRole(20, 100)
+    guild = SimpleNamespace(
+        id=123,
+        name="Server",
+        owner_id=999,
+        me=SimpleNamespace(top_role=bot_role),
+        get_role=lambda role_id: mute_role if role_id == mute_role.id else None,
+    )
+    interaction = SimpleNamespace(
+        guild=guild,
+        user=SimpleNamespace(id=789),
+        response=SimpleNamespace(defer=AsyncMock()),
+        followup=SimpleNamespace(send=AsyncMock()),
+    )
+    target = SimpleNamespace(
+        id=456,
+        name="target",
+        display_name="target",
+        mention="<@456>",
+        joined_at=datetime.now(timezone.utc),
+        nick=None,
+    )
+
+    monkeypatch.setattr(mute_module, "get_async_session", fake_session_context)
+    monkeypatch.setattr(mute_module, "get_server_locale", AsyncMock(return_value="en"))
+    monkeypatch.setattr(mute_module, "ensure_bot_permission", AsyncMock(return_value=True))
+    monkeypatch.setattr(mute_module, "fetch_active_rule_models", AsyncMock(return_value=[rule]))
+    monkeypatch.setattr(
+        mute_module,
+        "get_or_create_server_moderation_settings",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                mute_role_id=mute_role.id,
+                default_mute_minutes=720,
+                mute_duration_presets=[720],
+                max_mute_minutes=43_200,
+            )
+        ),
+    )
+    monkeypatch.setattr(mute_module, "validate_target_for_moderation", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        mute_module,
+        "resolve_configured_duration_selection",
+        lambda **_kwargs: SimpleNamespace(minutes=720, label="12 hours"),
+    )
+    monkeypatch.setattr(mute_module, "resolve_case_id_for_action", fake_resolve_case)
+    monkeypatch.setattr(
+        mute_module,
+        "create_bot_moderation_action",
+        AsyncMock(return_value=SimpleNamespace(id=mute_action_id, action_number=101)),
+    )
+    monkeypatch.setattr(mute_module, "create_action", fake_create_linked_warn)
+    monkeypatch.setattr(mute_module, "send_public_action_notice", AsyncMock())
+    monkeypatch.setattr(mute_module, "build_moderator_action_receipt", fake_build_receipt)
+
+    asyncio.run(
+        mute_module.mute.callback(
+            interaction,
+            target,
+            str(rule.id),
+            commentary="same context",
+            add_warn=True,
+        )
+    )
+
+    assert selected_cases == [mute_module.CASE_NEW_VALUE]
+    assert len(linked_warn_calls) == 1
+    warn_payload, apply_discord_effects = linked_warn_calls[0]
+    assert warn_payload.action_type == ActionType.WARN
+    assert warn_payload.rule_id == UUID(rule.id)
+    assert warn_payload.commentary == "same context"
+    assert warn_payload.case_id == str(case_id)
+    assert apply_discord_effects is False
+    assert receipt_kwargs["extra_lines"][0][0] == tr("en", "action.linked_warn_label")
+    assert f"#{102}" in receipt_kwargs["extra_lines"][0][1]
+    assert str(warn_action_id) in receipt_kwargs["extra_lines"][0][1]
     session.commit.assert_awaited_once()
 
 

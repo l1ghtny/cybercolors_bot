@@ -6,6 +6,7 @@ from discord import app_commands
 
 from api.models.moderation_settings import ServerModerationSettingsUpdateModel
 from api.models.server_localization import ServerLocalizationSettingsUpdateModel
+from api.services.moderation_actions_service import _dashboard_action_url, create_action
 from api.services.moderation_settings import (
     get_or_create_server_moderation_settings,
     update_server_moderation_settings,
@@ -16,7 +17,9 @@ from src.db.models import ActionType
 from src.modules.localization.catalog import SUPPORTED_LOCALES
 from src.modules.localization.service import get_server_locale, is_supported_locale, tr
 from src.modules.moderation.bot_services import (
+    CASE_NEW_VALUE,
     action_message_cleanup_choices,
+    build_action_payload,
     build_moderator_action_receipt,
     build_message_cleanup_request,
     case_choices,
@@ -316,6 +319,7 @@ async def moderation_set_mute_defaults(
     delete_messages=action_message_cleanup_choices(),
 )
 @app_commands.describe(
+    add_warn="Also create a warning for the same rule and commentary.",
     delete_messages="Delete recent logged messages by this user.",
     delete_message_limit="Maximum messages to delete when delete_messages is set.",
     delete_message_channel="Only delete messages from this channel.",
@@ -327,6 +331,7 @@ async def mute(
     duration: str | None = None,
     commentary: str | None = None,
     case: str | None = None,
+    add_warn: bool = False,
     delete_messages: app_commands.Choice[int] | None = None,
     delete_message_limit: app_commands.Range[int, 1, 100] | None = None,
     delete_message_channel: discord.TextChannel | None = None,
@@ -412,7 +417,7 @@ async def mute(
                 interaction=interaction,
                 user=user,
                 action_type=ActionType.MUTE,
-                selected_case=case,
+                selected_case=case or (CASE_NEW_VALUE if add_warn else None),
                 selected_rule=selected_rule,
                 selected_rule_label=selected_rule_label,
                 commentary=commentary_text,
@@ -429,6 +434,23 @@ async def mute(
                 case_id=case_id,
                 message_cleanup=message_cleanup,
             )
+            linked_warn = None
+            if add_warn:
+                warn_payload = build_action_payload(
+                    interaction=interaction,
+                    user=user,
+                    action_type=ActionType.WARN,
+                    rule_id=selected_rule.id,
+                    commentary=commentary_text,
+                    reason=None,
+                    case_id=case_id,
+                )
+                linked_warn = await create_action(
+                    session=session,
+                    action=warn_payload,
+                    moderator_user_id=interaction.user.id,
+                    apply_discord_effects=False,
+                )
             await session.commit()
     except Exception:
         logger.exception(
@@ -459,11 +481,24 @@ async def mute(
             public_message=success_message,
             action=created_action,
             rule=selected_rule_label,
-            extra_lines=message_cleanup_receipt_lines(
-                locale=locale,
-                cleanup=message_cleanup,
-                channel=delete_message_channel,
-            ),
+            extra_lines=[
+                *(
+                    [
+                        (
+                            tr(locale, "action.linked_warn_label"),
+                            f"[`#{linked_warn.action_number}`]"
+                            f"({_dashboard_action_url(interaction.guild.id, linked_warn.id)})",
+                        )
+                    ]
+                    if linked_warn is not None
+                    else []
+                ),
+                *message_cleanup_receipt_lines(
+                    locale=locale,
+                    cleanup=message_cleanup,
+                    channel=delete_message_channel,
+                ),
+            ],
         ),
         ephemeral=True,
         allowed_mentions=discord.AllowedMentions.none(),
