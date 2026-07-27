@@ -276,6 +276,14 @@ class Replies(SQLModel, table=True):
     )
     created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
     created_by_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False))
+    mention_user_ids: list[str] = Field(
+        default_factory=list,
+        sa_column=Column(sa.JSON, nullable=False),
+    )
+    mention_role_ids: list[str] = Field(
+        default_factory=list,
+        sa_column=Column(sa.JSON, nullable=False),
+    )
 
     server: Server = Relationship(back_populates="replies")
     created_by: GlobalUser = Relationship(back_populates="replies")

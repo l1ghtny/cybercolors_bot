@@ -35,6 +35,8 @@ class ReplyModel(BaseModel):
     representative_questions: list[str] = Field(default_factory=list)
     manual_triggers: list[str] = Field(default_factory=list)
     generated_variations: list[str] = Field(default_factory=list)
+    mention_user_ids: list[str] = Field(default_factory=list)
+    mention_role_ids: list[str] = Field(default_factory=list)
 
 
 def _normalize_phrases(values: list[str], *, max_items: int) -> list[str]:
@@ -60,6 +62,16 @@ class ReplyIntentCreateModel(BaseModel):
     manual_triggers: list[str] = Field(default_factory=list, max_length=100)
     generated_variations: list[str] = Field(default_factory=list, max_length=100)
     admin_id: str = Field(pattern=r"^\d+$")
+    mention_user_ids: list[str] = Field(default_factory=list, max_length=100)
+    mention_role_ids: list[str] = Field(default_factory=list, max_length=100)
+
+    @field_validator("mention_user_ids", "mention_role_ids")
+    @classmethod
+    def normalize_mention_ids(cls, values: list[str]) -> list[str]:
+        normalized = list(dict.fromkeys(str(value) for value in values))
+        if any(not value.isdigit() for value in normalized):
+            raise ValueError("Mention ids must be Discord snowflakes")
+        return normalized
 
     @field_validator("representative_questions")
     @classmethod

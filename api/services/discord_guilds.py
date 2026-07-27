@@ -378,14 +378,19 @@ async def create_channel_message(
     components: list[dict] | None = None,
     reply_to_message_id: int | None = None,
     notify_replied_user: bool = False,
+    allowed_user_ids: list[int] | tuple[int, ...] | None = None,
+    allowed_role_ids: list[int] | tuple[int, ...] | None = None,
     files: list[tuple[str, bytes, str]] | None = None,
 ) -> dict:
-    message_payload: dict = {
-        "allowed_mentions": {
-            "parse": [],
-            "replied_user": notify_replied_user,
-        }
+    allowed_mentions: dict = {
+        "parse": [],
+        "replied_user": notify_replied_user,
     }
+    if allowed_user_ids:
+        allowed_mentions["users"] = [str(user_id) for user_id in dict.fromkeys(allowed_user_ids)]
+    if allowed_role_ids:
+        allowed_mentions["roles"] = [str(role_id) for role_id in dict.fromkeys(allowed_role_ids)]
+    message_payload: dict = {"allowed_mentions": allowed_mentions}
     if content is not None:
         message_payload["content"] = content
     if embeds:

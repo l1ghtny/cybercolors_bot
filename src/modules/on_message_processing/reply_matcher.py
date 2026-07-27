@@ -39,6 +39,8 @@ class CompiledReplyRule:
     source: str
     specificity: int
     pattern: Pattern[str]
+    mention_user_ids: frozenset[str] = frozenset()
+    mention_role_ids: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)
@@ -343,6 +345,8 @@ def compile_guild_reply_matcher(
                 source=trigger.source or "representative",
                 specificity=specificity,
                 pattern=pattern,
+                mention_user_ids=frozenset(reply.mention_user_ids or []),
+                mention_role_ids=frozenset(reply.mention_role_ids or []),
             )
         )
 

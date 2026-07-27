@@ -404,6 +404,8 @@ async def create_reply_intent(
         server_id=server_id,
         bot_reply=body.bot_reply,
         created_by_id=int(body.admin_id),
+        mention_user_ids=body.mention_user_ids,
+        mention_role_ids=body.mention_role_ids,
     )
     session.add(reply)
     await session.flush()
@@ -458,6 +460,8 @@ async def update_reply_intent(
         if message not in existing_by_message:
             session.add(Triggers(message=message, reply_id=reply_id, source=source))
     reply.bot_reply = body.bot_reply
+    reply.mention_user_ids = body.mention_user_ids
+    reply.mention_role_ids = body.mention_role_ids
     session.add(reply)
     await session.flush()
     return reply

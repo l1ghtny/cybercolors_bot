@@ -17,6 +17,7 @@ from src.db.models import (
     ServerSecuritySettings,
     utcnow_utc_tz,
 )
+from src.modules.discord_mentions import allowed_explicit_mentions
 
 DiscordSender = Callable[..., Awaitable[dict]]
 ChannelFetcher = Callable[[int, int], Awaitable[dict | None]]
@@ -117,6 +118,11 @@ async def send_bot_message(
     await session.commit()
 
     try:
+        allowed_user_ids, allowed_role_ids = allowed_explicit_mentions(
+            body.content,
+            allowed_user_ids=body.mention_user_ids,
+            allowed_role_ids=body.mention_role_ids,
+        )
         sender_kwargs = {
             "channel_id": channel_id,
             "content": body.content or None,
@@ -124,6 +130,8 @@ async def send_bot_message(
             "notify_replied_user": (
                 body.notify_replied_user if reply_to_message_id is not None else False
             ),
+            "allowed_user_ids": allowed_user_ids,
+            "allowed_role_ids": allowed_role_ids,
         }
         if attachments:
             sender_kwargs["files"] = attachments

@@ -41,6 +41,8 @@ async def _send_scenario(
     notify_replied_user: bool = False,
     content: str = "Hello from Modral",
     attachments: list[tuple[str, bytes, str]] | None = None,
+    mention_user_ids: list[str] | None = None,
+    mention_role_ids: list[str] | None = None,
 ):
     session = session or FakeSession(paused=paused)
     sender_calls: list[dict] = []
@@ -66,6 +68,8 @@ async def _send_scenario(
             content=content,
             reply_to_message_id="654",
             notify_replied_user=notify_replied_user,
+            mention_user_ids=mention_user_ids or [],
+            mention_role_ids=mention_role_ids or [],
         ),
         source="dashboard",
         sender=sender,
@@ -85,6 +89,8 @@ def test_send_bot_message_replies_and_records_successful_audit():
             "content": "Hello from Modral",
             "reply_to_message_id": 654,
             "notify_replied_user": False,
+            "allowed_user_ids": (),
+            "allowed_role_ids": (),
         }
     ]
     audit = next(item for item in session.added if isinstance(item, BotMessageAuditEvent))
@@ -100,6 +106,28 @@ def test_send_bot_message_can_notify_replied_user():
     _, sender_calls, _ = asyncio.run(_send_scenario(notify_replied_user=True))
 
     assert sender_calls[0]["notify_replied_user"] is True
+
+
+def test_send_bot_message_allows_only_explicit_user_and_role_mentions():
+    _, sender_calls, _ = asyncio.run(
+        _send_scenario(
+            content="Hello <@42>, <@!43>, <@44>, and <@&84>. @everyone stays quiet.",
+            mention_user_ids=["42", "43", "999"],
+            mention_role_ids=["84", "998"],
+        )
+    )
+
+    assert sender_calls[0]["allowed_user_ids"] == (42, 43)
+    assert sender_calls[0]["allowed_role_ids"] == (84,)
+
+
+def test_send_bot_message_keeps_raw_mentions_silent_by_default():
+    _, sender_calls, _ = asyncio.run(
+        _send_scenario(content="Hello <@42> and <@&84>.")
+    )
+
+    assert sender_calls[0]["allowed_user_ids"] == ()
+    assert sender_calls[0]["allowed_role_ids"] == ()
 
 
 def test_send_bot_message_can_send_image_without_text():

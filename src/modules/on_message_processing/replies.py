@@ -1,4 +1,7 @@
+import discord
+
 from src.db.models import ServerReplySettings
+from src.modules.discord_mentions import allowed_explicit_mentions
 from src.modules.on_message_processing.reply_matcher import (
     CompiledReplySettings,
     get_reply_matcher,
@@ -48,10 +51,23 @@ async def check_for_replies(message):
     if matched_rule is None:
         return False, server_id
 
-    await send_reply(message, matched_rule.response_text, matched_rule.is_fstring)
+    await send_reply(
+        message,
+        matched_rule.response_text,
+        matched_rule.is_fstring,
+        allowed_user_ids=matched_rule.mention_user_ids,
+        allowed_role_ids=matched_rule.mention_role_ids,
+    )
     return True, server_id
 
-async def send_reply(message, response_text, is_fstring):
+async def send_reply(
+    message,
+    response_text,
+    is_fstring,
+    *,
+    allowed_user_ids: frozenset[str] = frozenset(),
+    allowed_role_ids: frozenset[str] = frozenset(),
+):
     if is_fstring:
         try:
             # Dangerous, but maintaining compatibility with existing logic
@@ -60,11 +76,51 @@ async def send_reply(message, response_text, is_fstring):
             processed_response = eval(response_text)
             if message.content.isupper():
                 processed_response = processed_response.upper()
-            await message.reply(processed_response)
+            await _send_reply(
+                message,
+                processed_response,
+                allowed_user_ids=allowed_user_ids,
+                allowed_role_ids=allowed_role_ids,
+            )
         except Exception:
             # Fallback to literal if eval fails
             final_resp = response_text.upper() if message.content.isupper() else response_text
-            await message.reply(final_resp)
+            await _send_reply(
+                message,
+                final_resp,
+                allowed_user_ids=allowed_user_ids,
+                allowed_role_ids=allowed_role_ids,
+            )
     else:
         final_resp = response_text.upper() if message.content.isupper() else response_text
-        await message.reply(final_resp)
+        await _send_reply(
+            message,
+            final_resp,
+            allowed_user_ids=allowed_user_ids,
+            allowed_role_ids=allowed_role_ids,
+        )
+
+
+async def _send_reply(
+    message,
+    content: str,
+    *,
+    allowed_user_ids: frozenset[str] = frozenset(),
+    allowed_role_ids: frozenset[str] = frozenset(),
+) -> None:
+    user_ids, role_ids = allowed_explicit_mentions(
+        content,
+        allowed_user_ids=allowed_user_ids,
+        allowed_role_ids=allowed_role_ids,
+    )
+    allowed_mentions = discord.AllowedMentions(
+        everyone=False,
+        users=[discord.Object(id=user_id) for user_id in user_ids] if user_ids else False,
+        roles=[discord.Object(id=role_id) for role_id in role_ids] if role_ids else False,
+        replied_user=False,
+    )
+    await message.reply(
+        content,
+        mention_author=False,
+        allowed_mentions=allowed_mentions,
+    )

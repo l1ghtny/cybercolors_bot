@@ -117,6 +117,36 @@ def test_create_channel_message_can_notify_replied_to_author():
     }
 
 
+def test_create_channel_message_whitelists_only_selected_user_and_role_mentions():
+    captured: list[dict] = []
+
+    async def scenario():
+        async def fake_discord_post(path: str, payload: dict) -> dict:
+            captured.append({"path": path, "payload": payload})
+            return {"id": "456"}
+
+        monkeypatch_target = discord_guilds._discord_post
+        discord_guilds._discord_post = fake_discord_post
+        try:
+            await discord_guilds.create_channel_message(
+                channel_id=123,
+                content="Hello <@42> and <@&84>",
+                allowed_user_ids=(42, 42),
+                allowed_role_ids=(84,),
+            )
+        finally:
+            discord_guilds._discord_post = monkeypatch_target
+
+    asyncio.run(scenario())
+
+    assert captured[0]["payload"]["allowed_mentions"] == {
+        "parse": [],
+        "replied_user": False,
+        "users": ["42"],
+        "roles": ["84"],
+    }
+
+
 def test_create_channel_message_uses_multipart_for_media(monkeypatch):
     captured: list[dict] = []
 

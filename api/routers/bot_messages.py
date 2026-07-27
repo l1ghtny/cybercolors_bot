@@ -103,6 +103,8 @@ async def create_bot_message_with_media(
     server_id: int,
     channel_id: str = Form(..., pattern=r"^\d+$"),
     content: str = Form(default="", max_length=2000),
+    mention_user_ids: list[str] = Form(default=[]),
+    mention_role_ids: list[str] = Form(default=[]),
     files: list[UploadFile] = File(default=[]),
     session: AsyncSession = Depends(get_session),
     actor_user_id: int = Depends(require_server_permission("communications.send_as_bot")),
@@ -112,7 +114,12 @@ async def create_bot_message_with_media(
         session,
         server_id=server_id,
         actor_user_id=actor_user_id,
-        body=BotMessageCreateModel(channel_id=channel_id, content=content),
+        body=BotMessageCreateModel(
+            channel_id=channel_id,
+            content=content,
+            mention_user_ids=mention_user_ids,
+            mention_role_ids=mention_role_ids,
+        ),
         source="dashboard",
         attachments=attachments,
     )

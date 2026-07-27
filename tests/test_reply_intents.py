@@ -70,7 +70,13 @@ def test_russian_normalization_handles_punctuation_whitespace_and_inflection():
 
 
 def test_compiled_matcher_resolves_concept_placeholder_and_russian_inflection():
-    reply = Replies(server_id=1, bot_reply="Role answer", created_by_id=2)
+    reply = Replies(
+        server_id=1,
+        bot_reply="Role answer <@42> <@&84>",
+        created_by_id=2,
+        mention_user_ids=["42"],
+        mention_role_ids=["84"],
+    )
     representative = Triggers(
         message="когда дадут {{завсегдатай}}",
         reply_id=reply.id,
@@ -90,7 +96,9 @@ def test_compiled_matcher_resolves_concept_placeholder_and_russian_inflection():
 
     matched = matcher.match("Когда дадут завсегдатая?")
     assert matched is not None
-    assert matched.response_text == "Role answer"
+    assert matched.response_text == "Role answer <@42> <@&84>"
+    assert matched.mention_user_ids == frozenset({"42"})
+    assert matched.mention_role_ids == frozenset({"84"})
     assert matcher.match("Когда выдадут другую роль?") is None
 
 
