@@ -610,12 +610,6 @@ def build_action_log_components(
             "label": tr(locale, "action.open_dashboard"),
             "url": action_url,
         },
-        {
-            "type": 2,
-            "style": 5,
-            "label": tr(locale, "action.add_info_dashboard"),
-            "url": action_url,
-        },
     ]
     if action.is_active and action.action_type in {
         ActionType.WARN,

@@ -298,13 +298,11 @@ def test_action_log_components_include_safe_action_controls(monkeypatch):
     buttons = components[0]["components"]
 
     assert [button["label"] for button in buttons] == [
-        "Open dashboard",
-        "Add info in dashboard",
+        "Open in dashboard",
         "Revert",
     ]
     assert buttons[0]["url"] == f"https://dash.example/dashboard/123/moderation/actions/{action_id}"
-    assert buttons[1]["url"] == buttons[0]["url"]
-    assert buttons[2] == {
+    assert buttons[1] == {
         "type": 2,
         "style": 4,
         "label": "Revert",
@@ -318,9 +316,9 @@ def test_action_log_components_include_safe_action_controls(monkeypatch):
         SimpleNamespace(**{**action.__dict__, "is_active": False})
     )[0]["components"]
 
-    assert len(kick_buttons) == 2
-    assert len(inactive_buttons) == 2
-    assert build_action_log_components(action, "ru")[0]["components"][2]["label"] == tr(
+    assert len(kick_buttons) == 1
+    assert len(inactive_buttons) == 1
+    assert build_action_log_components(action, "ru")[0]["components"][1]["label"] == tr(
         "ru",
         "action.revert_button",
     )
