@@ -80,4 +80,10 @@ def test_retention_batch_uses_bounded_policy_cutoffs():
             assert params["bot_audit_cutoff"] == now - timedelta(days=45)
             assert params["batch_size"] == 123
 
+        dashboard_query = next(
+            query for query, _params in session.calls if "FROM dashboard_sessions" in query
+        )
+        assert "SELECT session_token_hash" in dashboard_query
+        assert "sessions.session_token_hash = c.session_token_hash" in dashboard_query
+
     asyncio.run(scenario())

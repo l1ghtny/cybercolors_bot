@@ -280,16 +280,16 @@ _OPERATIONS: tuple[tuple[str, str], ...] = (
         "expired_dashboard_sessions_deleted",
         """
         WITH candidates AS (
-            SELECT id
+            SELECT session_token_hash
             FROM dashboard_sessions
             WHERE expires_at < :now
-            ORDER BY expires_at, id
+            ORDER BY expires_at, session_token_hash
             LIMIT :batch_size
             FOR UPDATE SKIP LOCKED
         )
         DELETE FROM dashboard_sessions AS sessions
         USING candidates AS c
-        WHERE sessions.id = c.id
+        WHERE sessions.session_token_hash = c.session_token_hash
         """,
     ),
 )
