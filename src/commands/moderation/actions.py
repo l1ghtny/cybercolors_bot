@@ -637,18 +637,6 @@ async def unban(interaction: discord.Interaction, user: discord.User, reason: st
 async def action_rule_autocomplete(interaction: discord.Interaction, current: str):
     if interaction.guild_id is None:
         return []
-    command_name = getattr(getattr(interaction, "command", None), "name", "")
-    permission_key = (
-        "moderation.actions.apply.ban"
-        if command_name == "ban"
-        else "moderation.actions.apply.kick"
-    )
-    if not await has_bot_permission(
-        guild_id=interaction.guild_id,
-        user_id=interaction.user.id,
-        permission_key=permission_key,
-    ):
-        return []
     try:
         async with get_async_session() as session:
             rules = await fetch_active_rule_models(session=session, server_id=interaction.guild_id)

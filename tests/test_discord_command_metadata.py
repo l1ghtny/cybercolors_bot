@@ -381,6 +381,25 @@ def _rbac_permission_calls(node: ast.AsyncFunctionDef | ast.FunctionDef) -> set[
     return permission_keys
 
 
+def test_rule_autocomplete_avoids_network_backed_rbac_resolution():
+    nodes = _function_nodes_by_name()
+    rule_autocomplete_functions = {
+        "warn_rule_autocomplete",
+        "mute_rule_autocomplete",
+        "action_rule_autocomplete",
+        "case_create_rule_autocomplete",
+    }
+
+    for function_name in rule_autocomplete_functions:
+        node = nodes[function_name]
+        called_names = {
+            child.func.id
+            for child in ast.walk(node)
+            if isinstance(child, ast.Call) and isinstance(child.func, ast.Name)
+        }
+        assert "has_bot_permission" not in called_names
+
+
 def test_moderation_bot_commands_use_product_rbac_permissions():
     expected = {
         "warn": {"moderation.actions.apply.warn"},

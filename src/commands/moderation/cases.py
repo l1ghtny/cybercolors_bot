@@ -138,12 +138,6 @@ async def case_create(
 async def case_create_rule_autocomplete(interaction: discord.Interaction, current: str):
     if interaction.guild_id is None:
         return []
-    if not await has_bot_permission(
-        guild_id=interaction.guild_id,
-        user_id=interaction.user.id,
-        permission_key="moderation.cases.manage",
-    ):
-        return []
 
     try:
         async with get_async_session() as session:
@@ -678,6 +672,5 @@ async def _case_action_autocomplete(interaction: discord.Interaction, current: s
 
 for _command in (case_link_action, case_unlink_action):
     _command.autocomplete("action_id")(_case_action_autocomplete)
-
 
 

@@ -473,12 +473,6 @@ async def mute(
 async def mute_rule_autocomplete(interaction: discord.Interaction, current: str):
     if interaction.guild_id is None:
         return []
-    if not await has_bot_permission(
-        guild_id=interaction.guild_id,
-        user_id=interaction.user.id,
-        permission_key="moderation.actions.apply.mute",
-    ):
-        return []
     try:
         async with get_async_session() as session:
             rules = await fetch_active_rule_models(session=session, server_id=interaction.guild_id)

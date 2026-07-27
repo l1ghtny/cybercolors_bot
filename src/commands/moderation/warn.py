@@ -149,12 +149,6 @@ async def warn(
 async def warn_rule_autocomplete(interaction: discord.Interaction, current: str):
     if interaction.guild_id is None:
         return []
-    if not await has_bot_permission(
-        guild_id=interaction.guild_id,
-        user_id=interaction.user.id,
-        permission_key="moderation.actions.apply.warn",
-    ):
-        return []
 
     try:
         async with get_async_session() as session:
