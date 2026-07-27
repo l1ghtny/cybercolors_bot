@@ -467,7 +467,7 @@ def test_member_action_add_warn_reuses_new_case_and_skips_duplicate_dm(monkeypat
         yield session
 
     selected_cases: list[str | None] = []
-    created_payloads: list[tuple[ModerationActionCreate, bool]] = []
+    created_payloads: list[tuple[ModerationActionCreate, bool, UUID | None]] = []
 
     async def fake_get_locale(_server_id: int) -> str:
         return "en"
@@ -482,8 +482,8 @@ def test_member_action_add_warn_reuses_new_case_and_skips_duplicate_dm(monkeypat
         selected_cases.append(selected_case)
         return case_id
 
-    async def fake_create_action(*, action, apply_discord_effects, **_kwargs):
-        created_payloads.append((action, apply_discord_effects))
+    async def fake_create_action(*, action, apply_discord_effects, case_id=None, **_kwargs):
+        created_payloads.append((action, apply_discord_effects, case_id))
         return SimpleNamespace(
             id=uuid4(),
             action_number=len(created_payloads),
@@ -526,9 +526,10 @@ def test_member_action_add_warn_reuses_new_case_and_skips_duplicate_dm(monkeypat
 
     assert result is not None
     assert selected_cases == [actions_module.CASE_NEW_VALUE]
-    assert [payload.action_type for payload, _ in created_payloads] == [ActionType.BAN, ActionType.WARN]
-    assert [payload.case_id for payload, _ in created_payloads] == [str(case_id), str(case_id)]
-    assert [apply_effects for _, apply_effects in created_payloads] == [True, False]
+    assert [payload.action_type for payload, _, _ in created_payloads] == [ActionType.BAN, ActionType.WARN]
+    assert [payload.case_id for payload, _, _ in created_payloads] == [str(case_id), str(case_id)]
+    assert [apply_effects for _, apply_effects, _ in created_payloads] == [True, False]
+    assert [explicit_case_id for _, _, explicit_case_id in created_payloads] == [None, case_id]
     assert created_payloads[0][0].commentary == created_payloads[1][0].commentary == "same context"
     session.commit.assert_awaited_once()
 
@@ -542,7 +543,7 @@ def test_mute_add_warn_reuses_new_case_and_skips_duplicate_dm(monkeypatch):
     warn_action_id = uuid4()
     session = SimpleNamespace(commit=AsyncMock())
     selected_cases: list[str | None] = []
-    linked_warn_calls: list[tuple[ModerationActionCreate, bool]] = []
+    linked_warn_calls: list[tuple[ModerationActionCreate, bool, UUID | None]] = []
     receipt_kwargs: dict = {}
 
     @asynccontextmanager
@@ -553,9 +554,9 @@ def test_mute_add_warn_reuses_new_case_and_skips_duplicate_dm(monkeypatch):
         selected_cases.append(selected_case)
         return case_id
 
-    async def fake_create_linked_warn(*, action, apply_discord_effects, **_kwargs):
-        linked_warn_calls.append((action, apply_discord_effects))
-        return SimpleNamespace(id=warn_action_id, action_number=102)
+    async def fake_create_linked_warn(*, action, apply_discord_effects, case_id=None, **_kwargs):
+        linked_warn_calls.append((action, apply_discord_effects, case_id))
+        return SimpleNamespace(id=warn_action_id, action_number=102, case_id=case_id)
 
     def fake_build_receipt(**kwargs):
         receipt_kwargs.update(kwargs)
@@ -631,17 +632,19 @@ def test_mute_add_warn_reuses_new_case_and_skips_duplicate_dm(monkeypatch):
             target,
             str(rule.id),
             commentary="same context",
+            case=mute_module.CASE_NEW_VALUE,
             add_warn=True,
         )
     )
 
     assert selected_cases == [mute_module.CASE_NEW_VALUE]
     assert len(linked_warn_calls) == 1
-    warn_payload, apply_discord_effects = linked_warn_calls[0]
+    warn_payload, apply_discord_effects, explicit_case_id = linked_warn_calls[0]
     assert warn_payload.action_type == ActionType.WARN
     assert warn_payload.rule_id == UUID(rule.id)
     assert warn_payload.commentary == "same context"
     assert warn_payload.case_id == str(case_id)
+    assert explicit_case_id == case_id
     assert apply_discord_effects is False
     assert receipt_kwargs["extra_lines"][0][0] == tr("en", "action.linked_warn_label")
     assert f"#{102}" in receipt_kwargs["extra_lines"][0][1]

@@ -410,6 +410,12 @@ async def mute(
         delete_message_limit=delete_message_limit,
         delete_message_channel=delete_message_channel,
     )
+    logger.info(
+        "Moderation action request type=mute target=%s add_warn=%s case_selection=%s",
+        user.id,
+        add_warn,
+        case,
+    )
     try:
         async with get_async_session() as session:
             case_id = await resolve_case_id_for_action(
@@ -449,7 +455,16 @@ async def mute(
                     session=session,
                     action=warn_payload,
                     moderator_user_id=interaction.user.id,
+                    case_id=case_id,
                     apply_discord_effects=False,
+                )
+                if case_id is not None and linked_warn.case_id != case_id:
+                    raise RuntimeError("Linked warning was not attached to the selected moderation case")
+                logger.info(
+                    "Created mute action #%s with linked warning #%s in case %s",
+                    created_action.action_number,
+                    linked_warn.action_number,
+                    case_id,
                 )
             await session.commit()
     except Exception:

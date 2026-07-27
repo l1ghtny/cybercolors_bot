@@ -765,7 +765,7 @@ async def send_manual_unban_dm(
     server_id: int,
     target_user_id: int,
     reason: str,
-) -> None:
+) -> bool:
     try:
         locale = await _get_server_locale(session=session, server_id=server_id)
         server = await session.get(Server, server_id)
@@ -782,13 +782,17 @@ async def send_manual_unban_dm(
                 limit=1900,
             ),
         )
+        return True
     except Exception as error:
-        logger.warning(
+        expected_delivery_failure = "50278" in str(error) or "no mutual guilds" in str(error).casefold()
+        log_method = logger.info if expected_delivery_failure else logger.warning
+        log_method(
             "Failed to DM manual unban to user %s in server %s: %s",
             target_user_id,
             server_id,
             error,
         )
+        return False
 
 
 async def _prepare_discord_action_effects(

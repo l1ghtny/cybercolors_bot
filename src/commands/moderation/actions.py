@@ -1,4 +1,6 @@
 from datetime import datetime, timedelta, timezone
+import logging
+
 import discord
 from discord import app_commands
 from sqlmodel import select
@@ -41,6 +43,9 @@ from src.modules.moderation.durations import (
 from src.modules.moderation.mod_log import build_action_revert_log_embed, send_mod_log_message
 from src.modules.moderation.public_notices import send_public_action_notice
 from src.modules.moderation.mute_management import deactivate_user_bans
+
+
+logger = logging.getLogger("bot")
 
 
 async def _fetch_action_for_server(
@@ -370,6 +375,13 @@ async def _create_member_action(
 
     commentary_text = commentary.strip() if commentary else None
     selected_rule_label = rule_label(selected_rule)
+    logger.info(
+        "Moderation action request type=%s target=%s add_warn=%s case_selection=%s",
+        action_type.value,
+        user.id,
+        add_warn,
+        case,
+    )
     try:
         async with get_async_session() as session:
             case_id = await resolve_case_id_for_action(
@@ -414,7 +426,17 @@ async def _create_member_action(
                     session=session,
                     action=warn_payload,
                     moderator_user_id=interaction.user.id,
+                    case_id=case_id,
                     apply_discord_effects=False,
+                )
+                if case_id is not None and linked_warn.case_id != case_id:
+                    raise RuntimeError("Linked warning was not attached to the selected moderation case")
+                logger.info(
+                    "Created %s action #%s with linked warning #%s in case %s",
+                    action_type.value,
+                    created.action_number,
+                    linked_warn.action_number,
+                    case_id,
                 )
             await session.commit()
     except Exception as error:
@@ -607,7 +629,7 @@ async def unban(interaction: discord.Interaction, user: discord.User, reason: st
         return
     async with get_async_session() as session:
         deactivated = await deactivate_user_bans(session, interaction.guild.id, user.id)
-        await send_manual_unban_dm(
+        dm_delivered = await send_manual_unban_dm(
             session=session,
             server_id=interaction.guild.id,
             target_user_id=user.id,
@@ -625,6 +647,10 @@ async def unban(interaction: discord.Interaction, user: discord.User, reason: st
             extra_lines=[
                 (tr(locale, "action.reason_label"), note),
                 (tr(locale, "modlog.closed_actions_label"), deactivated),
+                (
+                    tr(locale, "action.dm_delivery_label"),
+                    tr(locale, "action.dm_delivered" if dm_delivered else "action.dm_not_delivered"),
+                ),
             ],
         ),
         ephemeral=True,
