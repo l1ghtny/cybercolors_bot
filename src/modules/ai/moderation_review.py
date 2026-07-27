@@ -100,9 +100,13 @@ def _ai_review_display(locale: str | None, kind: str, value: str | None) -> str:
 
 def _ai_review_reason(locale: str | None, reason: str | None) -> str:
     fallback = tr(locale, "ai_review.reason_fallback")
-    cleaned = _truncate(reason, 420).strip()
+    cleaned = (reason or "").strip()
     if not cleaned:
         return fallback
+    legacy_policy_marker = " Original AI reason: "
+    if legacy_policy_marker in cleaned:
+        cleaned = cleaned.split(legacy_policy_marker, 1)[1].strip()
+    cleaned = _truncate(cleaned, 420).strip()
     locale_code = normalize_locale_code(locale)
     prefix = f"{locale_code}:"
     if cleaned.lower().startswith(prefix):
@@ -574,6 +578,7 @@ async def create_ai_moderation_decision(
         reason=verdict.reason,
         suggested_action=verdict.suggested_action,
         rule_ids=verdict.rule_ids,
+        policy_notes=verdict.policy_notes,
         raw_response=_raw_response_text(verdict),
         parse_error=_parse_error(verdict),
         status="pending_review" if verdict.flagged else "no_action_needed",
@@ -1357,7 +1362,13 @@ class AIActionConfirmModal(discord.ui.Modal):
                     member = await interaction.guild.fetch_member(decision.author_user_id)
                 await check_if_user_exists(member, interaction.guild, session)
 
-                target_error = validate_target_for_moderation(interaction, member, None)
+                settings = await session.get(ServerModerationSettings, interaction.guild.id)
+                target_error = validate_target_for_moderation(
+                    interaction,
+                    member,
+                    None,
+                    ignored_role_ids={settings.mute_role_id} if settings and settings.mute_role_id else None,
+                )
                 if target_error:
                     await interaction.followup.send(target_error, ephemeral=True)
                     return

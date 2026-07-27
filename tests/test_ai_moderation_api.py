@@ -150,6 +150,7 @@ async def _ai_moderation_api_scenario() -> None:
                 reason="Likely spam",
                 suggested_action="warn",
                 rule_ids=[],
+                policy_notes=["Internal policy diagnostic."],
                 status="pending_review",
                 created_at=now,
                 updated_at=now,
@@ -173,6 +174,7 @@ async def _ai_moderation_api_scenario() -> None:
         assert item.author.display_name == "target-nick"
         assert item.ai_reason == "Likely spam"
         assert item.ai_categories == ["spam"]
+        assert item.policy_notes == ["Internal policy diagnostic."]
         assert item.confidence is None
         assert item.suggested_action == "warn"
 

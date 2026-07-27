@@ -66,6 +66,9 @@ async def to_server_moderation_settings_read_model(
         mute_role_name=role_name,
         default_mute_minutes=settings.default_mute_minutes,
         max_mute_minutes=settings.max_mute_minutes,
+        mute_duration_presets=list(settings.mute_duration_presets or []),
+        default_ban_minutes=settings.default_ban_minutes,
+        ban_duration_presets=list(settings.ban_duration_presets or []),
         auto_reconnect_voice_on_mute=settings.auto_reconnect_voice_on_mute,
         mod_log_channel_id=(
             str(settings.mod_log_channel_id) if settings.mod_log_channel_id is not None else None
@@ -89,10 +92,21 @@ async def update_server_moderation_settings(
         settings.default_mute_minutes = body.default_mute_minutes
     if body.max_mute_minutes is not None:
         settings.max_mute_minutes = body.max_mute_minutes
+    if body.mute_duration_presets is not None:
+        settings.mute_duration_presets = body.mute_duration_presets
+    if body.default_ban_minutes is not None:
+        settings.default_ban_minutes = body.default_ban_minutes
+    if body.ban_duration_presets is not None:
+        settings.ban_duration_presets = body.ban_duration_presets
     if settings.default_mute_minutes > settings.max_mute_minutes:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="default_mute_minutes cannot be greater than max_mute_minutes",
+        )
+    if any(minutes > settings.max_mute_minutes for minutes in settings.mute_duration_presets):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="mute_duration_presets cannot exceed max_mute_minutes",
         )
     if body.auto_reconnect_voice_on_mute is not None:
         settings.auto_reconnect_voice_on_mute = body.auto_reconnect_voice_on_mute

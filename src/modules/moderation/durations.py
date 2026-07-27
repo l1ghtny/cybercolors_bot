@@ -91,6 +91,22 @@ def action_duration_choices(*, include_default: bool = False, include_permanent:
     return choices
 
 
+def configured_duration_choices(
+    presets_minutes: list[int],
+    *,
+    include_default: bool = True,
+    include_permanent: bool = False,
+) -> list[app_commands.Choice[str]]:
+    choices: list[app_commands.Choice[str]] = []
+    if include_default:
+        choices.append(app_commands.Choice(name="server default", value=DEFAULT_DURATION_VALUE))
+    for minutes in sorted(set(presets_minutes)):
+        choices.append(app_commands.Choice(name=format_duration_minutes(minutes), value=str(minutes)))
+    if include_permanent:
+        choices.append(app_commands.Choice(name="permanent", value=PERMANENT_DURATION_VALUE))
+    return choices[:25]
+
+
 def format_duration_minutes(minutes: int) -> str:
     for unit_name, unit_minutes in (("month", 43_200), ("week", 10_080), ("day", 1_440), ("hour", 60)):
         if minutes >= unit_minutes and minutes % unit_minutes == 0:
@@ -178,3 +194,31 @@ def resolve_duration_selection(
         return DurationSelection(minutes=None, label="permanent", is_permanent=True)
 
     raise ValueError("Duration is required.")
+
+
+def resolve_configured_duration_selection(
+    *,
+    selection: app_commands.Choice[str] | str | None,
+    default_minutes: int,
+    presets_minutes: list[int],
+    allow_permanent: bool = False,
+    max_minutes: int = MAX_ACTION_DURATION_MINUTES,
+) -> DurationSelection:
+    selected_value = selection.value if hasattr(selection, "value") else selection
+    if not selected_value or selected_value == DEFAULT_DURATION_VALUE:
+        minutes = default_minutes
+    elif selected_value == PERMANENT_DURATION_VALUE:
+        if not allow_permanent:
+            raise ValueError("Permanent duration is not available for this action.")
+        return DurationSelection(minutes=None, label="permanent", is_permanent=True)
+    else:
+        try:
+            minutes = int(selected_value)
+        except (TypeError, ValueError):
+            raise ValueError("Select one of the configured duration presets.")
+        if minutes not in set(presets_minutes):
+            raise ValueError("Select one of the configured duration presets.")
+
+    if minutes < 1 or minutes > max_minutes:
+        raise ValueError(f"Duration exceeds the server maximum of {format_duration_minutes(max_minutes)}.")
+    return DurationSelection(minutes=minutes, label=format_duration_minutes(minutes))

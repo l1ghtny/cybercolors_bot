@@ -93,7 +93,8 @@ def _truncate(value: str, limit: int = 600) -> str:
 def _format_dt(value: datetime | None) -> str:
     if value is None:
         return "n/a"
-    return f"{value.isoformat()}Z"
+    normalized = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    return normalized.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _dashboard_base_url() -> str:
@@ -347,7 +348,11 @@ def _build_action_revert_log_embed(
             inline=False,
         ),
         _embed_field(tr(locale, "modlog.reason_label"), reason, inline=False),
-        _embed_field(tr(locale, "modlog.reverted_label"), f"`{discord_changed}`", inline=True),
+        _embed_field(
+            tr(locale, "modlog.reverted_label"),
+            tr(locale, "common.bool_true" if discord_changed else "common.bool_false"),
+            inline=True,
+        ),
     ]
     return {
         "title": f"{tr(locale, 'modlog.title')}: {tr(locale, 'modlog.action_revert')}",
@@ -731,6 +736,38 @@ async def send_action_revert_dm(
             action.action_number,
             action.target_user_id,
             action.server_id,
+            error,
+        )
+
+
+async def send_manual_unban_dm(
+    *,
+    session: AsyncSession,
+    server_id: int,
+    target_user_id: int,
+    reason: str,
+) -> None:
+    try:
+        locale = await _get_server_locale(session=session, server_id=server_id)
+        server = await session.get(Server, server_id)
+        server_name = server.server_name if server is not None else str(server_id)
+        await create_direct_message(
+            user_id=target_user_id,
+            content=_truncate(
+                tr(
+                    locale,
+                    "action.dm_manual_unban_body",
+                    server_name=server_name,
+                    reason=reason,
+                ),
+                limit=1900,
+            ),
+        )
+    except Exception as error:
+        logger.warning(
+            "Failed to DM manual unban to user %s in server %s: %s",
+            target_user_id,
+            server_id,
             error,
         )
 

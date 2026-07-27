@@ -3,8 +3,10 @@ from discord import app_commands
 
 from src.modules.moderation.durations import (
     action_duration_choices,
+    configured_duration_choices,
     duration_unit_choices,
     parse_duration_text,
+    resolve_configured_duration_selection,
     resolve_duration_selection,
 )
 
@@ -91,4 +93,31 @@ def test_duration_unit_requires_custom_value():
             custom_value=None,
             custom_unit="hours",
             default_minutes=None,
+        )
+
+
+def test_configured_duration_choices_and_defaults_are_server_scoped():
+    choices = configured_duration_choices([720, 60, 720], include_permanent=True)
+    assert [(choice.name, choice.value) for choice in choices] == [
+        ("server default", "default"),
+        ("1 hour", "60"),
+        ("12 hours", "720"),
+        ("permanent", "permanent"),
+    ]
+
+    selected = resolve_configured_duration_selection(
+        selection=None,
+        default_minutes=720,
+        presets_minutes=[60, 720],
+    )
+    assert selected.minutes == 720
+    assert selected.label == "12 hours"
+
+
+def test_configured_duration_rejects_values_not_in_server_presets():
+    with pytest.raises(ValueError, match="configured duration presets"):
+        resolve_configured_duration_selection(
+            selection="360",
+            default_minutes=720,
+            presets_minutes=[60, 720],
         )

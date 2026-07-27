@@ -134,7 +134,8 @@ def rule_choices(
         label = rule_label(rule)
         if current_lower and current_lower not in label.lower():
             continue
-        display_name = label if len(label) <= 100 else f"{label[:97]}..."
+        title = (rule.title or "").strip() or tr(None, "common.rule_fallback")
+        display_name = title if len(title) <= 100 else f"{title[:97]}..."
         choices.append(app_commands.Choice(name=display_name, value=str(rule.id)))
         if len(choices) >= limit:
             break
@@ -362,7 +363,9 @@ async def resolve_case_id_for_action(
 def validate_target_for_moderation(
     interaction: discord.Interaction,
     target: discord.Member,
-    locale: str,
+    locale: str | None,
+    *,
+    ignored_role_ids: set[int] | None = None,
 ) -> str | None:
     guild = interaction.guild
     if guild is None:
@@ -372,8 +375,14 @@ def validate_target_for_moderation(
     if target.id == guild.owner_id:
         return tr(locale, "common.target_owner")
 
+    ignored_role_ids = ignored_role_ids or set()
+
+    def effective_top_role(member: discord.Member) -> discord.Role:
+        roles = [role for role in member.roles if role.id not in ignored_role_ids]
+        return max(roles, default=member.top_role)
+
     actor = interaction.user if isinstance(interaction.user, discord.Member) else None
-    if actor and guild.owner_id != actor.id and target.top_role >= actor.top_role:
+    if actor and guild.owner_id != actor.id and effective_top_role(target) >= effective_top_role(actor):
         return tr(locale, "common.target_hierarchy")
 
     me = guild.me

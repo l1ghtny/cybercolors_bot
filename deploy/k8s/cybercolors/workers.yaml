@@ -224,3 +224,50 @@ spec:
             limits:
               cpu: 750m
               memory: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cybercolors-privacy-retention-worker
+  namespace: cybercolors
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: cybercolors-privacy-retention-worker
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: cybercolors-privacy-retention-worker
+    spec:
+      containers:
+        - name: worker
+          image: localhost:32000/cybercolors-backend:latest
+          imagePullPolicy: Always
+          command: ["python", "-m", "src.workers.privacy_retention_worker"]
+          envFrom:
+            - configMapRef:
+                name: cybercolors-config
+          env:
+            - name: PYTHONPATH
+              value: /home/discord-bot
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: cybercolors-db-pguser-backend
+                  key: user
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cybercolors-db-pguser-backend
+                  key: password
+          resources:
+            requests:
+              cpu: 25m
+              memory: 96Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi

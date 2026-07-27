@@ -153,6 +153,7 @@ def test_create_ai_moderation_decision_maps_verdict_fields():
         reason="Spam burst",
         suggested_action="warn",
         rule_ids=["rule-1"],
+        policy_notes=["Internal policy diagnostic."],
         raw_response=AIResponse(content="{}", model="test-model", provider="fake", total_tokens=10),
     )
     settings = ServerAISettings(server_id=123, moderation_strictness="high")
@@ -175,6 +176,7 @@ def test_create_ai_moderation_decision_maps_verdict_fields():
     assert decision.total_tokens == 10
     assert decision.categories == ["spam"]
     assert decision.rule_ids == ["rule-1"]
+    assert decision.policy_notes == ["Internal policy diagnostic."]
     assert decision.attachments_json == [{"filename": "proof.png"}]
 
 
@@ -264,6 +266,25 @@ def test_ai_moderation_embed_uses_russian_labels_and_values():
     assert resolved.title == "AI-проверка модерации завершена"
     assert any(field.name == "Статус" and "отклонено" in field.value for field in resolved.fields)
     assert any(field.name == "Выбранное действие" and "Без действия" in field.value for field in resolved.fields)
+
+
+def test_ai_moderation_embed_hides_legacy_policy_prefix_from_localized_reason():
+    decision = AIModerationDecision(
+        server_id=123,
+        channel_id=456,
+        message_id=789,
+        author_user_id=101,
+        flagged=True,
+        severity="medium",
+        reason="Harassment requires a clear target. Original AI reason: ru: Нужно проверить",
+        suggested_action="manual_review",
+        policy_notes=["Harassment requires a clear target."],
+    )
+
+    embed = build_ai_moderation_embed(decision, _fake_message(), locale="ru")
+
+    assert embed.description == "Нужно проверить"
+    assert "Harassment" not in embed.description
 
 def test_send_ai_moderation_review_uses_configured_review_channel(monkeypatch):
     import src.modules.ai.moderation_review as moderation_review

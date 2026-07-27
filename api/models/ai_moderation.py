@@ -52,6 +52,7 @@ class AIModerationDecisionModel(BaseModel):
     action_reason: str | None = None
     action_override: bool = False
     rule_ids: list[str] = Field(default_factory=list)
+    policy_notes: list[str] = Field(default_factory=list)
     provider: str | None = None
     model: str | None = None
     total_tokens: int = 0

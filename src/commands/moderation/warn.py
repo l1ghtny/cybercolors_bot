@@ -2,7 +2,7 @@ import discord
 from discord import app_commands
 
 from src.db.database import get_async_session
-from src.db.models import ActionType
+from src.db.models import ActionType, ServerModerationSettings
 from src.modules.localization.service import get_server_locale, tr
 from src.modules.moderation.public_notices import send_public_action_notice
 from src.modules.moderation.bot_services import (
@@ -56,6 +56,7 @@ async def warn(
     try:
         async with get_async_session() as session:
             rules = await fetch_active_rule_models(session=session, server_id=interaction.guild.id)
+            settings = await session.get(ServerModerationSettings, interaction.guild.id)
     except Exception as error:
         await interaction.followup.send(
             tr(locale, "warn.fetch_rules_failed", error=error),
@@ -78,7 +79,12 @@ async def warn(
         delete_message_limit=delete_message_limit,
         delete_message_channel=delete_message_channel,
     )
-    target_error = validate_target_for_moderation(interaction, user, locale)
+    target_error = validate_target_for_moderation(
+        interaction,
+        user,
+        locale,
+        ignored_role_ids={settings.mute_role_id} if settings and settings.mute_role_id else None,
+    )
     if target_error:
         await interaction.followup.send(target_error, ephemeral=True)
         return

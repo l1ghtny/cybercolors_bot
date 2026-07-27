@@ -29,6 +29,14 @@ class FakeProvider:
 
 
 def _moderation_json(**overrides) -> str:
+    legacy_rule_ids = overrides.pop("rule_ids", [])
+    categories = overrides.get("categories", [])
+    rule_matches = overrides.pop("rule_matches", None)
+    if rule_matches is None and categories:
+        rule_matches = [
+            {"rule_id": rule_id, "category": categories[0]}
+            for rule_id in legacy_rule_ids
+        ]
     payload = {
         "flagged": False,
         "severity": "none",
@@ -36,7 +44,7 @@ def _moderation_json(**overrides) -> str:
         "confidence": 1.0,
         "reason": "",
         "suggested_action": "none",
-        "rule_ids": [],
+        "rule_matches": rule_matches or [],
         "targeted": False,
         "credible_threat": False,
         "credible_self_harm": False,
@@ -209,6 +217,8 @@ def test_check_message_builds_moderation_request_and_parses_verdict():
     assert provider.last_request.response_format is not None
     assert provider.last_request.response_format.strict is True
     assert provider.last_request.response_format.schema["additionalProperties"] is False
+    assert "rule_matches" in provider.last_request.response_format.schema["required"]
+    assert "rule_ids" not in provider.last_request.response_format.schema["properties"]
     assert provider.last_request.max_output_tokens == ai_main_module.AI_MODERATION_MAX_OUTPUT_TOKENS
     prompt = provider.last_request.messages[0].content
     assert "join this server now" in prompt
@@ -251,7 +261,8 @@ def test_check_message_converts_unsupported_watch_to_manual_review():
     assert verdict.flagged is True
     assert verdict.severity == "low"
     assert verdict.suggested_action == "manual_review"
-    assert "Watch requires structured evidence" in verdict.reason
+    assert any("Watch requires structured evidence" in note for note in verdict.policy_notes)
+    assert verdict.reason == "Maybe watch for tone."
     assert provider.last_request is not None
     assert "Do not suggest watch at low strictness" in provider.last_request.system_prompt
     assert "Do not flag ordinary casual profanity" in provider.last_request.system_prompt
@@ -305,7 +316,7 @@ def test_check_message_suppresses_trusted_staff_url_distribution_guess():
     assert verdict.flagged is False
     assert verdict.severity == "none"
     assert verdict.suggested_action == "none"
-    assert "Trusted staff resource links are not spam" in verdict.reason
+    assert any("Trusted staff resource links are not spam" in note for note in verdict.policy_notes)
     prompt = provider.last_request.messages[-1].content
     assert '"author_is_admin": true' in prompt
     assert '"author_is_moderator": true' in prompt
@@ -371,7 +382,7 @@ def test_check_message_suppresses_uninspected_link_only_guess():
     assert verdict.flagged is False
     assert verdict.severity == "none"
     assert verdict.suggested_action == "none"
-    assert "uninspected link-only message" in verdict.reason.lower()
+    assert any("uninspected link-only message" in note.lower() for note in verdict.policy_notes)
 
 
 def test_check_message_low_strictness_suppresses_noncredible_profanity():
@@ -402,7 +413,7 @@ def test_check_message_low_strictness_suppresses_noncredible_profanity():
     assert verdict.flagged is False
     assert verdict.severity == "none"
     assert verdict.suggested_action == "none"
-    assert "Harassment requires a clear target" in verdict.reason
+    assert "Harassment requires a clear target." in verdict.policy_notes
 
 
 def test_check_message_keeps_credible_low_strictness_threat_and_structured_fields():
@@ -497,7 +508,7 @@ def test_check_message_uses_recent_context_to_suppress_game_threat_false_positiv
 
     assert verdict.flagged is False
     assert verdict.suggested_action == "none"
-    assert "Threat moderation requires the model to affirm credible intent" in verdict.reason
+    assert "Threat moderation requires the model to affirm credible intent." in verdict.policy_notes
     prompt = provider.last_request.messages[0].content
     assert "Recent same-channel context" in prompt
     assert "Target message content" in prompt
@@ -548,7 +559,7 @@ def test_check_message_suppresses_quoted_roleplay_attack_false_positive():
 
     assert verdict.flagged is False
     assert verdict.suggested_action == "none"
-    assert "Harassment requires a clear target" in verdict.reason
+    assert "Harassment requires a clear target." in verdict.policy_notes
 
 
 def test_check_message_keeps_direct_member_threat_despite_roleplay_context():
@@ -834,7 +845,7 @@ def test_check_message_low_strictness_suppresses_ambiguous_visual_nsfw():
     assert verdict.flagged is False
     assert verdict.severity == "none"
     assert verdict.suggested_action == "none"
-    assert "structured visual level to be explicit" in verdict.reason
+    assert any("structured visual level to be explicit" in note for note in verdict.policy_notes)
     assert "visual_sexual_level" in provider.last_request.system_prompt
 
 
@@ -873,7 +884,7 @@ def test_check_message_standard_suppresses_ambiguous_visual_sexual_content():
     assert verdict.severity == "none"
     assert verdict.categories == []
     assert verdict.suggested_action == "none"
-    assert "structured visual level to be explicit" in verdict.reason
+    assert any("structured visual level to be explicit" in note for note in verdict.policy_notes)
 
 
 def test_check_message_standard_suppresses_low_confidence_visual_explicit_flag():
@@ -907,7 +918,7 @@ def test_check_message_standard_suppresses_low_confidence_visual_explicit_flag()
 
     assert verdict.flagged is False
     assert verdict.categories == []
-    assert "below the standard threshold 0.75" in verdict.reason
+    assert any("below the standard threshold 0.75" in note for note in verdict.policy_notes)
 
 
 def test_check_message_preserves_nonsexual_violation_when_visual_sexual_evidence_is_ambiguous():
@@ -946,8 +957,49 @@ def test_check_message_preserves_nonsexual_violation_when_visual_sexual_evidence
 
     assert verdict.flagged is True
     assert verdict.categories == ["harassment"]
-    assert verdict.suggested_action == "warn"
+    assert verdict.severity == "low"
+    assert verdict.suggested_action == "manual_review"
+    assert verdict.rule_ids == ["rule-harassment"]
+    assert any("structured visual level to be explicit" in note for note in verdict.policy_notes)
+
+
+def test_check_message_suppresses_other_escape_hatch_after_harassment_rejection():
+    provider = FakeProvider(
+        _moderation_json(
+            flagged=True,
+            severity="medium",
+            categories=["harassment", "other"],
+            confidence=0.78,
+            reason="Profanity is rude, but there is no clear target.",
+            suggested_action="warn",
+            rule_matches=[
+                {"rule_id": "rule-harassment", "category": "harassment"},
+                {"rule_id": "rule-conflict", "category": "other"},
+            ],
+            targeted=False,
+            evidence_source="visual",
+        )
+    )
+    ai = AIMain(provider=provider, model="test-model")
+
+    verdict = asyncio.run(
+        ai.check_message(
+            MessageModerationInput(content="", server_locale="ru"),
+            include_member_profile=False,
+            moderation_strictness="standard",
+        )
+    )
+
+    assert verdict.flagged is False
+    assert verdict.severity == "none"
+    assert verdict.categories == []
+    assert verdict.suggested_action == "none"
     assert verdict.rule_ids == []
+    assert verdict.reason == "Profanity is rude, but there is no clear target."
+    assert verdict.policy_notes == [
+        "The other category is only valid when no canonical category applies.",
+        "Harassment requires a clear target.",
+    ]
 
 
 def test_check_message_low_strictness_keeps_explicit_visual_nsfw():

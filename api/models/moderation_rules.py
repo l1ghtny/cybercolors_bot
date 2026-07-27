@@ -10,10 +10,12 @@ class ModerationRuleCreateModel(BaseModel):
     code: str | None = Field(default=None, max_length=32)
     title: str = Field(min_length=1, max_length=500)
     description: str | None = Field(default=None, max_length=10000)
+    ai_moderation_enabled: bool = True
+    ai_guidance: str | None = Field(default=None, max_length=10000)
     sort_order: int = Field(default=0, ge=0)
     created_by_user_id: str | None = Field(default=None, pattern=r"^\d*$")
 
-    @field_validator("code", "title", "description")
+    @field_validator("code", "title", "description", "ai_guidance")
     @classmethod
     def normalize_optional_text(cls, value: str | None) -> str | None:
         if value is None:
@@ -26,10 +28,12 @@ class ModerationRuleUpdateModel(BaseModel):
     code: str | None = Field(default=None, max_length=32)
     title: str = Field(min_length=1, max_length=500)
     description: str | None = Field(default=None, max_length=10000)
+    ai_moderation_enabled: bool | None = None
+    ai_guidance: str | None = Field(default=None, max_length=10000)
     sort_order: int = Field(default=0, ge=0)
     is_active: bool | None = None
 
-    @field_validator("code", "title", "description")
+    @field_validator("code", "title", "description", "ai_guidance")
     @classmethod
     def normalize_optional_text(cls, value: str | None) -> str | None:
         if value is None:
@@ -44,6 +48,8 @@ class ModerationRuleReadModel(BaseModel):
     code: str | None = None
     title: str
     description: str | None = None
+    ai_moderation_enabled: bool = True
+    ai_guidance: str | None = None
     sort_order: int
     source_channel_id: str | None = None
     source_message_id: str | None = None

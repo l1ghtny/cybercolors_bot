@@ -32,14 +32,13 @@ from src.modules.moderation.bot_services import (
 )
 from src.modules.moderation.bot_rbac import ensure_bot_permission, has_bot_permission
 from src.modules.moderation.durations import (
-    action_duration_choices,
-    duration_unit_choices,
-    resolve_duration_selection,
+    configured_duration_choices,
+    resolve_configured_duration_selection,
 )
 from src.modules.moderation.mute_management import (
     deactivate_user_mutes,
 )
-from src.modules.moderation.mod_log import build_unmute_log_message, send_mod_log_message
+from src.modules.moderation.mod_log import build_unmute_log_embed, send_mod_log_message
 from src.modules.moderation.public_notices import send_public_action_notice
 
 
@@ -314,8 +313,6 @@ async def moderation_set_mute_defaults(
     description="Apply role-based mute with rule + optional commentary.",
 )
 @app_commands.choices(
-    duration=action_duration_choices(include_default=True),
-    duration_unit=duration_unit_choices(),
     delete_messages=action_message_cleanup_choices(),
 )
 @app_commands.describe(
@@ -327,9 +324,7 @@ async def mute(
     interaction: discord.Interaction,
     user: discord.Member,
     rule: str,
-    duration: app_commands.Choice[str] | None = None,
-    duration_value: app_commands.Range[int, 1, 999] | None = None,
-    duration_unit: app_commands.Choice[str] | None = None,
+    duration: str | None = None,
     commentary: str | None = None,
     case: str | None = None,
     delete_messages: app_commands.Choice[int] | None = None,
@@ -353,16 +348,20 @@ async def mute(
         return
     selected_rule_label = rule_label(selected_rule)
 
-    moderation_target_error = validate_target_for_moderation(interaction, user, locale)
-    if moderation_target_error:
-        await interaction.followup.send(moderation_target_error, ephemeral=True)
-        return
-
     async with get_async_session() as session:
         settings = await get_or_create_server_moderation_settings(
             session=session,
             server_id=interaction.guild.id,
         )
+        moderation_target_error = validate_target_for_moderation(
+            interaction,
+            user,
+            locale,
+            ignored_role_ids={settings.mute_role_id} if settings.mute_role_id else None,
+        )
+        if moderation_target_error:
+            await interaction.followup.send(moderation_target_error, ephemeral=True)
+            return
         if not settings.mute_role_id:
             await interaction.followup.send(
                 tr(locale, "mute.role_not_configured"),
@@ -384,13 +383,11 @@ async def mute(
             return
 
         try:
-            duration_selection = resolve_duration_selection(
-                preset=duration,
-                custom_value=duration_value,
-                custom_unit=duration_unit,
+            duration_selection = resolve_configured_duration_selection(
+                selection=duration,
                 default_minutes=settings.default_mute_minutes,
+                presets_minutes=settings.mute_duration_presets,
                 max_minutes=settings.max_mute_minutes,
-                allow_default=True,
                 allow_permanent=False,
             )
         except ValueError as error:
@@ -490,6 +487,30 @@ async def mute_rule_autocomplete(interaction: discord.Interaction, current: str)
     return rule_choices(rules, current)
 
 
+@mute.autocomplete("duration")
+async def mute_duration_autocomplete(interaction: discord.Interaction, current: str):
+    if interaction.guild_id is None:
+        return []
+    try:
+        async with get_async_session() as session:
+            settings = await get_or_create_server_moderation_settings(
+                session=session,
+                server_id=interaction.guild_id,
+            )
+            choices = configured_duration_choices(
+                [
+                    minutes
+                    for minutes in settings.mute_duration_presets
+                    if minutes <= settings.max_mute_minutes
+                ],
+                include_default=True,
+            )
+    except Exception:
+        return []
+    normalized = current.casefold().strip()
+    return [choice for choice in choices if not normalized or normalized in choice.name.casefold()][:25]
+
+
 @mute.autocomplete("case")
 async def mute_case_autocomplete(interaction: discord.Interaction, current: str):
     if interaction.guild_id is None:
@@ -531,16 +552,20 @@ async def unmute(
     if not await ensure_bot_permission(interaction, "moderation.actions.apply.mute", locale=locale):
         return
     note = reason.strip() if reason else tr(locale, "common.manual_unmute_reason")
-    moderation_target_error = validate_target_for_moderation(interaction, user, locale)
-    if moderation_target_error:
-        await interaction.followup.send(moderation_target_error, ephemeral=True)
-        return
-
     async with get_async_session() as session:
         settings = await get_or_create_server_moderation_settings(
             session=session,
             server_id=interaction.guild.id,
         )
+        moderation_target_error = validate_target_for_moderation(
+            interaction,
+            user,
+            locale,
+            ignored_role_ids={settings.mute_role_id} if settings.mute_role_id else None,
+        )
+        if moderation_target_error:
+            await interaction.followup.send(moderation_target_error, ephemeral=True)
+            return
 
         removed_role = False
         if settings.mute_role_id:
@@ -569,7 +594,8 @@ async def unmute(
         await session.commit()
 
     if settings.mod_log_channel_id:
-        content = build_unmute_log_message(
+        embed = build_unmute_log_embed(
+            server_id=interaction.guild.id,
             target_user_id=user.id,
             target_display=user.display_name,
             moderator_user_id=interaction.user.id,
@@ -583,7 +609,7 @@ async def unmute(
         await send_mod_log_message(
             guild=interaction.guild,
             mod_log_channel_id=settings.mod_log_channel_id,
-            content=content,
+            embed=embed,
         )
 
     success_message = tr(

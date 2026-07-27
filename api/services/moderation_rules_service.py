@@ -252,6 +252,8 @@ def to_rule_read_model(
         code=rule.code,
         title=rule.title,
         description=rule.description,
+        ai_moderation_enabled=rule.ai_moderation_enabled,
+        ai_guidance=rule.ai_guidance,
         sort_order=rule.sort_order,
         source_channel_id=str(rule.source_channel_id) if rule.source_channel_id is not None else None,
         source_message_id=str(rule.source_message_id) if rule.source_message_id is not None else None,
@@ -330,6 +332,8 @@ async def create_manual_rule(
     code: str | None,
     sort_order: int,
     created_by_user_id: int | None,
+    ai_moderation_enabled: bool = True,
+    ai_guidance: str | None = None,
 ) -> ModerationRule:
     await _get_or_create_server(session, server_id)
     now = utc_now()
@@ -338,6 +342,8 @@ async def create_manual_rule(
         code=code,
         title=title,
         description=description,
+        ai_moderation_enabled=ai_moderation_enabled,
+        ai_guidance=ai_guidance,
         sort_order=sort_order,
         created_by_user_id=created_by_user_id,
         created_at=now,
@@ -402,12 +408,19 @@ async def update_rule_manually(
     code: str | None,
     sort_order: int,
     is_active: bool | None,
+    ai_moderation_enabled: bool | None = None,
+    ai_guidance: str | None = None,
+    update_ai_guidance: bool = False,
 ) -> ModerationRule:
     rule = await session.get(ModerationRule, rule_id)
     if not rule or rule.server_id != server_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Moderation rule not found")
     rule.title = title
     rule.description = description
+    if ai_moderation_enabled is not None:
+        rule.ai_moderation_enabled = ai_moderation_enabled
+    if update_ai_guidance:
+        rule.ai_guidance = ai_guidance
     rule.code = code
     rule.sort_order = sort_order
     if is_active is not None:

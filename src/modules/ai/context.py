@@ -95,8 +95,15 @@ def moderation_member_profile(profile: dict[str, Any]) -> dict[str, Any]:
     return profile
 
 
-async def get_active_rules_context(session: AsyncSession, server_id: int) -> list[dict[str, Any]]:
+async def get_active_rules_context(
+    session: AsyncSession,
+    server_id: int,
+    *,
+    ai_moderation_only: bool = False,
+) -> list[dict[str, Any]]:
     rules = await list_rules(session=session, server_id=server_id, include_inactive=False)
+    if ai_moderation_only:
+        rules = [rule for rule in rules if rule.ai_moderation_enabled]
     return [_model_to_dict(to_rule_read_model(rule)) for rule in rules]
 
 
@@ -177,6 +184,7 @@ async def build_ai_context(
     user_id: int | None = None,
     channel_id: int | None = None,
     include_rules: bool = True,
+    ai_moderation_rules_only: bool = False,
     include_member_profile: bool = False,
     member_profile_visibility: MemberProfileVisibility = "moderation",
     include_channel: bool = True,
@@ -202,7 +210,11 @@ async def build_ai_context(
     context.bot_persona = server_answer_context["bot_persona"]
 
     if include_rules:
-        context.active_rules = await get_active_rules_context(session=session, server_id=server_id)
+        context.active_rules = await get_active_rules_context(
+            session=session,
+            server_id=server_id,
+            ai_moderation_only=ai_moderation_rules_only,
+        )
 
     if include_member_profile and user_id is not None:
         context.member_profile = await get_member_profile_context(

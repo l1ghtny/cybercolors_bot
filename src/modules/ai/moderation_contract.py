@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import replace
 
-from src.modules.ai.models import AIResponseFormat, MessageModerationInput, ModerationVerdict
+from src.modules.ai.models import AIResponseFormat, MessageModerationInput, ModerationRuleMatch, ModerationVerdict
 
 
 MODERATION_CATEGORIES = (
@@ -65,7 +65,18 @@ MODERATION_RESPONSE_FORMAT = AIResponseFormat(
             },
             "reason": {"type": "string"},
             "suggested_action": {"type": "string", "enum": list(MODERATION_ACTIONS)},
-            "rule_ids": {"type": "array", "items": {"type": "string"}},
+            "rule_matches": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "rule_id": {"type": "string"},
+                        "category": {"type": "string", "enum": list(MODERATION_CATEGORIES)},
+                    },
+                    "required": ["rule_id", "category"],
+                },
+            },
             "targeted": {"type": "boolean"},
             "credible_threat": {"type": "boolean"},
             "credible_self_harm": {"type": "boolean"},
@@ -93,7 +104,7 @@ MODERATION_RESPONSE_FORMAT = AIResponseFormat(
             "confidence",
             "reason",
             "suggested_action",
-            "rule_ids",
+            "rule_matches",
             "targeted",
             "credible_threat",
             "credible_self_harm",
@@ -122,6 +133,10 @@ def apply_moderation_policy(
     categories = list(dict.fromkeys(item for item in verdict.categories if item in MODERATION_CATEGORY_SET))
     original_categories = list(categories)
     policy_notes: list[str] = []
+
+    if "other" in categories and len(categories) > 1:
+        categories.remove("other")
+        policy_notes.append("The other category is only valid when no canonical category applies.")
 
     threshold = MODERATION_CONFIDENCE_THRESHOLDS[normalized_strictness]
     if verdict.confidence < threshold:
@@ -226,14 +241,16 @@ def apply_moderation_policy(
         policy_notes.append("Watch requires structured evidence of repeated or ongoing behavior.")
 
     categories_changed = categories != original_categories
+    rule_matches = _rule_matches_for_categories(verdict.rule_matches, categories)
     return replace(
         verdict,
         flagged=True,
-        severity="low" if verdict.severity == "none" else verdict.severity,
+        severity="low" if categories_changed or verdict.severity == "none" else verdict.severity,
         categories=categories,
-        suggested_action=suggested_action,
-        rule_ids=[] if categories_changed else verdict.rule_ids,
-        reason=_reason_with_policy_notes(verdict.reason, policy_notes),
+        suggested_action="manual_review" if categories_changed else suggested_action,
+        rule_ids=list(dict.fromkeys(match.rule_id for match in rule_matches)),
+        rule_matches=rule_matches,
+        policy_notes=_merge_policy_notes(verdict.policy_notes, policy_notes),
     )
 
 
@@ -245,6 +262,7 @@ def _normalize_unflagged(verdict: ModerationVerdict) -> ModerationVerdict:
         categories=[],
         suggested_action="none",
         rule_ids=[],
+        rule_matches=[],
     )
 
 
@@ -255,18 +273,31 @@ def _suppress_verdict(verdict: ModerationVerdict, policy_notes: list[str]) -> Mo
         flagged=False,
         severity="none",
         categories=[],
-        reason=_reason_with_policy_notes(verdict.reason, notes),
         suggested_action="none",
         rule_ids=[],
+        rule_matches=[],
+        policy_notes=_merge_policy_notes(verdict.policy_notes, notes),
     )
 
 
-def _reason_with_policy_notes(reason: str, policy_notes: list[str]) -> str:
-    if not policy_notes:
-        return reason
-    policy_reason = " ".join(dict.fromkeys(policy_notes))
-    cleaned_reason = reason.strip()
-    return f"{policy_reason} Original AI reason: {cleaned_reason}" if cleaned_reason else policy_reason
+def _rule_matches_for_categories(
+    rule_matches: list[ModerationRuleMatch],
+    categories: list[str],
+) -> list[ModerationRuleMatch]:
+    retained_categories = set(categories)
+    retained: list[ModerationRuleMatch] = []
+    seen: set[tuple[str, str]] = set()
+    for match in rule_matches:
+        key = (match.rule_id, match.category)
+        if match.category not in retained_categories or key in seen:
+            continue
+        retained.append(match)
+        seen.add(key)
+    return retained
+
+
+def _merge_policy_notes(existing: list[str], added: list[str]) -> list[str]:
+    return list(dict.fromkeys([*existing, *added]))
 
 
 def _remove_category_unless(

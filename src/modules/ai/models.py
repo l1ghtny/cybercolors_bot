@@ -120,6 +120,12 @@ class AIResponse:
     id: str | None = None
 
 
+@dataclass(slots=True, frozen=True)
+class ModerationRuleMatch:
+    rule_id: str
+    category: ModerationCategory
+
+
 @dataclass(slots=True)
 class ModerationVerdict:
     flagged: bool
@@ -129,6 +135,8 @@ class ModerationVerdict:
     reason: str = ""
     suggested_action: ModerationAction = "none"
     rule_ids: list[str] = field(default_factory=list)
+    rule_matches: list[ModerationRuleMatch] = field(default_factory=list)
+    policy_notes: list[str] = field(default_factory=list)
     targeted: bool = False
     credible_threat: bool = False
     credible_self_harm: bool = False

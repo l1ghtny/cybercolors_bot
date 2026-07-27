@@ -280,6 +280,14 @@ def test_bot_command_catalog_exposes_moderation_command_details():
         "delete_message_channel",
     }.issubset({parameter.name for parameter in warn_command.parameters})
 
+    for command_id in ("mod.kick", "mod.ban"):
+        command = get_bot_command(command_id)
+        assert command is not None
+        add_warn = next(parameter for parameter in command.parameters if parameter.name == "add_warn")
+        assert add_warn.type == "boolean"
+        assert add_warn.required is False
+        assert add_warn.default == "false"
+
     reply_command = get_bot_command("context.reply_as_modral")
     assert reply_command is not None
     assert {component.type for component in reply_command.components} == {

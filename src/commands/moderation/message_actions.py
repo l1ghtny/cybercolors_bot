@@ -352,7 +352,14 @@ class StartActionCommentaryModal(discord.ui.Modal):
                     ephemeral=True,
                 )
                 return
-        target_error = validate_target_for_moderation(interaction, target, self.locale)
+        async with get_async_session() as session:
+            settings = await session.get(ServerModerationSettings, interaction.guild.id)
+        target_error = validate_target_for_moderation(
+            interaction,
+            target,
+            self.locale,
+            ignored_role_ids={settings.mute_role_id} if settings and settings.mute_role_id else None,
+        )
         if target_error:
             await interaction.followup.send(target_error, ephemeral=True)
             return

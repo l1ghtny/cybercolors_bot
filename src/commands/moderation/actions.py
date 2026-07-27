@@ -10,11 +10,14 @@ from api.services.moderation_actions_service import (
     create_action,
     list_action_summaries,
     send_action_revert_dm,
+    send_manual_unban_dm,
 )
+from api.services.moderation_settings import get_or_create_server_moderation_settings
 from src.db.database import get_async_session
 from src.db.models import ActionType, GlobalUser, ModerationAction, ServerModerationSettings
 from src.modules.localization.service import get_server_locale, tr
 from src.modules.moderation.bot_services import (
+    CASE_NEW_VALUE,
     action_choices,
     action_message_cleanup_choices,
     build_moderator_action_receipt,
@@ -32,9 +35,8 @@ from src.modules.moderation.bot_services import (
 )
 from src.modules.moderation.bot_rbac import ensure_bot_permission, has_bot_permission
 from src.modules.moderation.durations import (
-    action_duration_choices,
-    duration_unit_choices,
-    resolve_duration_selection,
+    configured_duration_choices,
+    resolve_configured_duration_selection,
 )
 from src.modules.moderation.mod_log import build_action_revert_log_embed, send_mod_log_message
 from src.modules.moderation.public_notices import send_public_action_notice
@@ -336,11 +338,16 @@ async def _create_member_action(
     case: str | None,
     expires_at: datetime | None = None,
     message_cleanup: ModerationActionMessageCleanupCreate | None = None,
+    add_warn: bool = False,
 ):
     locale = await get_server_locale(interaction.guild.id)
     try:
         async with get_async_session() as session:
             rules = await fetch_active_rule_models(session=session, server_id=interaction.guild.id)
+            settings = await get_or_create_server_moderation_settings(
+                session=session,
+                server_id=interaction.guild.id,
+            )
     except Exception as error:
         await interaction.followup.send(tr(locale, "action.fetch_rules_failed", error=error), ephemeral=True)
         return None
@@ -350,7 +357,13 @@ async def _create_member_action(
         await interaction.followup.send(tr(locale, "action.invalid_rule"), ephemeral=True)
         return None
 
-    target_error = validate_target_for_moderation(interaction, user, locale)
+    ignored_role_ids = {settings.mute_role_id} if settings.mute_role_id else None
+    target_error = validate_target_for_moderation(
+        interaction,
+        user,
+        locale,
+        ignored_role_ids=ignored_role_ids,
+    )
     if target_error:
         await interaction.followup.send(target_error, ephemeral=True)
         return None
@@ -364,7 +377,7 @@ async def _create_member_action(
                 interaction=interaction,
                 user=user,
                 action_type=action_type,
-                selected_case=case,
+                selected_case=case or (CASE_NEW_VALUE if add_warn else None),
                 selected_rule=selected_rule,
                 selected_rule_label=selected_rule_label,
                 commentary=commentary_text,
@@ -386,21 +399,56 @@ async def _create_member_action(
                 moderator_user_id=interaction.user.id,
                 apply_discord_effects=True,
             )
+            linked_warn = None
+            if add_warn:
+                warn_payload = build_action_payload(
+                    interaction=interaction,
+                    user=user,
+                    action_type=ActionType.WARN,
+                    rule_id=selected_rule.id,
+                    commentary=commentary_text,
+                    reason=None,
+                    case_id=case_id,
+                )
+                linked_warn = await create_action(
+                    session=session,
+                    action=warn_payload,
+                    moderator_user_id=interaction.user.id,
+                    apply_discord_effects=False,
+                )
             await session.commit()
     except Exception as error:
         await interaction.followup.send(tr(locale, "action.log_failed", error=error), ephemeral=True)
         return None
-    return created, selected_rule_label
+    return created, selected_rule_label, linked_warn
+
+
+def _linked_warn_receipt_lines(
+    *,
+    locale: str,
+    server_id: int,
+    linked_warn: ModerationAction | None,
+) -> list[tuple[str, str]]:
+    if linked_warn is None:
+        return []
+    return [
+        (
+            tr(locale, "action.linked_warn_label"),
+            f"[`#{linked_warn.action_number}`]({_dashboard_action_url(server_id, linked_warn.id)})",
+        )
+    ]
 
 
 @app_commands.checks.has_permissions(kick_members=True)
 @app_commands.command(name="kick", description="Kick a user and log the action.")
+@app_commands.describe(add_warn="Also create a warning for the same rule and commentary.")
 async def kick(
     interaction: discord.Interaction,
     user: discord.Member,
     rule: str,
     commentary: str | None = None,
     case: str | None = None,
+    add_warn: bool = False,
 ):
     if interaction.guild is None:
         await interaction.response.send_message(tr(None, "common.server_only"), ephemeral=True)
@@ -416,10 +464,11 @@ async def kick(
         rule=rule,
         commentary=commentary,
         case=case,
+        add_warn=add_warn,
     )
     if result is None:
         return
-    created, selected_rule_label = result
+    created, selected_rule_label, linked_warn = result
     success_message = tr(locale, "action.kick_success", mention=user.mention, rule=selected_rule_label)
     await send_public_action_notice(interaction, success_message)
     await interaction.followup.send(
@@ -429,6 +478,11 @@ async def kick(
             public_message=success_message,
             action=created,
             rule=selected_rule_label,
+            extra_lines=_linked_warn_receipt_lines(
+                locale=locale,
+                server_id=interaction.guild.id,
+                linked_warn=linked_warn,
+            ),
         ),
         ephemeral=True,
         allowed_mentions=discord.AllowedMentions.none(),
@@ -438,11 +492,10 @@ async def kick(
 @app_commands.checks.has_permissions(ban_members=True)
 @app_commands.command(name="ban", description="Ban a user with an optional expiration and log the action.")
 @app_commands.choices(
-    duration=action_duration_choices(include_permanent=True),
-    duration_unit=duration_unit_choices(),
     delete_messages=action_message_cleanup_choices(),
 )
 @app_commands.describe(
+    add_warn="Also create a warning for the same rule and commentary.",
     delete_messages="Delete recent logged messages by this user.",
     delete_message_limit="Maximum messages to delete when delete_messages is set.",
     delete_message_channel="Only delete messages from this channel.",
@@ -451,11 +504,10 @@ async def ban(
     interaction: discord.Interaction,
     user: discord.Member,
     rule: str,
-    duration: app_commands.Choice[str] | None = None,
-    duration_value: app_commands.Range[int, 1, 999] | None = None,
-    duration_unit: app_commands.Choice[str] | None = None,
+    duration: str | None = None,
     commentary: str | None = None,
     case: str | None = None,
+    add_warn: bool = False,
     delete_messages: app_commands.Choice[int] | None = None,
     delete_message_limit: app_commands.Range[int, 1, 100] | None = None,
     delete_message_channel: discord.TextChannel | None = None,
@@ -467,18 +519,21 @@ async def ban(
     locale = await get_server_locale(interaction.guild.id)
     if not await ensure_bot_permission(interaction, "moderation.actions.apply.ban", locale=locale):
         return
-    try:
-        duration_selection = resolve_duration_selection(
-            preset=duration,
-            custom_value=duration_value,
-            custom_unit=duration_unit,
-            default_minutes=None,
-            allow_default=False,
-            allow_permanent=True,
+    async with get_async_session() as session:
+        settings = await get_or_create_server_moderation_settings(
+            session=session,
+            server_id=interaction.guild.id,
         )
-    except ValueError as error:
-        await interaction.followup.send(str(error), ephemeral=True)
-        return
+        try:
+            duration_selection = resolve_configured_duration_selection(
+                selection=duration,
+                default_minutes=settings.default_ban_minutes,
+                presets_minutes=settings.ban_duration_presets,
+                allow_permanent=True,
+            )
+        except ValueError as error:
+            await interaction.followup.send(str(error), ephemeral=True)
+            return
 
     expires_at = None
     if duration_selection.minutes is not None:
@@ -497,10 +552,11 @@ async def ban(
         case=case,
         expires_at=expires_at,
         message_cleanup=message_cleanup,
+        add_warn=add_warn,
     )
     if result is None:
         return
-    created, selected_rule_label = result
+    created, selected_rule_label, linked_warn = result
     duration = (
         tr(locale, "action.ban_duration_suffix", duration=duration_selection.label)
         if duration_selection.minutes is not None
@@ -515,11 +571,18 @@ async def ban(
             public_message=success_message,
             action=created,
             rule=selected_rule_label,
-            extra_lines=message_cleanup_receipt_lines(
-                locale=locale,
-                cleanup=message_cleanup,
-                channel=delete_message_channel,
-            ),
+            extra_lines=[
+                *_linked_warn_receipt_lines(
+                    locale=locale,
+                    server_id=interaction.guild.id,
+                    linked_warn=linked_warn,
+                ),
+                *message_cleanup_receipt_lines(
+                    locale=locale,
+                    cleanup=message_cleanup,
+                    channel=delete_message_channel,
+                ),
+            ],
         ),
         ephemeral=True,
         allowed_mentions=discord.AllowedMentions.none(),
@@ -544,6 +607,12 @@ async def unban(interaction: discord.Interaction, user: discord.User, reason: st
         return
     async with get_async_session() as session:
         deactivated = await deactivate_user_bans(session, interaction.guild.id, user.id)
+        await send_manual_unban_dm(
+            session=session,
+            server_id=interaction.guild.id,
+            target_user_id=user.id,
+            reason=note,
+        )
         await session.commit()
     success_message = tr(locale, "action.unban_success", mention=user.mention, deactivated=deactivated)
     await send_public_action_notice(interaction, success_message)
@@ -586,6 +655,27 @@ async def action_rule_autocomplete(interaction: discord.Interaction, current: st
     except Exception:
         return []
     return rule_choices(rules, current)
+
+
+@ban.autocomplete("duration")
+async def ban_duration_autocomplete(interaction: discord.Interaction, current: str):
+    if interaction.guild_id is None:
+        return []
+    try:
+        async with get_async_session() as session:
+            settings = await get_or_create_server_moderation_settings(
+                session=session,
+                server_id=interaction.guild_id,
+            )
+            choices = configured_duration_choices(
+                settings.ban_duration_presets,
+                include_default=True,
+                include_permanent=True,
+            )
+    except Exception:
+        return []
+    normalized = current.casefold().strip()
+    return [choice for choice in choices if not normalized or normalized in choice.name.casefold()][:25]
 
 
 @kick.autocomplete("case")

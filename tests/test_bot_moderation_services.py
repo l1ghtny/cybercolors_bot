@@ -1,8 +1,11 @@
 import asyncio
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+import discord
 from sqlmodel import select
 
 from api.models.moderation_actions import ModerationActionCreate
@@ -44,8 +47,10 @@ from src.modules.moderation.bot_services import (
     find_rule,
     rule_choices,
     rule_label,
+    validate_target_for_moderation,
 )
 from src.modules.moderation.moderation_helpers import handle_message_deletion
+from src.modules.moderation.mod_log import build_unmute_log_embed
 
 
 def _make_discord_id() -> int:
@@ -317,8 +322,151 @@ def test_build_action_revert_log_embed_links_dashboard_and_uses_display_names(mo
     assert embed["fields"][1]["value"] == "<@789> (`moderator`, `789`)"
     assert embed["fields"][2]["value"] == f"[warn #42](https://dash.example/dashboard/123/moderation/actions/{action_id})"
     assert embed["fields"][3]["value"] == "mistaken action"
-    assert embed["fields"][4]["value"] == "`False`"
+    assert embed["fields"][4]["value"] == "No"
     assert embed["footer"]["text"] == "Action: #42"
+
+
+def test_build_unmute_log_embed_uses_localized_values_and_discord_timestamp():
+    embed = build_unmute_log_embed(
+        server_id=123,
+        target_user_id=456,
+        target_display="target",
+        moderator_user_id=789,
+        moderator_display="moderator",
+        reason="Снят вручную",
+        removed_role=False,
+        closed_actions=2,
+        locale="ru",
+    )
+
+    assert embed.title == "Лог модерации: размут"
+    assert embed.fields[0].value == "<@456> (`target`, `456`)"
+    assert embed.fields[1].value == "<@789> (`moderator`, `789`)"
+    assert embed.fields[2].value == "Снят вручную"
+    assert embed.fields[3].value == "Нет"
+    assert embed.fields[4].value == "2"
+    assert embed.timestamp is not None
+    assert embed.timestamp.tzinfo is not None
+    assert embed.footer.text == "ID сервера: 123"
+
+
+def test_target_hierarchy_ignores_only_configured_mute_role():
+    class FakeRole:
+        def __init__(self, role_id: int, position: int):
+            self.id = role_id
+            self.position = position
+
+        def __lt__(self, other):
+            return self.position < other.position
+
+        def __ge__(self, other):
+            return self.position >= other.position
+
+    everyone = FakeRole(1, 0)
+    member_role = FakeRole(2, 5)
+    moderator_role = FakeRole(3, 10)
+    mute_role = FakeRole(4, 50)
+    bot_role = FakeRole(5, 100)
+
+    actor = MagicMock(spec=discord.Member)
+    actor.id = 10
+    actor.roles = [everyone, moderator_role]
+    actor.top_role = moderator_role
+    target = MagicMock(spec=discord.Member)
+    target.id = 20
+    target.roles = [everyone, member_role, mute_role]
+    target.top_role = mute_role
+    guild = SimpleNamespace(owner_id=30, me=SimpleNamespace(top_role=bot_role))
+    interaction = SimpleNamespace(guild=guild, user=actor)
+
+    assert validate_target_for_moderation(interaction, target, "en") == tr("en", "common.target_hierarchy")
+    assert (
+        validate_target_for_moderation(
+            interaction,
+            target,
+            "en",
+            ignored_role_ids={mute_role.id},
+        )
+        is None
+    )
+
+
+def test_member_action_add_warn_reuses_new_case_and_skips_duplicate_dm(monkeypatch):
+    import src.commands.moderation.actions as actions_module
+
+    rule = _rule_model(rule_id=str(uuid4()), code="1", title="No insults")
+    case_id = uuid4()
+    session = SimpleNamespace(commit=AsyncMock())
+
+    @asynccontextmanager
+    async def fake_session_context():
+        yield session
+
+    selected_cases: list[str | None] = []
+    created_payloads: list[tuple[ModerationActionCreate, bool]] = []
+
+    async def fake_get_locale(_server_id: int) -> str:
+        return "en"
+
+    async def fake_fetch_rules(*, session, server_id):
+        return [rule]
+
+    async def fake_get_settings(*, session, server_id):
+        return SimpleNamespace(mute_role_id=None)
+
+    async def fake_resolve_case(*, selected_case, **_kwargs):
+        selected_cases.append(selected_case)
+        return case_id
+
+    async def fake_create_action(*, action, apply_discord_effects, **_kwargs):
+        created_payloads.append((action, apply_discord_effects))
+        return SimpleNamespace(
+            id=uuid4(),
+            action_number=len(created_payloads),
+            action_type=action.action_type,
+            case_id=case_id,
+        )
+
+    monkeypatch.setattr(actions_module, "get_async_session", fake_session_context)
+    monkeypatch.setattr(actions_module, "get_server_locale", fake_get_locale)
+    monkeypatch.setattr(actions_module, "fetch_active_rule_models", fake_fetch_rules)
+    monkeypatch.setattr(actions_module, "get_or_create_server_moderation_settings", fake_get_settings)
+    monkeypatch.setattr(actions_module, "resolve_case_id_for_action", fake_resolve_case)
+    monkeypatch.setattr(actions_module, "create_action", fake_create_action)
+    monkeypatch.setattr(actions_module, "validate_target_for_moderation", lambda *_args, **_kwargs: None)
+
+    interaction = SimpleNamespace(
+        guild=SimpleNamespace(id=123, name="Server"),
+        user=SimpleNamespace(id=789),
+        followup=SimpleNamespace(send=AsyncMock()),
+    )
+    target = SimpleNamespace(
+        id=456,
+        name="target",
+        display_name="target",
+        joined_at=datetime.now(timezone.utc),
+        nick=None,
+    )
+
+    result = asyncio.run(
+        actions_module._create_member_action(
+            interaction=interaction,
+            user=target,
+            action_type=ActionType.BAN,
+            rule=str(rule.id),
+            commentary="same context",
+            case=None,
+            add_warn=True,
+        )
+    )
+
+    assert result is not None
+    assert selected_cases == [actions_module.CASE_NEW_VALUE]
+    assert [payload.action_type for payload, _ in created_payloads] == [ActionType.BAN, ActionType.WARN]
+    assert [payload.case_id for payload, _ in created_payloads] == [str(case_id), str(case_id)]
+    assert [apply_effects for _, apply_effects in created_payloads] == [True, False]
+    assert created_payloads[0][0].commentary == created_payloads[1][0].commentary == "same context"
+    session.commit.assert_awaited_once()
 
 
 async def _create_bot_action_scenario(sent_messages: list[dict]) -> None:

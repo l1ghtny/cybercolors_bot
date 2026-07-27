@@ -134,6 +134,7 @@ async def to_ai_decision_model(session: AsyncSession, decision: AIModerationDeci
         action_reason=decision.action_reason,
         action_override=decision.action_override,
         rule_ids=list(decision.rule_ids or []),
+        policy_notes=list(decision.policy_notes or []),
         provider=decision.provider,
         model=decision.model,
         total_tokens=decision.total_tokens,
@@ -369,7 +370,9 @@ async def _default_duration_for_action(
     settings = await session.get(ServerModerationSettings, server_id)
     effective_duration = duration_minutes
     if effective_duration is None and action_type == ActionType.MUTE:
-        effective_duration = settings.default_mute_minutes if settings else 60
+        effective_duration = settings.default_mute_minutes if settings else 720
+    if effective_duration is None and action_type == ActionType.BAN:
+        effective_duration = settings.default_ban_minutes if settings else 43200
     if effective_duration is None:
         return None, None
     if settings and effective_duration > settings.max_mute_minutes and action_type == ActionType.MUTE:

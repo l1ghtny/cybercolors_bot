@@ -93,6 +93,13 @@ DELETE_MESSAGE_CHANNEL_PARAM = _param(
     "Optional channel scope for command-triggered message cleanup.",
     required=False,
 )
+ADD_WARN_PARAM = _param(
+    "add_warn",
+    "boolean",
+    "Also create a warning with the same rule and moderator commentary.",
+    required=False,
+    default="false",
+)
 
 
 BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
@@ -169,9 +176,7 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         parameters=[
             USER_PARAM,
             RULE_PARAM,
-            _param("duration", "choice", "Preset duration. Defaults to the server mute default when omitted.", required=False, choices=DURATION_CHOICES),
-            _param("duration_value", "integer", "Custom duration amount from 1 to 999.", required=False),
-            _param("duration_unit", "choice", "Unit for duration_value. Defaults to minutes when duration_value is used.", required=False, choices=DURATION_UNIT_CHOICES),
+            _param("duration", "string", "Server-configured mute duration. Defaults to 12 hours unless changed in settings.", required=False),
             COMMENTARY_PARAM,
             CASE_PARAM,
             DELETE_MESSAGES_PARAM,
@@ -179,8 +184,7 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
             DELETE_MESSAGE_CHANNEL_PARAM,
         ],
         components=[
-            _component("choices", "duration", "Server default plus fixed presets from 10 minutes to 30 days."),
-            _component("choices", "duration_unit", "Minutes, hours, days, weeks, or months."),
+            _component("autocomplete", "duration", "Suggests the mute presets configured for this server."),
             _component("autocomplete", "rule", "Searches active server moderation rules."),
             _component("autocomplete", "case", "Suggests open cases for the selected target member."),
             _component("choices", "delete_messages", "Optional recent-message cleanup windows from 15 minutes to 7 days."),
@@ -188,7 +192,7 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         workflow=[
             "Loads moderation settings and requires a configured mute role.",
             "Checks the mute role exists and is below the bot role.",
-            "Resolves the duration from preset or custom fields within the server maximum.",
+            "Resolves the duration from the server's mute presets within the configured maximum.",
             "When delete_messages is set, deletes recent logged messages from the target user and links them as deleted-message evidence.",
             "Logs the mute action, applies Discord effects, posts a public notice, and returns an ephemeral receipt.",
         ],
@@ -220,7 +224,7 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         category="moderation-actions",
         summary="Kick a member and log the action with a rule citation.",
         required_permissions=["kick_members"],
-        parameters=[USER_PARAM, RULE_PARAM, COMMENTARY_PARAM, CASE_PARAM],
+        parameters=[USER_PARAM, RULE_PARAM, COMMENTARY_PARAM, CASE_PARAM, ADD_WARN_PARAM],
         components=[
             _component("autocomplete", "rule", "Searches active server moderation rules."),
             _component("autocomplete", "case", "Suggests open cases for the selected target member."),
@@ -228,6 +232,7 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         workflow=[
             "Validates target hierarchy and selected rule.",
             "Creates the moderation action through the shared action service with Discord effects enabled.",
+            "When add_warn is enabled, creates a linked warning in the selected case or a new case.",
             "Posts public notice and an ephemeral moderator receipt.",
         ],
     ),
@@ -237,31 +242,31 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         qualified_name="mod ban",
         invoke="/mod ban",
         category="moderation-actions",
-        summary="Ban a member permanently or for a selected duration and log the action.",
+        summary="Ban a member for the server default or a configured duration and log the action.",
         required_permissions=["ban_members"],
         parameters=[
             USER_PARAM,
             RULE_PARAM,
-            _param("duration", "choice", "Permanent by default, or a fixed preset when selected.", required=False, choices=[_choice("permanent", "permanent"), *DURATION_CHOICES[1:]]),
-            _param("duration_value", "integer", "Custom duration amount from 1 to 999.", required=False),
-            _param("duration_unit", "choice", "Unit for duration_value. Defaults to minutes when duration_value is used.", required=False, choices=DURATION_UNIT_CHOICES),
+            _param("duration", "string", "Server-configured ban duration. Defaults to 30 days unless changed in settings.", required=False),
             COMMENTARY_PARAM,
             CASE_PARAM,
+            ADD_WARN_PARAM,
             DELETE_MESSAGES_PARAM,
             DELETE_MESSAGE_LIMIT_PARAM,
             DELETE_MESSAGE_CHANNEL_PARAM,
         ],
         components=[
-            _component("choices", "duration", "Permanent plus fixed presets from 10 minutes to 30 days."),
+            _component("autocomplete", "duration", "Suggests the ban presets configured for this server, plus permanent."),
             _component("autocomplete", "rule", "Searches active server moderation rules."),
             _component("autocomplete", "case", "Suggests open cases for the selected target member."),
             _component("choices", "delete_messages", "Optional recent-message cleanup windows from 15 minutes to 7 days."),
         ],
         workflow=[
-            "Resolves the ban duration; no duration means permanent.",
+            "Resolves the ban duration from server settings; no duration uses the server default.",
             "Validates target hierarchy and selected rule.",
             "When delete_messages is set, deletes recent logged messages from the target user and links them as deleted-message evidence.",
             "Creates the moderation action with Discord ban effects enabled.",
+            "When add_warn is enabled, creates a linked warning in the selected case or a new case.",
             "Posts public notice and an ephemeral moderator receipt.",
         ],
         notes=[
@@ -1013,6 +1018,7 @@ COMMANDS_BY_ID: dict[str, BotCommandDocModel] = {command.id: command for command
 AVAILABLE_BOT_COMMAND_LOCALES: tuple[str, ...] = ("en", "ru")
 
 RU_PARAMETER_DESCRIPTIONS: dict[str, str] = {
+    "add_warn": "Одновременно создать варн по тому же правилу и с тем же комментарием.",
     "action_id": "Номер действия из автодополнения; UUID также поддерживается.",
     "action_number": "Порядковый номер модераторского действия из автодополнения.",
     "auto_reconnect_on_mute": "Нужно ли автоматически возвращать пользователя в голосовой канал после мута.",
@@ -1086,7 +1092,7 @@ RU_PARAMETER_DESCRIPTIONS_BY_COMMAND: dict[str, dict[str, str]] = {
     },
     "mod.ban": {
         "case": "Открытое дело из автодополнения; если доступно, можно сразу создать новое.",
-        "duration": "Срок бана; без выбора бан будет бессрочным.",
+        "duration": "Готовый срок бана из настроек сервера; без выбора действует срок по умолчанию.",
     },
     "mod.unmute": {
         "reason": "Необязательная причина досрочного снятия мута.",
@@ -1259,7 +1265,7 @@ RU_COMMAND_TEXT: dict[str, dict[str, list[str] | str]] = {
         "workflow": [
             "Загружает настройки модерации и проверяет, что роль мута настроена.",
             "Проверяет, что роль существует и находится ниже роли бота.",
-            "Вычисляет длительность по готовому варианту или пользовательским полям.",
+            "Выбирает длительность из готовых сроков мута, настроенных для сервера.",
             "Если задан период удаления, удаляет недавние сообщения участника из журнала и прикрепляет их к делу как доказательства.",
             "Записывает мут, применяет изменения в Discord, публикует уведомление и отправляет приватный отчет.",
         ],
@@ -1279,16 +1285,18 @@ RU_COMMAND_TEXT: dict[str, dict[str, list[str] | str]] = {
         "workflow": [
             "Проверяет иерархию ролей и выбранное правило.",
             "Создаёт модераторское действие и исключает участника с сервера Discord.",
+            "Если включена опция add_warn, создаёт связанный варн в выбранном или новом кейсе.",
             "Публикует уведомление и отправляет модератору приватный отчет.",
         ],
     },
     "mod.ban": {
-        "summary": "Забанить участника навсегда или на выбранный срок и записать действие.",
+        "summary": "Забанить участника на срок по умолчанию или на выбранный срок и записать действие.",
         "workflow": [
-            "Вычисляет длительность бана; без выбранной длительности бан считается постоянным.",
+            "Выбирает длительность из готовых сроков бана; без выбора действует срок по умолчанию.",
             "Проверяет иерархию ролей и выбранное правило.",
             "Если задан период удаления, удаляет недавние сообщения участника из журнала и прикрепляет их к делу как доказательства.",
             "Создает модераторское действие и применяет бан в Discord.",
+            "Если включена опция add_warn, создаёт связанный варн в выбранном или новом кейсе.",
             "Публикует уведомление и отправляет модератору приватный отчет.",
         ],
         "notes": ["Из Discord-команды можно удалить недавние сообщения участника; в панели управления также можно выбрать отдельные сообщения."],
@@ -1298,6 +1306,7 @@ RU_COMMAND_TEXT: dict[str, dict[str, list[str] | str]] = {
         "workflow": [
             "Пытается снять бан в Discord.",
             "Закрывает активные действия типа «бан» для этого пользователя.",
+            "Отправляет пользователю личное сообщение о ручном разбане.",
             "Публикует уведомление и отправляет модератору приватный отчет.",
         ],
     },

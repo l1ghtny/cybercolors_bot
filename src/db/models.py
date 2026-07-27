@@ -412,8 +412,17 @@ class ServerModerationSettings(SQLModel, table=True):
 
     server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), primary_key=True))
     mute_role_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
-    default_mute_minutes: int = Field(default=60, nullable=False)
+    default_mute_minutes: int = Field(default=720, nullable=False)
     max_mute_minutes: int = Field(default=10080, nullable=False)
+    mute_duration_presets: list[int] = Field(
+        default_factory=lambda: [60, 360, 720, 1440, 4320, 10080],
+        sa_column=Column(sa.JSON, nullable=False),
+    )
+    default_ban_minutes: int = Field(default=43200, nullable=False)
+    ban_duration_presets: list[int] = Field(
+        default_factory=lambda: [1440, 4320, 10080, 20160, 43200],
+        sa_column=Column(sa.JSON, nullable=False),
+    )
     auto_reconnect_voice_on_mute: bool = Field(default=True, nullable=False)
     mod_log_channel_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
     activity_excluded_channel_ids: list[str] = Field(
@@ -505,6 +514,7 @@ class AIModerationDecision(SQLModel, table=True):
     action_reason: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     action_override: bool = Field(default=False, nullable=False)
     rule_ids: list[str] = Field(default_factory=list, sa_column=Column(sa.JSON, nullable=False))
+    policy_notes: list[str] = Field(default_factory=list, sa_column=Column(sa.JSON, nullable=False))
     raw_response: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     parse_error: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     status: str = Field(default="pending_review", nullable=False, max_length=30, index=True)
@@ -815,6 +825,8 @@ class ModerationRule(SQLModel, table=True):
     code: Optional[str] = Field(default=None, nullable=True, index=True)
     title: str = Field(nullable=False)
     description: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    ai_moderation_enabled: bool = Field(default=True, nullable=False, index=True)
+    ai_guidance: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     sort_order: int = Field(default=0, nullable=False)
     source_channel_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
     source_message_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))

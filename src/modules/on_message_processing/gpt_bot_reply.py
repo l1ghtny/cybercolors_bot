@@ -34,7 +34,12 @@ async def look_for_bot_reply(message, client):
         return
 
     original_reply = await message.reply(tr(locale, "ai_reply.thinking"), allowed_mentions=NO_AI_MENTIONS)
-    logger.info("looking for AI reply to %s", message.content)
+    logger.info(
+        "Requesting AI reply in guild %s channel %s message %s",
+        getattr(getattr(message, "guild", None), "id", None),
+        getattr(getattr(message, "channel", None), "id", None),
+        getattr(message, "id", None),
+    )
     try:
         bot_response, token_total = await decide_on_response(message, client, locale=locale)
     except AIAnswerTimeoutError:

@@ -14,12 +14,6 @@ def _truncate(value: str, limit: int = 900) -> str:
     return f"{value[: limit - 3]}..."
 
 
-def _format_dt(value: datetime | None) -> str:
-    if value is None:
-        return "n/a"
-    return f"{value.isoformat()}Z"
-
-
 async def send_mod_log_message(
     guild: discord.Guild,
     mod_log_channel_id: int | None,
@@ -67,8 +61,9 @@ async def send_mod_log_message(
         return False
 
 
-def build_unmute_log_message(
+def build_unmute_log_embed(
     *,
+    server_id: int,
     target_user_id: int,
     target_display: str,
     moderator_user_id: int | None,
@@ -78,27 +73,44 @@ def build_unmute_log_message(
     closed_actions: int,
     is_auto: bool = False,
     locale: str | None = None,
-) -> str:
+) -> discord.Embed:
     action_name = tr(locale, "modlog.action_auto_unmute") if is_auto else tr(locale, "modlog.action_unmute")
-    lines = [
-        f"**{tr(locale, 'modlog.action_label')}:** `{action_name}`",
-        f"**{tr(locale, 'modlog.target_label')}:** <@{target_user_id}> (`{_truncate(target_display, 120)}`, `{target_user_id}`)",
-    ]
-    if moderator_user_id is not None:
-        lines.append(
-            f"**{tr(locale, 'modlog.moderator_label')}:** <@{moderator_user_id}> "
-            f"(`{_truncate(moderator_display or tr(locale, 'modlog.unknown'), 120)}`, `{moderator_user_id}`)"
-        )
-    lines.extend(
-        [
-            f"**{tr(locale, 'modlog.reason_label')}:** {_truncate(reason, 1000)}",
-            f"**{tr(locale, 'modlog.removed_role_label')}:** `{removed_role}`",
-            f"**{tr(locale, 'modlog.closed_actions_label')}:** `{closed_actions}`",
-            f"**{tr(locale, 'modlog.logged_at_label')}:** `{_format_dt(datetime.now(timezone.utc))}`",
-        ]
+    embed = discord.Embed(
+        title=f"{tr(locale, 'modlog.title')}: {action_name}",
+        color=discord.Color.green(),
+        timestamp=datetime.now(timezone.utc),
     )
-    message = tr(locale, "modlog.header") + "\n" + "\n".join(lines)
-    return _truncate(message, 1900)
+    embed.add_field(
+        name=tr(locale, "modlog.target_label"),
+        value=f"<@{target_user_id}> (`{_truncate(target_display, 120)}`, `{target_user_id}`)",
+        inline=True,
+    )
+    if moderator_user_id is not None:
+        embed.add_field(
+            name=tr(locale, "modlog.moderator_label"),
+            value=(
+                f"<@{moderator_user_id}> "
+                f"(`{_truncate(moderator_display or tr(locale, 'modlog.unknown'), 120)}`, `{moderator_user_id}`)"
+            ),
+            inline=True,
+        )
+    embed.add_field(
+        name=tr(locale, "modlog.reason_label"),
+        value=_truncate(reason, 1024),
+        inline=False,
+    )
+    embed.add_field(
+        name=tr(locale, "modlog.removed_role_label"),
+        value=tr(locale, "common.bool_true" if removed_role else "common.bool_false"),
+        inline=True,
+    )
+    embed.add_field(
+        name=tr(locale, "modlog.closed_actions_label"),
+        value=str(closed_actions),
+        inline=True,
+    )
+    embed.set_footer(text=f"{tr(locale, 'modlog.server_id_label')}: {server_id}")
+    return embed
 
 
 def build_action_revert_log_embed(
@@ -141,7 +153,11 @@ def build_action_revert_log_embed(
         inline=False,
     )
     embed.add_field(name=tr(locale, "modlog.reason_label"), value=_truncate(reason, 1024), inline=False)
-    embed.add_field(name=tr(locale, "modlog.reverted_label"), value=f"`{reverted}`", inline=True)
+    embed.add_field(
+        name=tr(locale, "modlog.reverted_label"),
+        value=tr(locale, "common.bool_true" if reverted else "common.bool_false"),
+        inline=True,
+    )
     embed.set_footer(
         text=(
             f"{tr(locale, 'modlog.action_number_label')}: #{action_number} | "
