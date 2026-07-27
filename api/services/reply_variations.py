@@ -9,8 +9,14 @@ from api.models.bot_replies import ReplyVariationSuggestionResponseModel
 from src.db.models import ReplyConcept
 from src.modules.ai.models import AIMessage, AIRequest, AIResponseFormat
 from src.modules.ai.providers import AIProvider, AIProviderError, OpenAIProvider
-from src.modules.on_message_processing.processing_methods import normalize_reply_text
-from src.modules.on_message_processing.reply_matcher import CONCEPT_PLACEHOLDER_RE
+from src.modules.on_message_processing.processing_methods import (
+    normalize_and_stem_reply_text,
+    normalize_reply_text,
+)
+from src.modules.on_message_processing.reply_matcher import (
+    CONCEPT_PLACEHOLDER_RE,
+    canonicalize_reply_concept_references,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -45,7 +51,9 @@ async def suggest_reply_variations(
     model: str = REPLY_VARIATION_MODEL,
 ) -> ReplyVariationSuggestionResponseModel:
     provider = provider or OpenAIProvider()
-    normalized_questions = normalize_reply_text(" ".join(representative_questions))
+    normalized_source = normalize_and_stem_reply_text(
+        " ".join([*representative_questions, bot_reply])
+    )
     referenced_names = {
         match.group(1).casefold()
         for question in representative_questions
@@ -56,13 +64,21 @@ async def suggest_reply_variations(
         for concept in concepts
         if concept.name.casefold() in referenced_names
         or any(
-            normalize_reply_text(variant) in normalized_questions
+            f" {normalize_and_stem_reply_text(variant)} " in f" {normalized_source} "
             for variant in (concept.variants or [])
-            if normalize_reply_text(variant)
+            if normalize_and_stem_reply_text(variant)
         )
     ][:20]
+    relevant_concepts_by_name = {
+        concept.name.casefold(): tuple(concept.variants or [])
+        for concept in relevant_concepts
+    }
     concept_payload = [
-        {"name": concept.name, "variants": list(concept.variants or [])[:30]}
+        {
+            "name": concept.name,
+            "placeholder": f"{{{{{concept.name.casefold()}}}}}",
+            "variants": list(concept.variants or [])[:30],
+        }
         for concept in relevant_concepts
     ]
     user_payload = json.dumps(
@@ -84,7 +100,9 @@ async def suggest_reply_variations(
             "declension, colloquial wording, and common short forms without changing the intent. "
             "Do not duplicate the examples, do not add unrelated intents, and do not include answers, "
             "commentary, numbering, mentions, or personally identifying information. Return 12 to 24 "
-            "distinct questions. Use a community concept's variants naturally when relevant."
+            "distinct questions. Community concept variants are recognition examples only. Whenever "
+            "a generated question refers to a supplied community concept, use its exact placeholder "
+            "instead of spelling or inflecting any variant. Never invent a placeholder."
         ),
         messages=[AIMessage(role="user", content=user_payload)],
         response_format=AIResponseFormat(
@@ -111,10 +129,26 @@ async def suggest_reply_variations(
     except ValidationError as exc:
         raise ReplyVariationGenerationError("Variation generation returned invalid content") from exc
 
-    existing = {normalize_reply_text(item) for item in representative_questions}
+    existing = {
+        normalize_reply_text(
+            canonicalize_reply_concept_references(item, relevant_concepts_by_name)
+        )
+        for item in representative_questions
+    }
+    allowed_placeholders = set(relevant_concepts_by_name)
     accepted: list[str] = []
     for raw_variation in payload.variations:
         variation = " ".join(raw_variation.split()).strip()
+        variation = canonicalize_reply_concept_references(
+            variation,
+            relevant_concepts_by_name,
+        )
+        used_placeholders = {
+            match.group(1).casefold()
+            for match in CONCEPT_PLACEHOLDER_RE.finditer(variation)
+        }
+        if used_placeholders - allowed_placeholders:
+            continue
         normalized = normalize_reply_text(variation)
         if not normalized or normalized in existing:
             continue

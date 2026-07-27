@@ -23,6 +23,7 @@ from src.modules.on_message_processing.processing_methods import normalize_reply
 from src.modules.on_message_processing.reply_matcher import (
     CONCEPT_PLACEHOLDER_RE,
     analyze_reply_trigger_coverage,
+    canonicalize_reply_concept_references,
     describe_reply_trigger_variations,
 )
 
@@ -318,6 +319,15 @@ async def _prepare_intent_triggers(
     *,
     exclude_reply_id: UUID | None = None,
 ) -> tuple[list[str], list[str], list[str]]:
+    concepts = await list_reply_concepts(session, server_id)
+    concepts_by_name = {
+        concept.name.casefold(): tuple(concept.variants or [])
+        for concept in concepts
+    }
+    generated_variations = [
+        canonicalize_reply_concept_references(text, concepts_by_name)
+        for text in generated_variations
+    ]
     phrases = [
         *[
             ReplyTriggerCoveragePhraseModel(

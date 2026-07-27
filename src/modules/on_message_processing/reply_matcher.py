@@ -18,6 +18,7 @@ from src.modules.on_message_processing.processing_methods import (
 
 
 CONCEPT_PLACEHOLDER_RE = re.compile(r"{{\s*([\wа-яё-]+)\s*}}", re.IGNORECASE)
+CONCEPT_TEXT_TOKEN_RE = re.compile(r"\w+", re.UNICODE)
 MATCHER_CACHE_TTL_SECONDS = max(int(os.getenv("REPLY_MATCHER_CACHE_TTL_SECONDS", "30")), 1)
 
 
@@ -103,6 +104,76 @@ def _settings_snapshot(settings: ServerReplySettings | None) -> CompiledReplySet
 
 def _literal_tokens(text: str) -> list[str]:
     return normalize_and_stem_reply_text(text).split()
+
+
+def canonicalize_reply_concept_references(
+    text: str,
+    concepts: dict[str, tuple[str, ...]],
+) -> str:
+    """Replace configured concept variants with their canonical placeholders.
+
+    Matching uses the same normalized Russian stems as the live reply matcher,
+    while replacements preserve the rest of the administrator-facing phrase.
+    This is a configuration-time helper; it is not called per message.
+    """
+    concepts_by_name = {
+        name.casefold(): tuple(dict.fromkeys(variants))
+        for name, variants in concepts.items()
+        if variants
+    }
+    if not text or not concepts_by_name:
+        return text
+
+    def canonical_placeholder(match: re.Match[str]) -> str:
+        name = match.group(1).casefold()
+        return f"{{{{{name}}}}}" if name in concepts_by_name else match.group(0)
+
+    canonical = CONCEPT_PLACEHOLDER_RE.sub(canonical_placeholder, text)
+    placeholder_spans = [match.span() for match in CONCEPT_PLACEHOLDER_RE.finditer(canonical)]
+    tokens = list(CONCEPT_TEXT_TOKEN_RE.finditer(canonical))
+    token_stems = [normalize_and_stem_reply_text(match.group(0)) for match in tokens]
+
+    variant_patterns: list[tuple[tuple[str, ...], str, int]] = []
+    for concept_name, variants in concepts_by_name.items():
+        for variant in variants:
+            stems = tuple(normalize_and_stem_reply_text(variant).split())
+            if stems:
+                variant_patterns.append((stems, concept_name, len(normalize_reply_text(variant))))
+    variant_patterns.sort(key=lambda item: (len(item[0]), item[2]), reverse=True)
+
+    replacements: list[tuple[int, int, str]] = []
+    token_index = 0
+    while token_index < len(tokens):
+        token = tokens[token_index]
+        if any(start <= token.start() < end for start, end in placeholder_spans):
+            token_index += 1
+            continue
+
+        matched = False
+        for stems, concept_name, _variant_length in variant_patterns:
+            end_index = token_index + len(stems)
+            if end_index > len(tokens):
+                continue
+            candidate_tokens = tokens[token_index:end_index]
+            if any(
+                any(start < candidate.end() and candidate.start() < end for start, end in placeholder_spans)
+                for candidate in candidate_tokens
+            ):
+                continue
+            if tuple(token_stems[token_index:end_index]) != stems:
+                continue
+            replacements.append(
+                (token.start(), candidate_tokens[-1].end(), f"{{{{{concept_name}}}}}")
+            )
+            token_index = end_index
+            matched = True
+            break
+        if not matched:
+            token_index += 1
+
+    for start, end, placeholder in reversed(replacements):
+        canonical = canonical[:start] + placeholder + canonical[end:]
+    return canonical
 
 
 def _compile_trigger_pattern(

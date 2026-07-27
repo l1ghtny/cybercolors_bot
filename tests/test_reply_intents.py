@@ -15,6 +15,7 @@ from src.modules.on_message_processing.processing_methods import (
 )
 from src.modules.on_message_processing.reply_matcher import (
     analyze_reply_trigger_coverage,
+    canonicalize_reply_concept_references,
     compile_guild_reply_matcher,
     describe_reply_trigger_variations,
 )
@@ -137,6 +138,22 @@ def test_trigger_variation_preview_returns_inflection_and_concept_groups():
     assert all(group.variants for group in groups)
 
 
+def test_concept_references_are_canonicalized_with_live_russian_matching():
+    concepts = {
+        "cybercolors": ("КиберКолорс", "Cyber Colors", "Кибер Королс"),
+        "role": ("завсегдатай",),
+    }
+
+    assert canonicalize_reply_concept_references(
+        "Как вызвать Cyber Colors и встретить завсегдатая?",
+        concepts,
+    ) == "Как вызвать {{cybercolors}} и встретить {{role}}?"
+    assert canonicalize_reply_concept_references(
+        "Что умеет {{ CyberColors }}?",
+        concepts,
+    ) == "Что умеет {{cybercolors}}?"
+
+
 def test_intent_save_drops_manual_and_generated_triggers_already_covered(monkeypatch):
     async def fake_concepts(_session, _server_id):
         return [
@@ -159,13 +176,13 @@ def test_intent_save_drops_manual_and_generated_triggers_already_covered(monkeyp
             1,
             ["когда дают {{role}}", "зачем нужна эта роль"],
             ["когда дают завсегдатая", "расскажи про привилегии"],
-            ["когда дают постоянного участника", "какие бонусы у роли"],
+            ["когда дают постоянного участника", "как вызвать постоянного участника"],
         )
     )
 
     assert representative == ["когда дают {{role}}", "зачем нужна эта роль"]
     assert manual == ["расскажи про привилегии"]
-    assert generated == ["какие бонусы у роли"]
+    assert generated == ["как вызвать {{role}}"]
 
 
 def test_variation_generation_uses_structured_output_and_deduplicates():
@@ -211,3 +228,69 @@ def test_variation_generation_uses_structured_output_and_deduplicates():
     assert "Что такое завсегдатай?" not in result.variations
     assert "Кто такой завсегдатай?" in result.variations
     assert result.model == "test-model"
+
+
+def test_variation_generation_requires_and_enforces_concept_placeholders():
+    class FakeProvider:
+        provider_name = "fake"
+
+        async def complete(self, request):
+            assert "recognition examples only" in request.system_prompt
+            request_payload = json.loads(request.messages[0].content)
+            assert request_payload["community_concepts"] == [
+                {
+                    "name": "cybercolors",
+                    "placeholder": "{{cybercolors}}",
+                    "variants": ["КиберКолорс", "Cyber Colors", "Кибер Королс", "Modral"],
+                }
+            ]
+            return AIResponse(
+                content=json.dumps(
+                    {
+                        "variations": [
+                            "Как вызвать Cyber Colors?",
+                            "Как пользоваться ботом КиберКолорс?",
+                            "Какие функции у Кибер Королс?",
+                            "Что умеет Modral?",
+                            "Как работает {{ CyberColors }}?",
+                            "Какие команды знает этот бот?",
+                            "Что можно делать через этого бота?",
+                            "Чем он помогает серверу?",
+                        ]
+                    },
+                    ensure_ascii=False,
+                ),
+                model=request.model,
+                provider="fake",
+            )
+
+    result = asyncio.run(
+        suggest_reply_variations(
+            bot_reply="Cyber Colors helps this server.",
+            representative_questions=[
+                "Что за {{cybercolors}}?",
+                "Как пользоваться {{cybercolors}}?",
+            ],
+            concepts=[
+                ReplyConcept(
+                    server_id=1,
+                    name="cybercolors",
+                    variants=["КиберКолорс", "Cyber Colors", "Кибер Королс", "Modral"],
+                )
+            ],
+            provider=FakeProvider(),
+            model="test-model",
+        )
+    )
+
+    assert result.variations[:5] == [
+        "Как вызвать {{cybercolors}}?",
+        "Как пользоваться ботом {{cybercolors}}?",
+        "Какие функции у {{cybercolors}}?",
+        "Что умеет {{cybercolors}}?",
+        "Как работает {{cybercolors}}?",
+    ]
+    assert all(
+        literal not in " ".join(result.variations)
+        for literal in ("КиберКолорс", "Cyber Colors", "Кибер Королс", "Modral")
+    )
