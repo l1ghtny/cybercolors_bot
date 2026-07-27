@@ -1,9 +1,13 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
 from src.modules.privacy.retention import RetentionSettings, run_retention_batch
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class _Result:
@@ -25,6 +29,15 @@ def test_retention_settings_reject_invalid_windows():
         RetentionSettings(message_content_days=0)
     with pytest.raises(ValueError, match="cannot be shorter"):
         RetentionSettings(message_content_days=30, moderation_evidence_days=29)
+
+
+def test_retention_index_migration_does_not_recreate_existing_answer_log_index():
+    migration = (
+        ROOT / "alembic" / "versions" / "d1e2f3a4b5c6_add_privacy_retention_indexes.py"
+    ).read_text(encoding="utf-8")
+
+    assert "CREATE INDEX IF NOT EXISTS ix_ai_moderation_decisions_created_at" in migration
+    assert "ix_ai_answer_logs_created_at" not in migration
 
 
 def test_retention_batch_uses_bounded_policy_cutoffs():

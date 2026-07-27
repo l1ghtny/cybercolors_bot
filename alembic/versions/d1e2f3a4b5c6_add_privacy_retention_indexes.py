@@ -16,20 +16,11 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.create_index(
-        "ix_ai_moderation_decisions_created_at",
-        "ai_moderation_decisions",
-        ["created_at"],
-        unique=False,
-    )
-    op.create_index(
-        "ix_ai_answer_logs_created_at",
-        "ai_answer_logs",
-        ["created_at"],
-        unique=False,
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_ai_moderation_decisions_created_at "
+        "ON ai_moderation_decisions (created_at)"
     )
 
 
 def downgrade() -> None:
-    op.drop_index("ix_ai_answer_logs_created_at", table_name="ai_answer_logs")
-    op.drop_index("ix_ai_moderation_decisions_created_at", table_name="ai_moderation_decisions")
+    op.execute("DROP INDEX IF EXISTS ix_ai_moderation_decisions_created_at")
