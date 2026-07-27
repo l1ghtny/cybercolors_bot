@@ -422,6 +422,39 @@ def test_target_hierarchy_ignores_only_configured_mute_role():
     )
 
 
+def test_external_discord_user_can_be_banned_and_builds_safe_action_payload():
+    created_at = datetime(2024, 1, 2, 3, 4, tzinfo=timezone.utc)
+    actor = MagicMock(spec=discord.Member)
+    actor.id = 789
+    target = MagicMock(spec=discord.User)
+    target.id = 456
+    target.name = "external-user"
+    target.created_at = created_at
+    guild = SimpleNamespace(
+        id=123,
+        name="Server",
+        owner_id=999,
+        me=SimpleNamespace(id=111),
+    )
+    interaction = SimpleNamespace(guild=guild, user=actor)
+
+    assert validate_target_for_moderation(interaction, target, "en") is None
+
+    payload = build_action_payload(
+        interaction=interaction,
+        user=target,
+        action_type=ActionType.BAN,
+        rule_id=uuid4(),
+        commentary="repeat violation",
+        reason=None,
+    )
+
+    assert payload.target_user_id == target.id
+    assert payload.target_user_name == target.name
+    assert payload.target_user_joined_at == created_at
+    assert payload.target_user_server_nickname is None
+
+
 def test_member_action_add_warn_reuses_new_case_and_skips_duplicate_dm(monkeypatch):
     import src.commands.moderation.actions as actions_module
 

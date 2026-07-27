@@ -331,7 +331,7 @@ def register_moderation_action_components(client: discord.Client) -> None:
 async def _create_member_action(
     *,
     interaction: discord.Interaction,
-    user: discord.Member,
+    user: discord.Member | discord.User,
     action_type: ActionType,
     rule: str,
     commentary: str | None,
@@ -502,7 +502,7 @@ async def kick(
 )
 async def ban(
     interaction: discord.Interaction,
-    user: discord.Member,
+    user: discord.User,
     rule: str,
     duration: str | None = None,
     commentary: str | None = None,

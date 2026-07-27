@@ -1,6 +1,7 @@
 import ast
 from pathlib import Path
 
+import discord
 from fastapi.testclient import TestClient
 
 from api.api_main import app
@@ -294,6 +295,12 @@ def test_bot_command_catalog_exposes_moderation_command_details():
         "modal",
         "checkbox",
     }
+
+
+def test_ban_command_accepts_users_outside_the_guild():
+    from src.commands.moderation.actions import ban
+
+    assert ban.callback.__annotations__["user"] is discord.User
 
 
 def test_bot_command_catalog_endpoint_returns_filterable_contract():

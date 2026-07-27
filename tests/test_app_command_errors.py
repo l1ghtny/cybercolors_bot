@@ -1,8 +1,9 @@
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
-from discord import app_commands
+from discord import AppCommandOptionType, app_commands
+from discord.app_commands.transformers import MemberTransformer
 
 from src.commands.app_command_errors import handle_app_command_error
 
@@ -37,9 +38,10 @@ class FakeInteraction:
         self.followup = FakeFollowup()
 
 
-def test_missing_permissions_responds_before_command_callback() -> None:
+def test_missing_permissions_responds_before_command_callback(monkeypatch) -> None:
     interaction = FakeInteraction(response_done=False)
     logger = Mock()
+    monkeypatch.setattr("src.commands.app_command_errors.get_server_locale", AsyncMock(return_value="en"))
 
     asyncio.run(
         handle_app_command_error(
@@ -60,9 +62,11 @@ def test_missing_permissions_responds_before_command_callback() -> None:
     logger.warning.assert_called_once()
 
 
-def test_unexpected_error_uses_followup_after_defer() -> None:
+def test_unexpected_error_uses_followup_after_defer_and_guild_locale(monkeypatch) -> None:
     interaction = FakeInteraction(response_done=True)
     logger = Mock()
+    locale_resolver = AsyncMock(return_value="ru")
+    monkeypatch.setattr("src.commands.app_command_errors.get_server_locale", locale_resolver)
     error = app_commands.CommandInvokeError(
         SimpleNamespace(name="list", qualified_name="mod actions list"),
         RuntimeError("database unavailable"),
@@ -72,6 +76,28 @@ def test_unexpected_error_uses_followup_after_defer() -> None:
 
     assert interaction.response.messages == []
     assert interaction.followup.messages == [
-        ("This command failed unexpectedly. The error has been logged.", True)
+        ("Не удалось выполнить команду из-за внутренней ошибки. Ошибка записана в журнал.", True)
     ]
+    locale_resolver.assert_awaited_once_with(interaction.guild_id)
     logger.error.assert_called_once()
+
+
+def test_transform_error_uses_localized_actionable_message(monkeypatch) -> None:
+    interaction = FakeInteraction(response_done=False)
+    logger = Mock()
+    monkeypatch.setattr("src.commands.app_command_errors.get_server_locale", AsyncMock(return_value="ru"))
+    error = app_commands.TransformerError(
+        "external-user",
+        AppCommandOptionType.user,
+        MemberTransformer(),
+    )
+
+    asyncio.run(handle_app_command_error(interaction, error, logger=logger))
+
+    assert interaction.response.messages == [
+        (
+            "Не удалось распознать один из параметров команды. "
+            "Выберите значение из актуальных подсказок и повторите попытку.",
+            True,
+        )
+    ]

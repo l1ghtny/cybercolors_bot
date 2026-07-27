@@ -312,7 +312,7 @@ async def resolve_case_id_for_action(
     *,
     session: AsyncSession,
     interaction: discord.Interaction,
-    user: discord.Member,
+    user: discord.Member | discord.User,
     action_type: ActionType,
     selected_case: str | None,
     selected_rule: ModerationRuleReadModel,
@@ -330,7 +330,8 @@ async def resolve_case_id_for_action(
         await check_if_user_exists(user, interaction.guild, session)
         await check_if_user_exists(interaction.user, interaction.guild, session)
 
-        title = f"{action_type.value.title()} - {user.display_name}: {selected_rule_label}"
+        display_name = getattr(user, "display_name", user.name)
+        title = f"{action_type.value.title()} - {display_name}: {selected_rule_label}"
         case_data = await create_case(
             session=session,
             server_id=interaction.guild.id,
@@ -362,7 +363,7 @@ async def resolve_case_id_for_action(
 
 def validate_target_for_moderation(
     interaction: discord.Interaction,
-    target: discord.Member,
+    target: discord.Member | discord.User,
     locale: str | None,
     *,
     ignored_role_ids: set[int] | None = None,
@@ -374,6 +375,9 @@ def validate_target_for_moderation(
         return tr(locale, "common.target_self")
     if target.id == guild.owner_id:
         return tr(locale, "common.target_owner")
+
+    if not isinstance(target, discord.Member):
+        return None
 
     ignored_role_ids = ignored_role_ids or set()
 
@@ -391,8 +395,12 @@ def validate_target_for_moderation(
     return None
 
 
-def target_joined_at_for_action(user: discord.Member) -> datetime:
-    joined_at = user.joined_at or datetime.now(timezone.utc)
+def target_joined_at_for_action(user: discord.Member | discord.User) -> datetime:
+    joined_at = (
+        getattr(user, "joined_at", None)
+        or getattr(user, "created_at", None)
+        or datetime.now(timezone.utc)
+    )
     if joined_at.tzinfo is not None:
         return joined_at.astimezone(timezone.utc)
     return joined_at
@@ -401,7 +409,7 @@ def target_joined_at_for_action(user: discord.Member) -> datetime:
 def build_action_payload(
     *,
     interaction: discord.Interaction,
-    user: discord.Member,
+    user: discord.Member | discord.User,
     action_type: ActionType,
     rule_id: str | UUID | None,
     commentary: str | None,
@@ -424,7 +432,7 @@ def build_action_payload(
         target_user_id=user.id,
         target_user_name=user.name,
         target_user_joined_at=target_joined_at_for_action(user),
-        target_user_server_nickname=user.nick,
+        target_user_server_nickname=getattr(user, "nick", None),
         server_id=interaction.guild.id,
         server_name=interaction.guild.name,
         message_cleanup=message_cleanup,
@@ -435,7 +443,7 @@ async def create_bot_moderation_action(
     *,
     session: AsyncSession,
     interaction: discord.Interaction,
-    user: discord.Member,
+    user: discord.Member | discord.User,
     action_type: ActionType,
     rule_id: str | UUID | None,
     commentary: str | None,
