@@ -137,6 +137,31 @@ def _function_command_names() -> dict[str, str]:
     return command_names
 
 
+def _context_menu_names() -> dict[str, str]:
+    context_menu_names: dict[str, str] = {}
+    for file_path in COMMAND_FILES:
+        module = ast.parse(file_path.read_text(encoding="utf-8"), filename=str(file_path))
+        for node in ast.walk(module):
+            if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Call):
+                continue
+            if _decorator_name(node.value) != "ContextMenu":
+                continue
+            name = _string_keyword(node.value, "name")
+            if name is None:
+                for keyword in node.value.keywords:
+                    if keyword.arg != "name" or not isinstance(keyword.value, ast.Call):
+                        continue
+                    if keyword.value.args and isinstance(keyword.value.args[0], ast.Constant):
+                        if isinstance(keyword.value.args[0].value, str):
+                            name = keyword.value.args[0].value
+            if name is None:
+                continue
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    context_menu_names[target.id] = name
+    return context_menu_names
+
+
 def _group_paths(module: ast.Module) -> dict[str, list[str]]:
     groups: dict[str, tuple[str, str | None]] = {}
     for node in ast.walk(module):
@@ -165,6 +190,7 @@ def _group_paths(module: ast.Module) -> dict[str, list[str]]:
 def _registered_slash_qualified_names() -> set[str]:
     module = ast.parse((ROOT / "main.py").read_text(encoding="utf-8"), filename="main.py")
     command_names = _function_command_names()
+    command_names.update(_context_menu_names())
     group_paths = _group_paths(module)
     qualified_names: set[str] = set()
 
@@ -199,7 +225,9 @@ def test_bot_command_catalog_covers_registered_discord_commands():
 
     assert registered_qualified_names.difference(catalog_qualified_names) == set()
     assert "Import Rules From Message" in catalog_qualified_names
+    assert "Link Message to Action" in catalog_qualified_names
     assert "Reply as Modral" in catalog_qualified_names
+    assert "Start Moderation Action" in catalog_qualified_names
 
 
 def test_requested_command_renames_are_registered_and_catalogued():
@@ -266,7 +294,7 @@ def test_bot_command_catalog_endpoint_returns_filterable_contract():
     response = client.get("/bot-commands", params={"category": "moderation-cases"})
     assert response.status_code == 200
     body = response.json()
-    assert body["version"] == "2026-07-26"
+    assert body["version"] == "2026-07-27"
     assert body["locale"] == "en"
     assert body["available_locales"] == ["en", "ru"]
     assert {command["category"] for command in body["commands"]} == {"moderation-cases"}
@@ -285,8 +313,20 @@ def test_bot_command_catalog_filters_by_discord_type():
 
     assert [command.qualified_name for command in context_menu_commands] == [
         "Import Rules From Message",
+        "Link Message to Action",
         "Reply as Modral",
+        "Start Moderation Action",
     ]
+
+    link_command = get_bot_command("context.link_message_to_action")
+    assert link_command is not None
+    assert link_command.required_rbac_permissions == ["moderation.actions.link_messages"]
+
+    start_command = get_bot_command("context.start_moderation_action")
+    assert start_command is not None
+    assert {component.label for component in start_command.components}.issuperset(
+        {"Action type", "Rule", "Duration", "Moderator commentary"}
+    )
 
 
 def test_bot_command_catalog_exposes_valid_rbac_permission_keys():

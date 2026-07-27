@@ -20,7 +20,7 @@ async def get_bot_commands(
 ):
     resolved_locale = normalize_bot_command_locale(locale)
     return BotCommandDocsResponseModel(
-        version="2026-07-26",
+        version="2026-07-27",
         locale=resolved_locale,
         available_locales=list(AVAILABLE_BOT_COMMAND_LOCALES),
         commands=list_bot_commands(category=category, discord_type=discord_type, locale=resolved_locale),

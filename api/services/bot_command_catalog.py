@@ -362,6 +362,27 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         workflow=["Available from a Discord message context menu.", "Imports rules without replacing existing rules and refreshes the bot rule cache."],
     ),
     BotCommandDocModel(
+        id="context.link_message_to_action",
+        name="Link Message to Action",
+        qualified_name="Link Message to Action",
+        invoke="Message context menu: Link Message to Action",
+        category="moderation-actions",
+        discord_type="message_context_menu",
+        summary="Archive the selected Discord message and link it to an existing moderation action.",
+        required_permissions=["moderate_members"],
+        required_rbac_permissions=["moderation.actions.link_messages"],
+        components=[
+            _component("select", "Recent actions", "Choose from up to 25 recent moderation actions."),
+            _component("button", "Search actions", "Open a search dialog when the action is not in the recent list."),
+            _component("modal", "Action search", "Search by action number, UUID, user, type, date, or reason."),
+        ],
+        workflow=[
+            "Available from a Discord message context menu.",
+            "Shows recent actions and offers search when the required action is not listed.",
+            "Archives the source message, links it to the selected action, and returns a dashboard link.",
+        ],
+    ),
+    BotCommandDocModel(
         id="context.reply_as_modral",
         name="Reply as Modral",
         qualified_name="Reply as Modral",
@@ -375,7 +396,7 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
             _component(
                 "modal",
                 "Message",
-                "Text Modral should post as a reply, up to 2,000 characters.",
+                "Text the bot should post as a reply, up to 2,000 characters.",
             ),
             _component(
                 "checkbox",
@@ -386,6 +407,36 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         workflow=[
             "Available from a Discord message context menu.",
             "Rechecks Discord and dashboard permissions, optionally notifies only the replied-to author, suppresses all other mention notifications, and records the moderator in the audit trail.",
+        ],
+        notes=[
+            "The command is named Reply as Modral on regular servers and Reply as CyberColors on the pilot guild. Each server receives only its own variant.",
+        ],
+    ),
+    BotCommandDocModel(
+        id="context.start_moderation_action",
+        name="Start Moderation Action",
+        qualified_name="Start Moderation Action",
+        invoke="Message context menu: Start Moderation Action",
+        category="moderation-actions",
+        discord_type="message_context_menu",
+        summary="Create a warn, mute, kick, or ban from the selected message and preserve the message as evidence.",
+        required_permissions=["moderate_members"],
+        components=[
+            _component("select", "Action type", "Choose warn, mute, kick, or ban."),
+            _component("select", "Rule", "Choose an active server rule to cite."),
+            _component("select", "Duration", "Choose the default duration or a preset for mute and ban actions."),
+            _component("button", "Continue", "Open the final commentary dialog after the required choices are made."),
+            _component("modal", "Moderator commentary", "Optionally add moderator context before creating the action."),
+        ],
+        workflow=[
+            "Available from a Discord message context menu when the server has active moderation rules.",
+            "Lets the moderator choose the action type, cited rule, and duration where applicable.",
+            "Rechecks Discord and Modral permissions for the selected action and validates the target.",
+            "Archives the source message, creates and applies the action, links the message as evidence, and publishes the moderation notice.",
+        ],
+        notes=[
+            "The required Modral permission depends on the selected action: moderation.actions.apply.warn, mute, kick, or ban.",
+            "Kick requires Discord's Kick Members permission; ban requires Ban Members. Warn and mute require Moderate Members.",
         ],
     ),
     BotCommandDocModel(
@@ -881,9 +932,14 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         qualified_name="force_validation",
         invoke="/force_validation",
         category="maintenance",
-        summary="Run the user-validation maintenance process immediately and report the result.",
-        workflow=["Runs the same validation process used by scheduled maintenance and reports success or the exception ephemerally."],
-        notes=["Operational/testing command; use it only when an immediate validation pass is needed."],
+        summary="Reconcile stored server memberships with Discord without waiting for the scheduled check.",
+        workflow=[
+            "Purges invalid absent-member records whose Discord users are no longer available.",
+            "Marks stored active members who are no longer in their server as absent.",
+            "Deletes membership records that have remained absent for more than one year.",
+            "Restores active membership for users who rejoined and reports completion or failure ephemerally.",
+        ],
+        notes=["Maintenance command for manually running membership reconciliation; the bot normally runs it on schedule."],
     ),
     BotCommandDocModel(
         id="cat",
@@ -910,6 +966,7 @@ COMMAND_RBAC_PERMISSIONS: dict[str, tuple[str, ...]] = {
     "mod.rules.rules_list": ("moderation.rules.view",),
     "mod.rules.rules_parse_guide": ("moderation.rules.view",),
     "context.import_rules_from_message": ("moderation.rules.manage",),
+    "context.link_message_to_action": ("moderation.actions.link_messages",),
     "context.reply_as_modral": ("communications.send_as_bot",),
     "mod.security.security_set_verified_role": ("security.settings.edit",),
     "mod.security.newcomer_role_suggest": ("security.settings.edit",),
@@ -1140,8 +1197,16 @@ RU_COMPONENTS_BY_LABEL: dict[str, tuple[str, str]] = {
     ),
     "Cancel": ("Отмена", "Оставляет запись без изменений."),
     "Matching triggers": ("Найденные триггеры", "Если совпадений несколько, позволяет выбрать нужный триггер."),
-    "Message": ("Сообщение", "Текст ответа от имени Modral, не больше 2000 символов."),
+    "Message": ("Сообщение", "Текст ответа от имени бота, не больше 2000 символов."),
     "Notify author": ("Уведомить автора", "Отправляет автору исходного сообщения стандартное уведомление Discord об ответе."),
+    "Recent actions": ("Недавние действия", "Позволяет выбрать одно из 25 последних модераторских действий."),
+    "Search actions": ("Найти действие", "Открывает поиск, если нужного действия нет среди недавних."),
+    "Action search": ("Поиск действия", "Ищет по номеру действия, UUID, пользователю, типу, дате или причине."),
+    "Action type": ("Тип действия", "Предупреждение, мут, исключение или бан."),
+    "Rule": ("Правило", "Активное правило сервера, на которое ссылается модератор."),
+    "Duration": ("Срок", "Стандартный срок или готовый вариант для мута и бана."),
+    "Continue": ("Продолжить", "Открывает форму комментария после выбора обязательных параметров."),
+    "Moderator commentary": ("Комментарий модератора", "Необязательный контекст перед созданием действия."),
     "Open case": ("Открыть дело", "Кнопка-ссылка на дело в панели управления."),
     "Open dashboard": ("Открыть в панели", "Кнопка-ссылка на модераторское действие в панели управления."),
     "Replies list": ("Список ответов", "Постраничный список Discord, когда ответы настроены."),
@@ -1263,11 +1328,33 @@ RU_COMMAND_TEXT: dict[str, dict[str, list[str] | str]] = {
         "summary": "Импортировать правила модерации из выбранного сообщения Discord.",
         "workflow": ["Доступно через контекстное меню сообщения Discord.", "Импортирует правила без замены существующих и обновляет кеш правил бота."],
     },
+    "context.link_message_to_action": {
+        "summary": "Сохранить выбранное сообщение Discord и привязать его к существующему модераторскому действию.",
+        "workflow": [
+            "Команда доступна в контекстном меню сообщения Discord.",
+            "Показывает недавние действия и позволяет найти нужное, если его нет в списке.",
+            "Сохраняет исходное сообщение, привязывает его к выбранному действию и возвращает ссылку на запись в панели.",
+        ],
+    },
     "context.reply_as_modral": {
         "summary": "Ответить на выбранное сообщение от имени бота и записать отправку в журнал.",
         "workflow": [
             "Команда доступна в контекстном меню сообщения Discord.",
             "Повторно проверяет права Discord и панели управления, при необходимости уведомляет только автора исходного сообщения, блокирует остальные упоминания и записывает модератора в журнал.",
+        ],
+        "notes": ["На обычных серверах команда называется Reply as Modral, а на пилотном — Reply as CyberColors. На каждом сервере доступен только свой вариант."],
+    },
+    "context.start_moderation_action": {
+        "summary": "Создать предупреждение, мут, исключение или бан из выбранного сообщения и сохранить сообщение как доказательство.",
+        "workflow": [
+            "Команда доступна в контекстном меню сообщения, если на сервере есть активные правила модерации.",
+            "Модератор выбирает тип действия, правило и срок, если он нужен.",
+            "Бот проверяет права Discord и Modral для выбранного действия, а также иерархию ролей.",
+            "Бот сохраняет исходное сообщение, создаёт и применяет действие, прикрепляет сообщение как доказательство и публикует уведомление.",
+        ],
+        "notes": [
+            "Право Modral зависит от выбранного действия: moderation.actions.apply.warn, mute, kick или ban.",
+            "Для исключения требуется право Discord «Исключать участников», для бана — «Банить участников», для предупреждения и мута — «Модерировать участников».",
         ],
     },
     "mod.security.security_set_verified_role": {
@@ -1429,9 +1516,14 @@ RU_COMMAND_TEXT: dict[str, dict[str, list[str] | str]] = {
         "workflow": ["Загружает триггеры и ответы сервера, затем показывает их в постраничном списке Discord."],
     },
     "force_validation": {
-        "summary": "Сразу запустить служебную проверку пользователей и показать результат.",
-        "workflow": ["Запускает тот же процесс, который используется при плановом обслуживании, и приватно сообщает об успехе или ошибке."],
-        "notes": ["Служебная команда; используйте её, только если проверку нужно запустить немедленно."],
+        "summary": "Сверить сохранённый состав серверов с Discord, не дожидаясь плановой проверки.",
+        "workflow": [
+            "Удаляет недействительные записи об отсутствующих участниках, которых Discord больше не возвращает.",
+            "Помечает отсутствующими тех, кто всё ещё числится активным в базе.",
+            "Удаляет записи участников, которые отсутствуют больше года.",
+            "Снимает отметку об отсутствии с тех, кто вернулся на сервер, и сообщает о завершении проверки.",
+        ],
+        "notes": ["Служебная команда для ручного запуска проверки состава серверов; обычно бот выполняет её по расписанию."],
     },
     "cat": {
         "summary": "Отправить сгенерированную картинку кота, при желании добавив текст.",
