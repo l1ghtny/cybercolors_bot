@@ -184,6 +184,28 @@ class ReplyTriggerCoverageResponseModel(BaseModel):
     items: list[ReplyTriggerCoverageItemModel]
 
 
+class ReplyTriggerVariationPreviewRequestModel(BaseModel):
+    text: str = Field(min_length=1, max_length=1000)
+
+    @field_validator("text")
+    @classmethod
+    def normalize_text(cls, value: str) -> str:
+        normalized = " ".join(value.split()).strip()
+        if not normalized:
+            raise ValueError("Trigger text cannot be empty")
+        return normalized
+
+
+class ReplyTriggerVariationGroupModel(BaseModel):
+    label: str
+    kind: Literal["word", "concept"]
+    variants: list[str]
+
+
+class ReplyTriggerVariationPreviewResponseModel(BaseModel):
+    groups: list[ReplyTriggerVariationGroupModel]
+
+
 def _normalize_discord_ids(value: list[str], field_name: str) -> list[str]:
     normalized: list[str] = []
     seen: set[str] = set()

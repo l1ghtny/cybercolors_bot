@@ -16,6 +16,7 @@ from src.modules.on_message_processing.processing_methods import (
 from src.modules.on_message_processing.reply_matcher import (
     analyze_reply_trigger_coverage,
     compile_guild_reply_matcher,
+    describe_reply_trigger_variations,
 )
 
 
@@ -118,6 +119,22 @@ def test_coverage_uses_live_language_matching_and_source_priority():
     assert by_id["manual:0"].covered_by_id == "representative:0"
     assert by_id["manual:0"].reason == "language_matching"
     assert by_id["generated:0"].covered_by_id == "representative:0"
+
+
+def test_trigger_variation_preview_returns_inflection_and_concept_groups():
+    groups = describe_reply_trigger_variations(
+        "когда дадут {{role}}",
+        {"role": ("завсегдатай", "постоянный участник")},
+    )
+
+    by_label = {group.label: group for group in groups}
+    assert by_label["{{role}}"].variants == (
+        "завсегдатай",
+        "постоянный участник",
+    )
+    assert "завсегдатая" in by_label["завсегдатай"].variants
+    assert "участника" in by_label["участник"].variants
+    assert all(group.variants for group in groups)
 
 
 def test_intent_save_drops_manual_and_generated_triggers_already_covered(monkeypatch):

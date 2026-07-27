@@ -1,8 +1,10 @@
 import re
 import string
 import unicodedata
+from functools import lru_cache
 
 import demoji
+from pymorphy3 import MorphAnalyzer
 
 
 def e_replace(string):
@@ -84,6 +86,43 @@ def _russian_stem(word: str) -> str:
     stem = re.sub(r"нн$", "н", stem)
     stem = re.sub(r"ь$", "", stem)
     return stem
+
+
+@lru_cache(maxsize=1)
+def _russian_morphology() -> MorphAnalyzer:
+    return MorphAnalyzer()
+
+
+@lru_cache(maxsize=4096)
+def russian_word_forms_matching_reply_stem(word: str) -> tuple[str, ...]:
+    """Return dictionary word forms accepted by the live reply stemmer."""
+    normalized = normalize_reply_text(word)
+    if not re.fullmatch(r"[а-я]+", normalized) or len(normalized) < 4:
+        return (normalized,) if normalized else ()
+
+    parses = _russian_morphology().parse(normalized)
+    if not parses or not parses[0].is_known:
+        return (normalized,)
+
+    expected_stem = _russian_stem(normalized)
+    forms: list[str] = []
+    seen: set[str] = set()
+    for lexeme in parses[0].lexeme:
+        candidate = normalize_reply_text(lexeme.word)
+        if (
+            candidate
+            and candidate not in seen
+            and _russian_stem(candidate) == expected_stem
+        ):
+            seen.add(candidate)
+            forms.append(candidate)
+
+    if normalized not in seen:
+        forms.insert(0, normalized)
+    else:
+        forms.remove(normalized)
+        forms.insert(0, normalized)
+    return tuple(forms)
 
 
 def normalize_and_stem_reply_text(value: str) -> str:

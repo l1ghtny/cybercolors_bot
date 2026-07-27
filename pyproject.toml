@@ -18,6 +18,7 @@ dependencies = [
     "openai>=2.3.0",
     "pgvector>=0.3.6",
     "pydantic",
+    "pymorphy3>=2.0.6",
     "pygithub>=2.4.0",
     "pypdf>=5.0.0",
     "python-dotenv>=1.0.1",

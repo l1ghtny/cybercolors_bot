@@ -25,6 +25,8 @@ from api.models.bot_replies import (
     ReplySettingsUpdateModel,
     ReplyTriggerCoverageRequestModel,
     ReplyTriggerCoverageResponseModel,
+    ReplyTriggerVariationPreviewRequestModel,
+    ReplyTriggerVariationPreviewResponseModel,
     ReplyVariationSuggestionRequestModel,
     ReplyVariationSuggestionResponseModel,
 )
@@ -39,6 +41,7 @@ from api.services.replies_service import (
     get_or_create_reply_settings,
     list_reply_concepts,
     preview_reply_trigger_coverage,
+    preview_reply_trigger_variations,
     to_reply_concept_model,
     to_reply_settings_model,
     update_reply_concept,
@@ -257,6 +260,22 @@ async def preview_trigger_coverage(
 ):
     try:
         return await preview_reply_trigger_coverage(session, server_id, body.phrases)
+    except ReplyConfigurationConflict as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+@replies.post(
+    "/{server_id}/coverage/variations",
+    response_model=ReplyTriggerVariationPreviewResponseModel,
+    dependencies=[Depends(require_server_permission("replies.manage"))],
+)
+async def preview_trigger_variations(
+    server_id: int,
+    body: ReplyTriggerVariationPreviewRequestModel,
+    session: AsyncSession = Depends(get_session),
+):
+    try:
+        return await preview_reply_trigger_variations(session, server_id, body.text)
     except ReplyConfigurationConflict as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 

@@ -13,6 +13,7 @@ from src.db.models import Replies, ReplyConcept, ServerReplySettings, Triggers
 from src.modules.on_message_processing.processing_methods import (
     normalize_and_stem_reply_text,
     normalize_reply_text,
+    russian_word_forms_matching_reply_stem,
 )
 
 
@@ -63,6 +64,13 @@ class ReplyTriggerCoverage:
     normalized_text: str
     covered_by_id: str | None = None
     reason: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ReplyTriggerVariationGroup:
+    label: str
+    kind: str
+    variants: tuple[str, ...]
 
 
 @dataclass(slots=True)
@@ -185,6 +193,57 @@ def analyze_reply_trigger_coverage(
         )
 
     return [results[phrase_id] for phrase_id, _text, _source in phrases]
+
+
+def describe_reply_trigger_variations(
+    trigger_text: str,
+    concepts: dict[str, tuple[str, ...]],
+) -> list[ReplyTriggerVariationGroup]:
+    """Describe every useful substitution accepted by the live matcher.
+
+    Returning substitutions instead of their Cartesian product avoids emitting
+    grammatically invalid phrases while still exposing every dictionary form
+    and reusable concept option that administrators do not need to add.
+    """
+    groups: list[ReplyTriggerVariationGroup] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add_word_groups(value: str) -> None:
+        for token in normalize_reply_text(value).split():
+            forms = russian_word_forms_matching_reply_stem(token)
+            key = ("word", token)
+            if len(forms) < 2 or key in seen:
+                continue
+            seen.add(key)
+            groups.append(
+                ReplyTriggerVariationGroup(
+                    label=token,
+                    kind="word",
+                    variants=forms,
+                )
+            )
+
+    cursor = 0
+    for placeholder in CONCEPT_PLACEHOLDER_RE.finditer(trigger_text):
+        add_word_groups(trigger_text[cursor:placeholder.start()])
+        concept_name = placeholder.group(1).casefold()
+        variants = tuple(dict.fromkeys(concepts.get(concept_name, ())))
+        if variants:
+            concept_key = ("concept", concept_name)
+            if concept_key not in seen:
+                seen.add(concept_key)
+                groups.append(
+                    ReplyTriggerVariationGroup(
+                        label=f"{{{{{concept_name}}}}}",
+                        kind="concept",
+                        variants=variants,
+                    )
+                )
+            for variant in variants:
+                add_word_groups(variant)
+        cursor = placeholder.end()
+    add_word_groups(trigger_text[cursor:])
+    return groups
 
 
 def compile_guild_reply_matcher(

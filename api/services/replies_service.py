@@ -15,12 +15,15 @@ from api.models.bot_replies import (
     ReplyTriggerCoverageItemModel,
     ReplyTriggerCoveragePhraseModel,
     ReplyTriggerCoverageResponseModel,
+    ReplyTriggerVariationGroupModel,
+    ReplyTriggerVariationPreviewResponseModel,
 )
 from src.db.models import GlobalUser, Replies, ReplyConcept, Server, ServerReplySettings, Triggers
 from src.modules.on_message_processing.processing_methods import normalize_reply_text
 from src.modules.on_message_processing.reply_matcher import (
     CONCEPT_PLACEHOLDER_RE,
     analyze_reply_trigger_coverage,
+    describe_reply_trigger_variations,
 )
 
 
@@ -267,6 +270,42 @@ async def preview_reply_trigger_coverage(
             )
             for item in coverage
         ]
+    )
+
+
+async def preview_reply_trigger_variations(
+    session: AsyncSession,
+    server_id: int,
+    trigger_text: str,
+) -> ReplyTriggerVariationPreviewResponseModel:
+    concepts = await list_reply_concepts(session, server_id)
+    concepts_by_name = {
+        concept.name.casefold(): tuple(concept.variants or []) for concept in concepts
+    }
+    missing_concepts = sorted(
+        {
+            match.group(1).casefold()
+            for match in CONCEPT_PLACEHOLDER_RE.finditer(trigger_text)
+            if match.group(1).casefold() not in concepts_by_name
+        }
+    )
+    if missing_concepts:
+        raise ReplyConfigurationConflict(
+            "Unknown concepts: " + ", ".join(missing_concepts)
+        )
+    groups = describe_reply_trigger_variations(
+        trigger_text,
+        concepts_by_name,
+    )
+    return ReplyTriggerVariationPreviewResponseModel(
+        groups=[
+            ReplyTriggerVariationGroupModel(
+                label=group.label,
+                kind=group.kind,
+                variants=list(group.variants),
+            )
+            for group in groups
+        ],
     )
 
 
