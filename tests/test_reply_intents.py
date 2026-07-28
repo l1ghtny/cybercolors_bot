@@ -16,8 +16,10 @@ from src.modules.on_message_processing.processing_methods import (
 from src.modules.on_message_processing.reply_matcher import (
     analyze_reply_trigger_coverage,
     canonicalize_reply_concept_references,
+    claim_reply_cooldown,
     compile_guild_reply_matcher,
     describe_reply_trigger_variations,
+    invalidate_reply_matcher,
 )
 
 
@@ -36,6 +38,7 @@ def test_intent_payload_requires_two_distinct_representative_questions():
         admin_id="123",
     )
     assert payload.bot_reply == "Answer"
+    assert payload.cooldown_seconds == 10
     assert payload.manual_triggers == []
     assert payload.generated_variations == ["Tell me how it works"]
 
@@ -51,6 +54,24 @@ def test_intent_payload_deduplicates_manual_before_generated_variations():
 
     assert payload.manual_triggers == ["Tell me more"]
     assert payload.generated_variations == ["Explain this"]
+
+
+def test_intent_payload_validates_reply_cooldown_range():
+    with pytest.raises(ValidationError):
+        ReplyIntentCreateModel(
+            bot_reply="Answer",
+            representative_questions=["What is it?", "How does it work?"],
+            admin_id="123",
+            cooldown_seconds=-1,
+        )
+
+    with pytest.raises(ValidationError):
+        ReplyIntentCreateModel(
+            bot_reply="Answer",
+            representative_questions=["What is it?", "How does it work?"],
+            admin_id="123",
+            cooldown_seconds=2_592_001,
+        )
 
 
 def test_create_intent_persists_each_trigger_with_its_actual_source(monkeypatch):
@@ -94,6 +115,8 @@ def test_create_intent_persists_each_trigger_with_its_actual_source(monkeypatch)
         for item in session.added
         if isinstance(item, Triggers)
     }
+    saved_reply = next(item for item in session.added if isinstance(item, Replies))
+    assert saved_reply.cooldown_seconds == 10
     assert persisted == {
         "Example one": "representative",
         "Example two": "representative",
@@ -125,6 +148,7 @@ def test_compiled_matcher_resolves_concept_placeholder_and_russian_inflection():
         created_by_id=2,
         mention_user_ids=["42"],
         mention_role_ids=["84"],
+        cooldown_seconds=90,
     )
     representative = Triggers(
         message="когда дадут {{завсегдатай}}",
@@ -148,6 +172,7 @@ def test_compiled_matcher_resolves_concept_placeholder_and_russian_inflection():
     assert matched.response_text == "Role answer <@42> <@&84>"
     assert matched.mention_user_ids == frozenset({"42"})
     assert matched.mention_role_ids == frozenset({"84"})
+    assert matched.cooldown_seconds == 90
     assert matcher.match("Когда выдадут другую роль?") is None
 
 
@@ -160,6 +185,59 @@ def test_compiled_matcher_ignores_trigger_with_unknown_concept():
     )
     matcher = compile_guild_reply_matcher(1, None, [], [(trigger, reply)])
     assert matcher.rules == ()
+
+
+def test_reply_cooldown_is_shared_by_all_triggers_for_one_reply():
+    invalidate_reply_matcher()
+    reply = Replies(
+        server_id=1,
+        bot_reply="Answer",
+        created_by_id=2,
+        cooldown_seconds=10,
+    )
+    first_trigger = Triggers(
+        message="what is it",
+        reply_id=reply.id,
+        source="representative",
+    )
+    second_trigger = Triggers(
+        message="tell me about it",
+        reply_id=reply.id,
+        source="manual",
+    )
+    matcher = compile_guild_reply_matcher(
+        1,
+        None,
+        [],
+        [(first_trigger, reply), (second_trigger, reply)],
+    )
+    first_rule = matcher.match("what is it")
+    second_rule = matcher.match("tell me about it")
+
+    assert first_rule is not None
+    assert second_rule is not None
+    assert claim_reply_cooldown(1, first_rule, now=100.0) is True
+    assert claim_reply_cooldown(1, second_rule, now=109.9) is False
+    assert claim_reply_cooldown(1, second_rule, now=110.0) is True
+
+
+def test_zero_reply_cooldown_disables_throttling():
+    invalidate_reply_matcher()
+    reply = Replies(
+        server_id=1,
+        bot_reply="Answer",
+        created_by_id=2,
+        cooldown_seconds=0,
+    )
+    trigger = Triggers(
+        message="what is it",
+        reply_id=reply.id,
+        source="representative",
+    )
+    rule = compile_guild_reply_matcher(1, None, [], [(trigger, reply)]).rules[0]
+
+    assert claim_reply_cooldown(1, rule, now=100.0) is True
+    assert claim_reply_cooldown(1, rule, now=100.0) is True
 
 
 def test_coverage_uses_live_language_matching_and_source_priority():

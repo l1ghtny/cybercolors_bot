@@ -4,6 +4,7 @@ from src.db.models import ServerReplySettings
 from src.modules.discord_mentions import allowed_explicit_mentions
 from src.modules.on_message_processing.reply_matcher import (
     CompiledReplySettings,
+    claim_reply_cooldown,
     get_reply_matcher,
 )
 
@@ -49,6 +50,8 @@ async def check_for_replies(message):
 
     matched_rule = matcher.match(message.content)
     if matched_rule is None:
+        return False, server_id
+    if not claim_reply_cooldown(server_id, matched_rule):
         return False, server_id
 
     await send_reply(

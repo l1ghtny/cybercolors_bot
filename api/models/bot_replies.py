@@ -37,6 +37,7 @@ class ReplyModel(BaseModel):
     generated_variations: list[str] = Field(default_factory=list)
     mention_user_ids: list[str] = Field(default_factory=list)
     mention_role_ids: list[str] = Field(default_factory=list)
+    cooldown_seconds: int = 10
 
 
 def _normalize_phrases(values: list[str], *, max_items: int) -> list[str]:
@@ -64,6 +65,7 @@ class ReplyIntentCreateModel(BaseModel):
     admin_id: str = Field(pattern=r"^\d+$")
     mention_user_ids: list[str] = Field(default_factory=list, max_length=100)
     mention_role_ids: list[str] = Field(default_factory=list, max_length=100)
+    cooldown_seconds: int = Field(default=10, ge=0, le=2_592_000)
 
     @field_validator("mention_user_ids", "mention_role_ids")
     @classmethod

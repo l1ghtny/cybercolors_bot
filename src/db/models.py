@@ -263,6 +263,12 @@ class Congratulation(SQLModel, table=True):
 
 class Replies(SQLModel, table=True):
     __tablename__ = "replies"
+    __table_args__ = (
+        sa.CheckConstraint(
+            "cooldown_seconds BETWEEN 0 AND 2592000",
+            name="ck_replies_cooldown_seconds",
+        ),
+    )
 
     id: UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     bot_reply: str = Field(nullable=False, index=True)
@@ -283,6 +289,16 @@ class Replies(SQLModel, table=True):
     mention_role_ids: list[str] = Field(
         default_factory=list,
         sa_column=Column(sa.JSON, nullable=False),
+    )
+    cooldown_seconds: int = Field(
+        default=10,
+        ge=0,
+        le=2_592_000,
+        sa_column=Column(
+            sa.Integer,
+            nullable=False,
+            server_default=sa.text("10"),
+        ),
     )
 
     server: Server = Relationship(back_populates="replies")

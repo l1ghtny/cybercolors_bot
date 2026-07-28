@@ -406,6 +406,7 @@ async def create_reply_intent(
         created_by_id=int(body.admin_id),
         mention_user_ids=body.mention_user_ids,
         mention_role_ids=body.mention_role_ids,
+        cooldown_seconds=body.cooldown_seconds,
     )
     session.add(reply)
     await session.flush()
@@ -462,6 +463,7 @@ async def update_reply_intent(
     reply.bot_reply = body.bot_reply
     reply.mention_user_ids = body.mention_user_ids
     reply.mention_role_ids = body.mention_role_ids
+    reply.cooldown_seconds = body.cooldown_seconds
     session.add(reply)
     await session.flush()
     return reply
@@ -585,6 +587,9 @@ async def duplicate_selected_replies(
             server_id=target_server_id,
             bot_reply=source_reply.bot_reply,
             created_by_id=actor_user_id,
+            mention_user_ids=list(source_reply.mention_user_ids or []),
+            mention_role_ids=list(source_reply.mention_role_ids or []),
+            cooldown_seconds=source_reply.cooldown_seconds,
         )
         session.add(created_target)
         await session.flush()

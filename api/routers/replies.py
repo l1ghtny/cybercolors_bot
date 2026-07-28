@@ -139,6 +139,7 @@ async def get_replies_by_server_id(server_id: int, session: AsyncSession = Depen
                 created_by=user_data,
                 mention_user_ids=list(reply.mention_user_ids or []),
                 mention_role_ids=list(reply.mention_role_ids or []),
+                cooldown_seconds=reply.cooldown_seconds,
             )
         if trigger and trigger.message not in grouped[reply.id].user_messages:
             grouped[reply.id].user_messages.append(trigger.message)

@@ -39,6 +39,7 @@ class CompiledReplyRule:
     source: str
     specificity: int
     pattern: Pattern[str]
+    cooldown_seconds: int = 10
     mention_user_ids: frozenset[str] = frozenset()
     mention_role_ids: frozenset[str] = frozenset()
 
@@ -84,13 +85,53 @@ class _CacheEntry:
 
 _matcher_cache: dict[int, _CacheEntry] = {}
 _matcher_locks: dict[int, asyncio.Lock] = {}
+_reply_last_fired_at: dict[int, dict[str, float]] = {}
 
 
 def invalidate_reply_matcher(server_id: int | None = None) -> None:
     if server_id is None:
         _matcher_cache.clear()
+        _reply_last_fired_at.clear()
         return
     _matcher_cache.pop(int(server_id), None)
+
+
+def claim_reply_cooldown(
+    server_id: int,
+    rule: CompiledReplyRule,
+    *,
+    now: float | None = None,
+) -> bool:
+    """Atomically reserve this reply's process-local cooldown window.
+
+    There is intentionally no await between reading and writing the timestamp,
+    so concurrent Discord message tasks in one event loop cannot both claim the
+    same reply. A shared atomic store will be required if guild message handling
+    is ever spread across multiple bot processes.
+    """
+    cooldown_seconds = max(int(rule.cooldown_seconds), 0)
+    if cooldown_seconds == 0:
+        return True
+
+    claimed_at = time.monotonic() if now is None else now
+    server_id = int(server_id)
+    server_cooldowns = _reply_last_fired_at.setdefault(server_id, {})
+    last_fired_at = server_cooldowns.get(rule.reply_id)
+    if last_fired_at is not None and claimed_at - last_fired_at < cooldown_seconds:
+        return False
+    server_cooldowns[rule.reply_id] = claimed_at
+    return True
+
+
+def _prune_reply_cooldowns(server_id: int, reply_ids: set[str]) -> None:
+    server_cooldowns = _reply_last_fired_at.get(server_id)
+    if server_cooldowns is None:
+        return
+    stale_reply_ids = set(server_cooldowns).difference(reply_ids)
+    for reply_id in stale_reply_ids:
+        server_cooldowns.pop(reply_id, None)
+    if not server_cooldowns:
+        _reply_last_fired_at.pop(server_id, None)
 
 
 def _settings_snapshot(settings: ServerReplySettings | None) -> CompiledReplySettings:
@@ -345,6 +386,7 @@ def compile_guild_reply_matcher(
                 source=trigger.source or "representative",
                 specificity=specificity,
                 pattern=pattern,
+                cooldown_seconds=reply.cooldown_seconds,
                 mention_user_ids=frozenset(reply.mention_user_ids or []),
                 mention_role_ids=frozenset(reply.mention_role_ids or []),
             )
@@ -403,6 +445,10 @@ async def get_reply_matcher(server_id: int) -> GuildReplyMatcher:
         if cached is not None and cached.expires_at > now:
             return cached.matcher
         matcher = await _load_reply_matcher(server_id)
+        _prune_reply_cooldowns(
+            server_id,
+            {rule.reply_id for rule in matcher.rules},
+        )
         _matcher_cache[server_id] = _CacheEntry(
             matcher=matcher,
             expires_at=now + MATCHER_CACHE_TTL_SECONDS,
