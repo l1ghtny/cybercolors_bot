@@ -5,6 +5,7 @@ from api.models.ai_settings import ServerAISettingsReadModel, ServerAISettingsUp
 from api.services.discord_guilds import TEXT_CHANNEL_TYPES, fetch_channel
 from api.services.moderation_core import utc_now
 from src.db.models import Server, ServerAISettings
+from src.modules.ai.tool_access import normalize_ai_companion_tool_names
 
 
 def _validate_selected_mode(mode: str, ids: list[str], field_name: str) -> None:
@@ -57,6 +58,10 @@ def to_server_ai_settings_read_model(settings: ServerAISettings) -> ServerAISett
         answer_channel_mode=settings.answer_channel_mode,
         answer_allowed_channel_ids=list(settings.answer_allowed_channel_ids or []),
         answer_allowed_role_ids=list(settings.answer_allowed_role_ids or []),
+        answer_enabled_tools=normalize_ai_companion_tool_names(
+            settings.answer_enabled_tools or [],
+            reject_unknown=False,
+        ),
         moderation_enabled=settings.moderation_enabled,
         moderation_channel_mode=settings.moderation_channel_mode,
         moderation_included_channel_ids=list(settings.moderation_included_channel_ids or []),
@@ -97,6 +102,8 @@ async def update_server_ai_settings(
         settings.answer_allowed_channel_ids = body.answer_allowed_channel_ids
     if body.answer_allowed_role_ids is not None:
         settings.answer_allowed_role_ids = body.answer_allowed_role_ids
+    if body.answer_enabled_tools is not None:
+        settings.answer_enabled_tools = body.answer_enabled_tools
     if body.moderation_enabled is not None:
         settings.moderation_enabled = body.moderation_enabled
     if body.moderation_channel_mode is not None:

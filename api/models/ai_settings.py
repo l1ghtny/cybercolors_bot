@@ -3,6 +3,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from src.modules.ai.tool_access import normalize_ai_companion_tool_names
+
 AIChannelMode = Literal["none", "all", "selected", "exclude_selected"]
 AIModerationStrictness = Literal["low", "standard", "high"]
 AIModerationActionMode = Literal["review_only"]
@@ -38,6 +40,7 @@ class ServerAISettingsReadModel(BaseModel):
     answer_channel_mode: AIChannelMode
     answer_allowed_channel_ids: list[str] = Field(default_factory=list)
     answer_allowed_role_ids: list[str] = Field(default_factory=list)
+    answer_enabled_tools: list[str] = Field(default_factory=list)
     moderation_enabled: bool
     moderation_channel_mode: AIChannelMode
     moderation_included_channel_ids: list[str] = Field(default_factory=list)
@@ -63,6 +66,7 @@ class ServerAISettingsUpdateModel(BaseModel):
     answer_channel_mode: AIChannelMode | None = None
     answer_allowed_channel_ids: list[str] | None = None
     answer_allowed_role_ids: list[str] | None = None
+    answer_enabled_tools: list[str] | None = None
     moderation_enabled: bool | None = None
     moderation_channel_mode: AIChannelMode | None = None
     moderation_included_channel_ids: list[str] | None = None
@@ -89,6 +93,13 @@ class ServerAISettingsUpdateModel(BaseModel):
     @classmethod
     def validate_answer_role_ids(cls, value: list[str] | None) -> list[str] | None:
         return _normalize_discord_ids(value, "answer_allowed_role_ids")
+
+    @field_validator("answer_enabled_tools")
+    @classmethod
+    def validate_answer_enabled_tools(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        return normalize_ai_companion_tool_names(value)
 
     @field_validator("knowledge_subject_priority_role_ids")
     @classmethod

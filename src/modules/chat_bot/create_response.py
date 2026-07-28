@@ -1,11 +1,13 @@
 import asyncio
 import os
 
+from src.db.models import ServerAISettings
 from src.db.database import get_async_session
 from src.modules.ai import ai_main_class
 from src.modules.ai.answer_logging import answer_log_started_at, log_ai_answer_attempt
 from src.modules.ai.discord_media import ai_images_from_discord_message
 from src.modules.ai.models import AIMessage, AssistantInput
+from src.modules.ai.tool_access import AI_COMPANION_TOOL_NAME_SET, default_ai_companion_tool_names
 
 DEFAULT_AI_ANSWER_TIMEOUT_SECONDS = 60
 
@@ -90,6 +92,18 @@ async def _create_ai_response(
     )
     started_at = answer_log_started_at()
     async with get_async_session() as session:
+        session_get = getattr(session, "get", None)
+        settings = (
+            await session_get(ServerAISettings, assistant_input.server_id)
+            if assistant_input.server_id is not None and callable(session_get)
+            else None
+        )
+        configured_tool_names = (
+            settings.answer_enabled_tools
+            if settings is not None
+            else default_ai_companion_tool_names()
+        )
+        enabled_tool_names = set(configured_tool_names or []) & AI_COMPANION_TOOL_NAME_SET
         try:
             response = await asyncio.wait_for(
                 ai_main_class.answer(
@@ -97,6 +111,7 @@ async def _create_ai_response(
                     session=session,
                     include_member_profile=True,
                     enable_tools=True,
+                    enabled_tool_names=enabled_tool_names,
                 ),
                 timeout=_answer_timeout_seconds(),
             )

@@ -126,6 +126,52 @@ def test_create_ai_response_logs_success(monkeypatch):
     assert session.added.tool_call_count == 1
 
 
+def test_create_ai_response_passes_server_tool_settings(monkeypatch):
+    import src.modules.chat_bot.create_response as create_response
+    from src.db.models import ServerAISettings
+    from src.modules.ai.models import AIResponse
+
+    class FakeSettingsSession:
+        async def get(self, model, server_id):
+            assert model is ServerAISettings
+            assert server_id == 123
+            return ServerAISettings(server_id=server_id, answer_enabled_tools=["get_server_activity"])
+
+        def add(self, item):
+            return None
+
+        async def flush(self):
+            return None
+
+        async def commit(self):
+            return None
+
+        async def rollback(self):
+            return None
+
+    class CapturingAI:
+        def __init__(self):
+            self.enabled_tool_names = None
+
+        async def answer(self, *_args, **kwargs):
+            self.enabled_tool_names = kwargs["enabled_tool_names"]
+            return AIResponse(content="done", model="test-model", provider="fake")
+
+    ai = CapturingAI()
+    monkeypatch.setattr(create_response, "get_async_session", lambda: FakeSessionContext(FakeSettingsSession()))
+    monkeypatch.setattr(create_response, "ai_main_class", ai)
+
+    asyncio.run(
+        _create_ai_response(
+            content="hello",
+            message=FakeMessage(),
+            conversation=[],
+        )
+    )
+
+    assert ai.enabled_tool_names == {"get_server_activity"}
+
+
 def test_create_ai_response_passes_current_message_images(monkeypatch):
     import src.modules.chat_bot.create_response as create_response
     from src.modules.ai.models import AIResponse

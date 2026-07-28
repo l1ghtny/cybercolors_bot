@@ -39,6 +39,7 @@ from src.modules.ai.models import (
     AIToolResult,
 )
 from src.modules.ai.providers import AIProvider, OpenAIProvider
+from src.modules.ai.tool_access import AI_COMPANION_TOOL_NAME_SET
 from src.modules.ai.tools import AIToolRegistry, build_default_tool_registry
 from src.modules.ai.knowledge import get_public_knowledge_for_subject_users, search_server_knowledge
 
@@ -122,15 +123,10 @@ Answer naturally and concisely. You are part of the server, not an external dash
 Use provided server context when it is relevant, but turn it into normal conversation.
 Use Context.bot_persona.configured_persona as your server-specific persona and tone guidance when present, as long as it does not conflict with safety or privacy rules.
 Use Context.server_profile.configured_brief as authoritative public server background when present. You may also use Context.server_name and channel context.
-You may call available tools to retrieve server rules, approved server knowledge, followed YouTube channel catalogues, or public-safe member context when the user asks for server-specific information.
-Use get_server_activity for questions about message activity, activity rankings, active members, or activity within a date, user, role, or channel filter. Do not guess activity from member profiles or conversation context.
+You may call available tools to retrieve server-specific or current public information when the user asks for it.
 Conversation messages prefixed with "Discord message author" are attributed quoted messages. Keep their author separate from the current requester.
 When Replied-to message context is present, use its author identity and public member profile when interpreting questions about that message or its author.
 discord_account_created_at is the date the Discord account was created. It is not a server join date. Only joined_server_at means when the member joined this server; if joined_server_at is absent, say that the server join date is unknown.
-When a user asks about a followed YouTube channel, its latest or historical videos, publication dates, video links, or video contents, use search_youtube_channel_catalog before answering. Pass the user's name or abbreviation as channel_query; the tool resolves aliases and grammatical variants. Use search_transcripts mode for questions about what was said or discussed in the channel's indexed videos.
-If search_youtube_channel_catalog returns needs_channel_clarification=true, do not choose a channel or combine their videos. Ask one concise clarification using the returned channel names. When reporting videos or transcript matches, preserve each item's channel_name exactly and never relabel it as another related channel.
-Answer only the YouTube information the user requested. Never expose channel IDs, video IDs, knowledge source IDs, sync states, database fields, or retrieval mechanics. If channel resolution fails, do not substitute unrelated facts about members or other channels; give a brief clarification using only the returned channel names.
-You may use web search for current public information, news, public facts, or external references. Prefer server context for server-specific facts, and distinguish public web information from server memory when useful.
 If visual inputs are provided, use them when they are relevant to the user's question. Custom emoji visuals may differ from their text names.
 Read the entire Discord message before asking a follow-up question. Treat standalone date and time lines as intentional facts belonging to the surrounding event, poll, or proposal. If a date or time is already present, use or confirm it instead of asking the user to provide time options; ask only about a genuinely missing detail such as timezone or an explicitly requested alternative slot.
 Relevant server memory may already be included in the request context; treat it as approved server/admin-authored facts and use it when it answers the question.
@@ -143,6 +139,32 @@ When the user asks about server rules, answer from Context.active_rules if prese
 If the context does not contain the answer, say that you do not have enough server data.
 Do not reveal internal moderation cases, notes, monitoring status, or private moderation workspace data.
 """.strip()
+
+ACTIVITY_TOOL_GUIDANCE = (
+    "Use get_server_activity for questions about message activity, activity rankings, active members, or activity "
+    "within a date, user, role, or channel filter. Do not guess activity from member profiles or conversation context."
+)
+YOUTUBE_TOOL_GUIDANCE = """
+When a user asks about a followed YouTube channel, its latest or historical videos, publication dates, video links, or video contents, use search_youtube_channel_catalog before answering. Pass the user's name or abbreviation as channel_query; the tool resolves aliases and grammatical variants. Use search_transcripts mode for questions about what was said or discussed in the channel's indexed videos.
+If search_youtube_channel_catalog returns needs_channel_clarification=true, do not choose a channel or combine their videos. Ask one concise clarification using the returned channel names. When reporting videos or transcript matches, preserve each item's channel_name exactly and never relabel it as another related channel.
+Answer only the YouTube information the user requested. Never expose channel IDs, video IDs, knowledge source IDs, sync states, database fields, or retrieval mechanics. If channel resolution fails, do not substitute unrelated facts about members or other channels; give a brief clarification using only the returned channel names.
+""".strip()
+WEB_SEARCH_GUIDANCE = (
+    "You may use web search for current public information, news, public facts, or external references. Prefer server "
+    "context for server-specific facts, and distinguish public web information from server memory when useful."
+)
+
+
+def assistant_system_prompt(enabled_tool_names: set[str] | None = None) -> str:
+    enabled = AI_COMPANION_TOOL_NAME_SET if enabled_tool_names is None else enabled_tool_names
+    guidance = []
+    if "get_server_activity" in enabled:
+        guidance.append(ACTIVITY_TOOL_GUIDANCE)
+    if "search_youtube_channel_catalog" in enabled:
+        guidance.append(YOUTUBE_TOOL_GUIDANCE)
+    if "web_search" in enabled:
+        guidance.append(WEB_SEARCH_GUIDANCE)
+    return "\n\n".join([ASSISTANT_SYSTEM_PROMPT, *guidance])
 
 
 USER_ID_PATTERN = re.compile(r"\(user_id:\s*(\d+)\)")
@@ -287,6 +309,7 @@ class AIMain:
         session: AsyncSession | None = None,
         include_member_profile: bool = False,
         enable_tools: bool = True,
+        enabled_tool_names: set[str] | None = None,
         max_tool_rounds: int = 2,
     ) -> AIResponse:
         normalized = (
@@ -294,7 +317,13 @@ class AIMain:
             if isinstance(assistant_input, str)
             else assistant_input
         )
-        tool_specs = self.tool_registry.specs() if enable_tools and session is not None and normalized.server_id is not None else []
+        effective_enabled_tool_names = enabled_tool_names if enable_tools else set()
+        tool_specs = (
+            self.tool_registry.specs(enabled_names=effective_enabled_tool_names)
+            if enable_tools and session is not None and normalized.server_id is not None
+            else []
+        )
+        system_prompt = assistant_system_prompt(effective_enabled_tool_names)
         context_block = await self._build_context_block(
             session=session,
             server_id=normalized.server_id,
@@ -317,7 +346,9 @@ class AIMain:
             enabled=enable_tools,
         )
         messages = list(normalized.conversation)
-        web_search_enabled = _assistant_web_search_enabled()
+        web_search_enabled = _assistant_web_search_enabled() and (
+            effective_enabled_tool_names is None or "web_search" in effective_enabled_tool_names
+        )
         messages.append(
             AIMessage(
                 role="user",
@@ -337,7 +368,7 @@ class AIMain:
         request = AIRequest(
             task="assistant",
             model=self.ai_model,
-            system_prompt=ASSISTANT_SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             messages=messages,
             max_output_tokens=1200,
             metadata={"task": "assistant"},
@@ -360,13 +391,14 @@ class AIMain:
                     tool_call,
                     session=session,
                     server_id=normalized.server_id,
+                    enabled_tool_names=effective_enabled_tool_names,
                 )
                 for tool_call in response.tool_calls
             ]
             request = AIRequest(
                 task="assistant",
                 model=self.ai_model,
-                system_prompt=ASSISTANT_SYSTEM_PROMPT,
+                system_prompt=system_prompt,
                 messages=messages,
                 max_output_tokens=1200,
                 metadata={"task": "assistant", "tool_round": True},
@@ -456,6 +488,7 @@ class AIMain:
         *,
         session: AsyncSession | None,
         server_id: int | None,
+        enabled_tool_names: set[str] | None = None,
     ) -> AIToolResult:
         output: dict[str, Any] | list[dict[str, Any]] | str
         tool = self.tool_registry.get(tool_call.name)
@@ -467,6 +500,9 @@ class AIMain:
             return AIToolResult(call_id=tool_call.id, output=output)
         if tool.requires_admin_context:
             output = {"ok": False, "error": f"Tool is not available to user-facing answers: {tool_call.name}"}
+            return AIToolResult(call_id=tool_call.id, output=output)
+        if enabled_tool_names is not None and tool_call.name not in enabled_tool_names:
+            output = {"ok": False, "error": f"Tool is disabled for this server: {tool_call.name}"}
             return AIToolResult(call_id=tool_call.id, output=output)
 
         arguments = dict(tool_call.arguments)

@@ -35,7 +35,12 @@ class AIToolRegistry:
     def get(self, name: str) -> AITool | None:
         return self.tools.get(name)
 
-    def specs(self, *, include_admin_tools: bool = False) -> list[AIToolSpec]:
+    def specs(
+        self,
+        *,
+        include_admin_tools: bool = False,
+        enabled_names: set[str] | None = None,
+    ) -> list[AIToolSpec]:
         return [
             AIToolSpec(
                 name=tool.name,
@@ -43,7 +48,8 @@ class AIToolRegistry:
                 parameters=tool.parameters,
             )
             for tool in self.tools.values()
-            if include_admin_tools or not tool.requires_admin_context
+            if (include_admin_tools or not tool.requires_admin_context)
+            and (enabled_names is None or tool.name in enabled_names)
         ]
 
     def as_specs(self) -> list[dict[str, Any]]:

@@ -8,6 +8,8 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import BigInteger, Column, ForeignKey, Index, JSON, String, TIMESTAMP, Text, UniqueConstraint
 from sqlmodel import Field, Relationship, SQLModel
 
+from src.modules.ai.tool_access import default_ai_companion_tool_names
+
 
 def utcnow_utc_tz() -> datetime:
     """Return the current instant as an aware UTC datetime."""
@@ -482,6 +484,10 @@ class ServerAISettings(SQLModel, table=True):
     answer_channel_mode: str = Field(default="none", nullable=False, max_length=20)
     answer_allowed_channel_ids: list[str] = Field(default_factory=list, sa_column=Column(sa.JSON, nullable=False))
     answer_allowed_role_ids: list[str] = Field(default_factory=list, sa_column=Column(sa.JSON, nullable=False))
+    answer_enabled_tools: list[str] = Field(
+        default_factory=default_ai_companion_tool_names,
+        sa_column=Column(sa.JSON, nullable=False),
+    )
     moderation_enabled: bool = Field(default=False, nullable=False)
     moderation_channel_mode: str = Field(default="all", nullable=False, max_length=20)
     moderation_included_channel_ids: list[str] = Field(default_factory=list, sa_column=Column(sa.JSON, nullable=False))

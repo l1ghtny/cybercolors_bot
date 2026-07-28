@@ -1209,6 +1209,14 @@ def test_default_tool_registry_exposes_initial_database_tools():
     assert "same date, user, role" in specs["get_server_activity"]["description"]
 
 
+def test_tool_registry_specs_can_be_filtered_per_server():
+    registry = build_default_tool_registry()
+
+    specs = registry.specs(enabled_names={"get_member_profile", "get_server_activity"})
+
+    assert [tool.name for tool in specs] == ["get_member_profile", "get_server_activity"]
+
+
 def test_server_activity_tool_reuses_dashboard_filters_and_omits_moderation_data(monkeypatch):
     import src.modules.ai.tools as tools_module
 
@@ -1370,6 +1378,57 @@ def test_answer_can_disable_web_search_with_env(monkeypatch):
     assert response.content == "No search."
     assert provider.last_request is not None
     assert provider.last_request.enable_web_search is False
+
+
+def test_answer_applies_per_server_tool_allowlist(monkeypatch):
+    monkeypatch.delenv("AI_REPLY_WEB_SEARCH_ENABLED", raising=False)
+    provider = FakeProvider("Only public profile lookup is available.")
+    ai = AIMain(provider=provider, model="test-model")
+
+    response = asyncio.run(
+        ai.answer(
+            AssistantInput(content="hello", server_id=123),
+            session="session",
+            enabled_tool_names={"get_member_profile"},
+        )
+    )
+
+    assert response.content == "Only public profile lookup is available."
+    assert provider.last_request is not None
+    assert [tool.name for tool in provider.last_request.tools] == ["get_member_profile"]
+    assert provider.last_request.enable_web_search is False
+    assert "Use get_server_activity" not in provider.last_request.system_prompt
+    assert "followed YouTube channel" not in provider.last_request.system_prompt
+
+
+def test_answer_rejects_tool_call_disabled_for_server():
+    async def rules_handler(*, session, server_id):
+        raise AssertionError("disabled tool handler must not run")
+
+    registry = AIToolRegistry()
+    registry.register(
+        AITool(
+            name="get_active_rules",
+            description="Fetch active rules.",
+            parameters={"type": "object", "properties": {"server_id": {"type": "integer"}}},
+            handler=rules_handler,
+        )
+    )
+    ai = AIMain(provider=FakeProvider("unused"), model="test-model", tool_registry=registry)
+
+    result = asyncio.run(
+        ai._execute_assistant_tool_call(
+            AIToolCall(id="call-1", name="get_active_rules", arguments={"server_id": 123}),
+            session="session",
+            server_id=123,
+            enabled_tool_names=set(),
+        )
+    )
+
+    assert result.output == {
+        "ok": False,
+        "error": "Tool is disabled for this server: get_active_rules",
+    }
 
 
 def test_answer_rejects_tool_call_outside_current_server_scope():

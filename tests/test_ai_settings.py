@@ -8,6 +8,7 @@ from api.services.ai_settings_health import EMBED_LINKS, READ_MESSAGE_HISTORY, S
 from api.services.ai_settings import can_invoke_answer_flow, should_moderate_message_channel
 from api.services.ai_settings import to_server_ai_settings_read_model, update_server_ai_settings
 from src.db.models import ServerAISettings, ServerModerationSettings
+from src.modules.ai.tool_access import AI_COMPANION_TOOL_NAMES
 
 
 def test_ai_settings_update_normalizes_ids_and_deduplicates():
@@ -24,6 +25,19 @@ def test_ai_settings_update_normalizes_ids_and_deduplicates():
     assert body.moderation_included_channel_ids == ["999", "111"]
     assert body.moderation_excluded_channel_ids == ["222", "999"]
     assert body.knowledge_subject_priority_role_ids == ["555", "666"]
+
+
+def test_ai_settings_update_normalizes_companion_tools_to_canonical_order():
+    body = ServerAISettingsUpdateModel(
+        answer_enabled_tools=["web_search", "get_active_rules", "web_search"],
+    )
+
+    assert body.answer_enabled_tools == ["get_active_rules", "web_search"]
+
+
+def test_ai_settings_update_rejects_unknown_companion_tools():
+    with pytest.raises(ValidationError):
+        ServerAISettingsUpdateModel(answer_enabled_tools=["read_private_notes"])
 
 
 def test_ai_settings_update_rejects_invalid_ids():
@@ -75,6 +89,7 @@ def test_ai_settings_read_model_defaults_to_read_only_permission():
     assert payload.moderation_daily_token_limit is None
     assert payload.moderation_provider_timeout_seconds == 20
     assert payload.knowledge_subject_priority_role_ids == []
+    assert payload.answer_enabled_tools == list(AI_COMPANION_TOOL_NAMES)
 
 
 def test_ai_settings_read_model_includes_review_channel():
@@ -154,6 +169,16 @@ def test_update_ai_settings_validates_and_stores_review_channel(monkeypatch):
     )
 
     assert settings.moderation_review_channel_id is None
+
+    asyncio.run(
+        update_server_ai_settings(
+            FakeSession(),
+            123,
+            ServerAISettingsUpdateModel(answer_enabled_tools=[]),
+        )
+    )
+
+    assert settings.answer_enabled_tools == []
 
 
 def test_can_invoke_answer_flow_checks_channel_and_roles():
