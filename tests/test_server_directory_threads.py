@@ -63,7 +63,7 @@ def test_list_server_channels_includes_active_threads_and_recent_forum_posts(mon
     )
     by_id = {channel.id: channel for channel in channels}
 
-    assert set(by_id) == {"20", "21", "31", "32"}
+    assert set(by_id) == {"20", "21", "30", "31", "32"}
     assert by_id["20"].parent_name == "Community"
     assert by_id["21"].parent_name == "general"
     assert by_id["21"].parent_type == 0

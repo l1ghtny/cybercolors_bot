@@ -391,7 +391,9 @@ async def list_server_channels(
     payload: list[ServerChannelModel] = []
     for channel in combined_by_id.values():
         channel_type = int(channel.get("type", -1))
-        if text_only and channel_type not in TEXT_CHANNEL_TYPES:
+        if text_only and channel_type not in TEXT_CHANNEL_TYPES and not (
+            include_threads and channel_type in {15, 16}
+        ):
             continue
 
         parent_id = channel.get("parent_id")
