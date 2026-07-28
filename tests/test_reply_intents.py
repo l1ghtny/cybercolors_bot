@@ -53,6 +53,55 @@ def test_intent_payload_deduplicates_manual_before_generated_variations():
     assert payload.generated_variations == ["Explain this"]
 
 
+def test_create_intent_persists_each_trigger_with_its_actual_source(monkeypatch):
+    async def no_op(*_args):
+        return None
+
+    async def prepared(*_args, **_kwargs):
+        return ["Example one", "Example two"], ["Typed manually"], ["Suggested by AI"]
+
+    class FakeSession:
+        def __init__(self):
+            self.added = []
+
+        def add(self, item):
+            self.added.append(item)
+
+        async def flush(self):
+            return None
+
+    monkeypatch.setattr(replies_service, "_ensure_server_exists", no_op)
+    monkeypatch.setattr(replies_service, "_ensure_global_user_exists", no_op)
+    monkeypatch.setattr(replies_service, "_prepare_intent_triggers", prepared)
+    session = FakeSession()
+
+    asyncio.run(
+        replies_service.create_reply_intent(
+            session,
+            1,
+            ReplyIntentCreateModel(
+                bot_reply="Answer",
+                representative_questions=["Example one", "Example two"],
+                manual_triggers=["Typed manually"],
+                generated_variations=["Suggested by AI"],
+                admin_id="2",
+            ),
+        )
+    )
+
+    persisted = {
+        item.message: item.source
+        for item in session.added
+        if isinstance(item, Triggers)
+    }
+    assert persisted == {
+        "Example one": "representative",
+        "Example two": "representative",
+        "Typed manually": "manual",
+        "Suggested by AI": "generated",
+    }
+
+
 def test_concept_payload_normalizes_name_and_variants():
     payload = ReplyConceptCreateModel(
         name=" Завсегдатай ",
