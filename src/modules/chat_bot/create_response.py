@@ -7,7 +7,7 @@ from src.modules.ai.answer_logging import answer_log_started_at, log_ai_answer_a
 from src.modules.ai.discord_media import ai_images_from_discord_message
 from src.modules.ai.models import AIMessage, AssistantInput
 
-DEFAULT_AI_ANSWER_TIMEOUT_SECONDS = 480
+DEFAULT_AI_ANSWER_TIMEOUT_SECONDS = 60
 
 
 class AIAnswerTimeoutError(TimeoutError):

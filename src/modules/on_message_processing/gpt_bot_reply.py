@@ -33,7 +33,6 @@ async def look_for_bot_reply(message, client):
         await message.reply(tr(locale, "ai_reply.jailbreak"), allowed_mentions=NO_AI_MENTIONS)
         return
 
-    original_reply = await message.reply(tr(locale, "ai_reply.thinking"), allowed_mentions=NO_AI_MENTIONS)
     logger.info(
         "Requesting AI reply in guild %s channel %s message %s",
         getattr(getattr(message, "guild", None), "id", None),
@@ -41,7 +40,8 @@ async def look_for_bot_reply(message, client):
         getattr(message, "id", None),
     )
     try:
-        bot_response, token_total = await decide_on_response(message, client, locale=locale)
+        async with message.channel.typing():
+            bot_response, token_total = await decide_on_response(message, client, locale=locale)
     except AIAnswerTimeoutError:
         logger.warning(
             "AI answer timed out in guild %s channel %s message %s",
@@ -49,7 +49,7 @@ async def look_for_bot_reply(message, client):
             getattr(getattr(message, "channel", None), "id", None),
             getattr(message, "id", None),
         )
-        await _edit_ai_reply_safely(original_reply, tr(locale, "ai_reply.timeout"), locale=locale)
+        await _send_ai_reply_safely(message, tr(locale, "ai_reply.timeout"), locale=locale)
         return
     except Exception:
         logger.exception(
@@ -58,11 +58,11 @@ async def look_for_bot_reply(message, client):
             getattr(getattr(message, "channel", None), "id", None),
             getattr(message, "id", None),
         )
-        await _edit_ai_reply_safely(original_reply, tr(locale, "ai_reply.failure"), locale=locale)
+        await _send_ai_reply_safely(message, tr(locale, "ai_reply.failure"), locale=locale)
         return
 
     if bot_response is None:
-        await _edit_ai_reply_safely(original_reply, tr(locale, "ai_reply.provider_unavailable"), locale=locale)
+        await _send_ai_reply_safely(message, tr(locale, "ai_reply.provider_unavailable"), locale=locale)
         return
 
     logger.info(
@@ -72,7 +72,7 @@ async def look_for_bot_reply(message, client):
         getattr(message, "id", None),
         token_total,
     )
-    await _edit_ai_reply_safely(original_reply, bot_response, locale=locale)
+    await _send_ai_reply_safely(message, bot_response, locale=locale)
 
 
 async def _message_locale(message) -> str:
@@ -86,9 +86,9 @@ async def _message_locale(message) -> str:
         return "en"
 
 
-async def _edit_ai_reply_safely(original_reply, content: str, *, locale: str | None = None) -> None:
+async def _send_ai_reply_safely(message, content: str, *, locale: str | None = None) -> None:
     try:
-        await original_reply.edit(content=content, allowed_mentions=NO_AI_MENTIONS)
+        await message.reply(content, allowed_mentions=NO_AI_MENTIONS)
     except discord.HTTPException:
         embed = discord.Embed(
             colour=discord.Colour.dark_blue(),
@@ -96,4 +96,4 @@ async def _edit_ai_reply_safely(original_reply, content: str, *, locale: str | N
             title=tr(locale, "ai_reply.long_answer_title"),
         )
         logger.info("SENDING EMBED")
-        await original_reply.edit(embed=embed, content=None, allowed_mentions=NO_AI_MENTIONS)
+        await message.reply(embed=embed, allowed_mentions=NO_AI_MENTIONS)

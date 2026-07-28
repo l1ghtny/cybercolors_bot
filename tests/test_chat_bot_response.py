@@ -3,7 +3,7 @@ import asyncio
 import pytest
 
 from src.modules.ai.models import AIMessage
-from src.modules.chat_bot.create_response import AIAnswerTimeoutError, _create_ai_response
+from src.modules.chat_bot.create_response import AIAnswerTimeoutError, _answer_timeout_seconds, _create_ai_response
 from src.modules.localization.service import tr
 
 
@@ -44,6 +44,11 @@ class FakeImageAttachment:
     content_type = "image/png"
     size = 1024
     url = "https://cdn.discordapp.com/attachments/1/image.png"
+
+
+def test_ai_answer_timeout_defaults_to_one_minute(monkeypatch):
+    monkeypatch.delenv("AI_ANSWER_TIMEOUT_SECONDS", raising=False)
+    assert _answer_timeout_seconds() == 60
 
 
 def test_create_ai_response_times_out(monkeypatch):
@@ -298,15 +303,26 @@ def test_decide_on_response_localizes_multi_user_reply_thread(monkeypatch):
     assert tokens == 0
 
 
-def test_look_for_bot_reply_edits_placeholder_on_failure(monkeypatch):
+def test_look_for_bot_reply_uses_transient_typing_and_replies_on_failure(monkeypatch):
     import src.modules.on_message_processing.gpt_bot_reply as gpt_bot_reply
 
-    class FakeReply:
+    class FakeTyping:
         def __init__(self):
-            self.edits = []
+            self.entered = False
+            self.exited = False
 
-        async def edit(self, **kwargs):
-            self.edits.append(kwargs)
+        async def __aenter__(self):
+            self.entered = True
+
+        async def __aexit__(self, exc_type, exc, tb):
+            self.exited = True
+
+    class FakeReplyChannel(FakeChannel):
+        def __init__(self):
+            self.typing_state = FakeTyping()
+
+        def typing(self):
+            return self.typing_state
 
     class FakeBotUser:
         pass
@@ -315,15 +331,13 @@ def test_look_for_bot_reply_edits_placeholder_on_failure(monkeypatch):
         id = 111
         content = "@bot hello"
         guild = FakeGuild()
-        channel = FakeChannel()
 
         def __init__(self):
-            self.reply_message = FakeReply()
+            self.channel = FakeReplyChannel()
             self.replies = []
 
         async def reply(self, content, **kwargs):
             self.replies.append({"content": content, **kwargs})
-            return self.reply_message
 
     async def fake_check_bot_mention(_message, _client):
         return True
@@ -345,15 +359,68 @@ def test_look_for_bot_reply_edits_placeholder_on_failure(monkeypatch):
 
     asyncio.run(gpt_bot_reply.look_for_bot_reply(message, client=FakeBotUser()))
 
+    assert message.channel.typing_state.entered is True
+    assert message.channel.typing_state.exited is True
     assert message.replies == [
-        {
-            "content": tr("en", "ai_reply.thinking"),
-            "allowed_mentions": gpt_bot_reply.NO_AI_MENTIONS,
-        }
-    ]
-    assert message.reply_message.edits == [
         {
             "content": tr("en", "ai_reply.failure"),
             "allowed_mentions": gpt_bot_reply.NO_AI_MENTIONS,
         }
     ]
+
+
+def test_look_for_bot_reply_leaves_no_stale_message_when_cancelled(monkeypatch):
+    import src.modules.on_message_processing.gpt_bot_reply as gpt_bot_reply
+
+    class FakeTyping:
+        def __init__(self):
+            self.exited = False
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            self.exited = True
+
+    class FakeChannelWithTyping(FakeChannel):
+        def __init__(self):
+            self.typing_state = FakeTyping()
+
+        def typing(self):
+            return self.typing_state
+
+    class FakeMessageForReply:
+        id = 111
+        content = "@bot hello"
+        guild = FakeGuild()
+
+        def __init__(self):
+            self.channel = FakeChannelWithTyping()
+            self.replies = []
+
+        async def reply(self, content, **kwargs):
+            self.replies.append({"content": content, **kwargs})
+
+    async def fake_check_bot_mention(_message, _client):
+        return True
+
+    async def fake_check_for_channel(_message, _client):
+        return True, _message.channel
+
+    async def fake_decide_on_response(_message, _client, **_kwargs):
+        raise asyncio.CancelledError
+
+    async def fake_get_server_locale(_server_id):
+        return "en"
+
+    message = FakeMessageForReply()
+    monkeypatch.setattr(gpt_bot_reply, "check_bot_mention", fake_check_bot_mention)
+    monkeypatch.setattr(gpt_bot_reply, "check_for_channel", fake_check_for_channel)
+    monkeypatch.setattr(gpt_bot_reply, "decide_on_response", fake_decide_on_response)
+    monkeypatch.setattr(gpt_bot_reply, "get_server_locale", fake_get_server_locale)
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(gpt_bot_reply.look_for_bot_reply(message, client=object()))
+
+    assert message.channel.typing_state.exited is True
+    assert message.replies == []
