@@ -108,6 +108,10 @@ from src.modules.on_voice_state_processing.create_voice_channel import create_vo
 from src.modules.moderation.ban_worker import process_expired_bans
 from src.modules.moderation.mute_worker import process_expired_mutes
 from src.modules.moderation.newcomer_restrictions import handle_newcomer_role_granted
+from src.modules.nickname_history import (
+    record_member_nickname_change,
+    record_user_display_name_change,
+)
 from src.modules.monitoring.activity import (
     handle_member_join_monitoring,
     record_bot_command_activity,
@@ -821,6 +825,12 @@ async def on_member_join(member: discord.Member):
 @client.event
 async def on_member_update(before: discord.Member, after: discord.Member):
     await handle_newcomer_role_granted(before, after)
+    await record_member_nickname_change(before, after)
+
+
+@client.event
+async def on_user_update(before: discord.User, after: discord.User):
+    await record_user_display_name_change(before, after, client.guilds)
 
 
 @client.event
