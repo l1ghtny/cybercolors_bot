@@ -10,7 +10,7 @@ import demoji
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.commands.misc.cats import cat_command, cat_command_text
+from src.commands.misc.cats import CAT_CAPTION_MAX_LENGTH, cat_command, cat_command_text
 from src.commands.app_command_errors import handle_app_command_error
 from src.commands.temp_voice import temp_voice_limit, temp_voice_rename
 from src.commands.moderation.security import (
@@ -670,7 +670,10 @@ async def force_validation(interaction: discord.Interaction):
 
 
 @tree.command(name='cat', description='Котя с необязательным текстом')
-async def cat(interaction: discord.Interaction, text: str | None = None):
+async def cat(
+    interaction: discord.Interaction,
+    text: app_commands.Range[str, 1, CAT_CAPTION_MAX_LENGTH] | None = None,
+):
     if text:
         await cat_command_text(interaction, text)
         return

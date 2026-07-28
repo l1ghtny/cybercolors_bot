@@ -1,4 +1,5 @@
 import asyncio
+from urllib.parse import unquote
 
 import pytest
 
@@ -106,9 +107,50 @@ def test_fetch_cat_with_text_url_encodes_path_and_uses_query_params(monkeypatch)
     assert session.requests == [
         (
             "https://cataas.com/cat/says/%D0%BA%D0%BE%D1%82%20%2F%20cat%3F",
-            {"fontColor": "#FFFFFF"},
+            {"fontColor": "#FFFFFF", "fontSize": 30, "width": 1000},
         )
     ]
+
+
+def test_long_caption_wraps_to_three_readable_lines():
+    caption = "Ж" * cats.CAT_CAPTION_MAX_LENGTH
+
+    lines = cats._wrap_caption(caption)
+
+    assert lines == ["Ж" * 32, "Ж" * 32, "Ж" * 32]
+    assert cats._caption_font_size(lines) == 28
+    assert cats._caption_font_size("кот") == cats.CAT_CAPTION_MAX_FONT_SIZE
+
+
+def test_caption_overflow_truncates_at_word_boundary():
+    caption = cats._normalize_caption("слово " * 30)
+
+    assert len(caption) <= cats.CAT_CAPTION_MAX_LENGTH
+    assert caption.endswith("слово…")
+
+
+def test_fetch_cat_caption_wraps_normalizes_and_xml_escapes_text(monkeypatch):
+    session, _session_options = install_fake_session(
+        monkeypatch,
+        [FakeResponse(JPEG_RESPONSE)],
+    )
+    text = "  <кот   & cat> подписался на канал сани а ты подписался на канал и поставил колокольчик  "
+    caption = cats._normalize_caption(text)
+    lines = cats._wrap_caption(caption)
+
+    asyncio.run(cats._fetch_cat_image(text))
+
+    requested_url, params = session.requests[0]
+    rendered_text = unquote(requested_url.split("/says/", 1)[1])
+    assert len(lines) == cats.CAT_CAPTION_MAX_LINES
+    assert rendered_text.count("<tspan ") == cats.CAT_CAPTION_MAX_LINES
+    assert "&lt;кот &amp; cat&gt;" in rendered_text
+    assert "<кот" not in rendered_text
+    assert params == {
+        "fontColor": "#FFFFFF",
+        "fontSize": cats._caption_font_size(lines),
+        "width": cats.CAT_CAPTION_IMAGE_WIDTH,
+    }
 
 
 def test_fetch_cat_rejects_non_images_after_bounded_retries(monkeypatch):
