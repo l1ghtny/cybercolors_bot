@@ -6,9 +6,16 @@ from api.services import server_directory
 def test_list_server_channels_includes_active_threads_and_recent_forum_posts(monkeypatch):
     async def fake_channels(_server_id: int) -> list[dict]:
         return [
-            {"id": "10", "name": "Community", "type": 4, "position": 0},
+            {"id": "10", "name": "Community", "type": 4, "position": 7},
             {"id": "20", "name": "general", "type": 0, "position": 1, "parent_id": "10"},
-            {"id": "30", "name": "ideas", "type": 15, "position": 2, "parent_id": "10"},
+            {
+                "id": "30",
+                "name": "ideas",
+                "type": 15,
+                "position": 2,
+                "parent_id": "10",
+                "default_sort_order": 0,
+            },
         ]
 
     async def fake_active_threads(_server_id: int) -> list[dict]:
@@ -25,6 +32,7 @@ def test_list_server_channels_includes_active_threads_and_recent_forum_posts(mon
                 "name": "Active idea",
                 "type": 11,
                 "parent_id": "30",
+                "last_message_id": "3100",
                 "thread_metadata": {"archived": False, "locked": False},
             },
         ]
@@ -39,6 +47,7 @@ def test_list_server_channels_includes_active_threads_and_recent_forum_posts(mon
                 "name": "Archived idea",
                 "type": 11,
                 "parent_id": "30",
+                "last_message_id": "3200",
                 "thread_metadata": {"archived": True, "locked": False},
             },
             {
@@ -65,11 +74,15 @@ def test_list_server_channels_includes_active_threads_and_recent_forum_posts(mon
 
     assert set(by_id) == {"20", "21", "30", "31", "32"}
     assert by_id["20"].parent_name == "Community"
+    assert by_id["20"].parent_position == 7
     assert by_id["21"].parent_name == "general"
     assert by_id["21"].parent_type == 0
     assert by_id["31"].parent_name == "ideas"
     assert by_id["31"].parent_type == 15
+    assert by_id["30"].default_sort_order == 0
+    assert by_id["31"].last_message_id == "3100"
     assert by_id["32"].archived is True
+    assert [channel.id for channel in channels] == ["20", "30", "21", "31", "32"]
     assert archived_calls == [(30, 50)]
 
 

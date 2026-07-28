@@ -9,7 +9,10 @@ class ServerChannelModel(BaseModel):
     parent_id: str | None = None
     parent_name: str | None = None
     parent_type: int | None = None
+    parent_position: int | None = None
     archived: bool = False
+    last_message_id: str | None = None
+    default_sort_order: int | None = None
     rate_limit_per_user: int = 0
 
 

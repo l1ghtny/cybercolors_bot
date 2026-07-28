@@ -408,12 +408,22 @@ async def list_server_channels(
                 parent_id=str(parent_id) if parent_id else None,
                 parent_name=parent.get("name") if parent else None,
                 parent_type=int(parent.get("type", -1)) if parent else None,
+                parent_position=int(parent.get("position", 0)) if parent else None,
                 archived=bool(thread_metadata.get("archived", False)),
+                last_message_id=(
+                    str(channel["last_message_id"])
+                    if channel.get("last_message_id") is not None
+                    else None
+                ),
+                default_sort_order=(
+                    int(channel["default_sort_order"])
+                    if channel.get("default_sort_order") is not None
+                    else None
+                ),
                 rate_limit_per_user=int(channel.get("rate_limit_per_user") or 0),
             )
         )
 
-    payload.sort(key=lambda c: ((c.parent_name or "").lower(), c.position, c.name.lower()))
     return payload
 
 
@@ -423,15 +433,32 @@ async def get_server_channel_payload(server_id: int, channel_id: int) -> ServerC
         return None
 
     channels = await fetch_guild_channels(server_id)
-    categories = {item["id"]: item["name"] for item in channels if int(item.get("type", -1)) == 4}
+    categories = {
+        item["id"]: item
+        for item in channels
+        if int(item.get("type", -1)) == 4
+    }
     parent_id = channel.get("parent_id")
+    parent = categories.get(parent_id) if parent_id else None
     return ServerChannelModel(
         id=str(channel["id"]),
         name=channel.get("name", ""),
         type=int(channel.get("type", -1)),
         position=int(channel.get("position", 0)),
         parent_id=str(parent_id) if parent_id else None,
-        parent_name=categories.get(parent_id) if parent_id else None,
+        parent_name=parent.get("name") if parent else None,
+        parent_type=int(parent.get("type", -1)) if parent else None,
+        parent_position=int(parent.get("position", 0)) if parent else None,
+        last_message_id=(
+            str(channel["last_message_id"])
+            if channel.get("last_message_id") is not None
+            else None
+        ),
+        default_sort_order=(
+            int(channel["default_sort_order"])
+            if channel.get("default_sort_order") is not None
+            else None
+        ),
         rate_limit_per_user=int(channel.get("rate_limit_per_user") or 0),
     )
 
