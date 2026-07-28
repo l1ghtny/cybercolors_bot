@@ -29,15 +29,15 @@ async def record_member_nickname_change(
     before: discord.Member,
     after: discord.Member,
 ) -> bool:
-    """Persist the visible name after a server nickname change."""
+    """Persist the previous visible name after a server nickname change."""
     if after.bot or after.guild is None or before.nick == after.nick:
         return False
 
-    nickname = _member_display_name(after)
-    if nickname is None:
+    previous_name = _member_display_name(before)
+    if previous_name is None:
         return False
 
-    return await _record_visible_name(after, nickname)
+    return await _record_past_name(after, previous_name)
 
 
 async def record_user_display_name_change(
@@ -45,10 +45,15 @@ async def record_user_display_name_change(
     after: discord.User,
     guilds: Iterable[discord.Guild],
 ) -> int:
-    """Persist global display-name changes where no server nickname overrides them."""
+    """Persist the previous global name where no server nickname overrides it."""
     before_name = _member_display_name(before)
     after_name = _member_display_name(after)
-    if after.bot or after_name is None or before_name == after_name:
+    if (
+        after.bot
+        or before_name is None
+        or after_name is None
+        or before_name == after_name
+    ):
         return 0
 
     recorded = 0
@@ -56,12 +61,12 @@ async def record_user_display_name_change(
         member = guild.get_member(after.id)
         if member is None or member.nick is not None:
             continue
-        if await _record_visible_name(member, after_name):
+        if await _record_past_name(member, before_name):
             recorded += 1
     return recorded
 
 
-async def _record_visible_name(member: discord.Member, nickname: str) -> bool:
+async def _record_past_name(member: discord.Member, nickname: str) -> bool:
     if member.guild is None:
         return False
 

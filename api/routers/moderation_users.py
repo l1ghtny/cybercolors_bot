@@ -80,11 +80,10 @@ async def log_user_nickname(
     session: AsyncSession = Depends(get_session),
 ):
     server = await get_or_create_server_record(server_id, session)
-    _, membership = await get_or_create_user_membership(
+    await get_or_create_user_membership(
         session=session,
         server_id=server_id,
         user_id=user_id,
-        server_nickname=body.nickname,
     )
 
     latest = (
@@ -106,10 +105,6 @@ async def log_user_nickname(
         recorded_at=body.recorded_at or utc_now(),
     )
     session.add(nickname_record)
-
-    if membership.server_nickname != body.nickname:
-        membership.server_nickname = body.nickname
-        session.add(membership)
 
     await session.flush()
     await session.refresh(nickname_record)
