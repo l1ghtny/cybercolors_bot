@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 import zipfile
 from functools import lru_cache
@@ -71,6 +72,30 @@ class KnowledgeImportError(RuntimeError):
         self.code = code
 
 
+def _deno_runtime_version() -> str | None:
+    deno_path = shutil.which("deno")
+    if deno_path is None:
+        return None
+    try:
+        completed = subprocess.run(
+            [deno_path, "--version"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning(
+            "deno_runtime_unavailable path=%s exception_type=%s",
+            deno_path,
+            type(exc).__name__,
+        )
+        return None
+
+    first_line = completed.stdout.splitlines()[0].strip() if completed.stdout else ""
+    return first_line.removeprefix("deno ").strip() or None
+
+
 @lru_cache(maxsize=1)
 def youtube_runtime_diagnostics() -> dict[str, str | bool | None]:
     try:
@@ -81,10 +106,12 @@ def youtube_runtime_diagnostics() -> dict[str, str | bool | None]:
         yt_dlp_version = importlib_metadata.version("yt-dlp")
     except importlib_metadata.PackageNotFoundError:
         yt_dlp_version = None
+    deno_version = _deno_runtime_version()
     return {
         "yt_dlp_version": yt_dlp_version,
         "yt_dlp_ejs_version": ejs_version,
-        "deno_available": shutil.which("deno") is not None,
+        "deno_available": deno_version is not None,
+        "deno_version": deno_version,
     }
 
 
@@ -219,11 +246,13 @@ def extract_text_from_youtube_url(url: str) -> tuple[str, dict[str, Any]]:
     with tempfile.TemporaryDirectory(prefix="cybercolors_youtube_") as temp_dir:
         diagnostics = youtube_runtime_diagnostics()
         logger.info(
-            "youtube_extract_started video_id=%s yt_dlp_version=%s yt_dlp_ejs_version=%s deno_available=%s",
+            "youtube_extract_started video_id=%s yt_dlp_version=%s yt_dlp_ejs_version=%s "
+            "deno_available=%s deno_version=%s",
             normalized.video_id,
             diagnostics["yt_dlp_version"],
             diagnostics["yt_dlp_ejs_version"],
             diagnostics["deno_available"],
+            diagnostics["deno_version"],
         )
         if not diagnostics["yt_dlp_ejs_version"] or not diagnostics["deno_available"]:
             logger.warning("youtube_runtime_incomplete video_id=%s diagnostics=%s", normalized.video_id, diagnostics)

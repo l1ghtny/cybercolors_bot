@@ -7,7 +7,11 @@ from pydantic import ValidationError
 
 from api.models.ai_knowledge import AIKnowledgeSourceCreateModel
 from src.modules.ai.knowledge_errors import public_knowledge_error
-from src.modules.ai.knowledge_imports import KnowledgeImportError, extract_text_from_youtube_url
+from src.modules.ai.knowledge_imports import (
+    KnowledgeImportError,
+    extract_text_from_youtube_url,
+    youtube_runtime_diagnostics,
+)
 from src.modules.ai.youtube_urls import YouTubeUrlError, normalize_youtube_video_url
 
 
@@ -73,6 +77,52 @@ def test_extractor_rejects_channel_before_calling_ytdlp():
     assert caught.value.code == "youtube_channel_url"
 
 
+def test_youtube_runtime_diagnostics_executes_deno(monkeypatch):
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return SimpleNamespace(stdout="deno 2.8.1\nv8 test\ntypescript test\n")
+
+    youtube_runtime_diagnostics.cache_clear()
+    monkeypatch.setattr("src.modules.ai.knowledge_imports.shutil.which", lambda _name: "/usr/local/bin/deno")
+    monkeypatch.setattr("src.modules.ai.knowledge_imports.subprocess.run", fake_run)
+    try:
+        diagnostics = youtube_runtime_diagnostics()
+    finally:
+        youtube_runtime_diagnostics.cache_clear()
+
+    assert diagnostics["deno_available"] is True
+    assert diagnostics["deno_version"] == "2.8.1"
+    assert calls == [
+        (
+            ["/usr/local/bin/deno", "--version"],
+            {
+                "check": True,
+                "capture_output": True,
+                "text": True,
+                "timeout": 5,
+            },
+        )
+    ]
+
+
+def test_youtube_runtime_diagnostics_rejects_unusable_deno(monkeypatch):
+    def fake_run(*_args, **_kwargs):
+        raise OSError("missing dynamic linker")
+
+    youtube_runtime_diagnostics.cache_clear()
+    monkeypatch.setattr("src.modules.ai.knowledge_imports.shutil.which", lambda _name: "/usr/local/bin/deno")
+    monkeypatch.setattr("src.modules.ai.knowledge_imports.subprocess.run", fake_run)
+    try:
+        diagnostics = youtube_runtime_diagnostics()
+    finally:
+        youtube_runtime_diagnostics.cache_clear()
+
+    assert diagnostics["deno_available"] is False
+    assert diagnostics["deno_version"] is None
+
+
 def test_extractor_canonicalizes_video_and_disables_playlist(monkeypatch):
     calls: dict[str, object] = {}
 
@@ -106,7 +156,12 @@ def test_extractor_canonicalizes_video_and_disables_playlist(monkeypatch):
     monkeypatch.setitem(sys.modules, "yt_dlp", SimpleNamespace(YoutubeDL=FakeYoutubeDL))
     monkeypatch.setattr(
         "src.modules.ai.knowledge_imports.youtube_runtime_diagnostics",
-        lambda: {"yt_dlp_version": "test", "yt_dlp_ejs_version": "test", "deno_available": True},
+        lambda: {
+            "yt_dlp_version": "test",
+            "yt_dlp_ejs_version": "test",
+            "deno_available": True,
+            "deno_version": "test",
+        },
     )
 
     text, metadata = extract_text_from_youtube_url(
@@ -137,7 +192,12 @@ def test_extractor_classifies_access_challenge_without_exposing_raw_error(monkey
     monkeypatch.setitem(sys.modules, "yt_dlp", SimpleNamespace(YoutubeDL=FakeYoutubeDL))
     monkeypatch.setattr(
         "src.modules.ai.knowledge_imports.youtube_runtime_diagnostics",
-        lambda: {"yt_dlp_version": "test", "yt_dlp_ejs_version": "test", "deno_available": True},
+        lambda: {
+            "yt_dlp_version": "test",
+            "yt_dlp_ejs_version": "test",
+            "deno_available": True,
+            "deno_version": "test",
+        },
     )
 
     with pytest.raises(KnowledgeImportError) as caught:
