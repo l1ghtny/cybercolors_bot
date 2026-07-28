@@ -144,6 +144,23 @@ async def fetch_guild_channels(server_id: int) -> list[dict]:
     return []
 
 
+async def fetch_active_guild_threads(server_id: int) -> list[dict]:
+    payload = await _discord_get(f"/guilds/{server_id}/threads/active")
+    if isinstance(payload, dict) and isinstance(payload.get("threads"), list):
+        return payload["threads"]
+    return []
+
+
+async def fetch_public_archived_threads(channel_id: int, limit: int = 50) -> list[dict]:
+    payload = await _discord_get(
+        f"/channels/{channel_id}/threads/archived/public",
+        params={"limit": max(1, min(limit, 100))},
+    )
+    if isinstance(payload, dict) and isinstance(payload.get("threads"), list):
+        return payload["threads"]
+    return []
+
+
 async def fetch_guild_roles(server_id: int) -> list[dict]:
     roles = await _discord_get(f"/guilds/{server_id}/roles")
     if isinstance(roles, list):

@@ -92,7 +92,7 @@ async def send_bot_message(
     if channel is None or int(channel.get("type", -1)) not in TEXT_CHANNEL_TYPES:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Select a text or announcement channel from this server",
+            detail="Select a text channel, thread, or forum post from this server",
         )
 
     reply_to_message_id = int(body.reply_to_message_id) if body.reply_to_message_id else None

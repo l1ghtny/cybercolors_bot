@@ -8,6 +8,8 @@ class ServerChannelModel(BaseModel):
     position: int = 0
     parent_id: str | None = None
     parent_name: str | None = None
+    parent_type: int | None = None
+    archived: bool = False
     rate_limit_per_user: int = 0
 
 

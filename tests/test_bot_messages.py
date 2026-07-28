@@ -43,12 +43,13 @@ async def _send_scenario(
     attachments: list[tuple[str, bytes, str]] | None = None,
     mention_user_ids: list[str] | None = None,
     mention_role_ids: list[str] | None = None,
+    channel_type: int = 0,
 ):
     session = session or FakeSession(paused=paused)
     sender_calls: list[dict] = []
 
     async def channel_fetcher(server_id: int, channel_id: int):
-        return {"id": str(channel_id), "guild_id": str(server_id), "type": 0}
+        return {"id": str(channel_id), "guild_id": str(server_id), "type": channel_type}
 
     async def message_fetcher(channel_id: int, message_id: int):
         return {"id": str(message_id), "channel_id": str(channel_id)}
@@ -106,6 +107,14 @@ def test_send_bot_message_can_notify_replied_user():
     _, sender_calls, _ = asyncio.run(_send_scenario(notify_replied_user=True))
 
     assert sender_calls[0]["notify_replied_user"] is True
+
+
+def test_send_bot_message_accepts_threads_and_forum_posts_as_destinations():
+    for channel_type in (10, 11, 12):
+        _, sender_calls, result = asyncio.run(_send_scenario(channel_type=channel_type))
+
+        assert sender_calls[0]["channel_id"] == 789
+        assert result.channel_id == "789"
 
 
 def test_send_bot_message_allows_only_explicit_user_and_role_mentions():

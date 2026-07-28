@@ -89,8 +89,15 @@ async def get_server_timeline(
 async def get_server_channels(
     server_id: int,
     text_only: bool = Query(default=True),
+    include_threads: bool = Query(default=False),
+    include_archived_threads: bool = Query(default=False),
 ):
-    return await list_server_channels(server_id, text_only=text_only)
+    return await list_server_channels(
+        server_id,
+        text_only=text_only,
+        include_threads=include_threads,
+        include_archived_threads=include_archived_threads,
+    )
 
 
 @servers.get(

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import time
 from dataclasses import dataclass
@@ -17,14 +18,19 @@ from api.models.server_directory import (
 )
 from api.services.discord_guilds import (
     TEXT_CHANNEL_TYPES,
+    fetch_active_guild_threads,
+    fetch_all_guild_members,
     fetch_channel,
     fetch_guild_channels,
     fetch_guild_emojis,
     fetch_guild_metadata,
     fetch_guild_roles,
-    fetch_all_guild_members,
+    fetch_public_archived_threads,
 )
 from src.db.models import GlobalUser, Server, User
+
+
+logger = logging.getLogger(__name__)
 
 
 def _display_name(user: User, global_user: GlobalUser) -> str:
@@ -324,17 +330,73 @@ async def build_server_metadata(session: AsyncSession, server_id: int) -> Server
     )
 
 
-async def list_server_channels(server_id: int, text_only: bool = True) -> list[ServerChannelModel]:
+async def list_server_channels(
+    server_id: int,
+    text_only: bool = True,
+    *,
+    include_threads: bool = False,
+    include_archived_threads: bool = False,
+) -> list[ServerChannelModel]:
     raw_channels = await fetch_guild_channels(server_id)
-    categories = {item["id"]: item["name"] for item in raw_channels if int(item.get("type", -1)) == 4}
+    raw_by_id = {str(item["id"]): item for item in raw_channels if item.get("id") is not None}
+    raw_threads: list[dict] = []
+
+    if include_threads:
+        active_result = await asyncio.gather(
+            fetch_active_guild_threads(server_id),
+            return_exceptions=True,
+        )
+        if active_result and isinstance(active_result[0], list):
+            raw_threads.extend(active_result[0])
+        elif active_result:
+            logger.warning(
+                "Could not load active Discord threads for server %s: %s",
+                server_id,
+                active_result[0],
+            )
+
+        if include_archived_threads:
+            forum_parents = [
+                item
+                for item in raw_channels
+                if int(item.get("type", -1)) in {15, 16} and item.get("id") is not None
+            ]
+            archived_results = await asyncio.gather(
+                *(
+                    fetch_public_archived_threads(int(parent["id"]), limit=50)
+                    for parent in forum_parents
+                ),
+                return_exceptions=True,
+            )
+            for parent, result in zip(forum_parents, archived_results, strict=True):
+                if isinstance(result, list):
+                    raw_threads.extend(result)
+                else:
+                    logger.warning(
+                        "Could not load archived Discord posts for server %s forum %s: %s",
+                        server_id,
+                        parent["id"],
+                        result,
+                    )
+
+    combined_by_id = dict(raw_by_id)
+    for thread in raw_threads:
+        if thread.get("id") is None:
+            continue
+        metadata = thread.get("thread_metadata") or {}
+        if bool(metadata.get("locked", False)) and bool(metadata.get("archived", False)):
+            continue
+        combined_by_id[str(thread["id"])] = thread
 
     payload: list[ServerChannelModel] = []
-    for channel in raw_channels:
+    for channel in combined_by_id.values():
         channel_type = int(channel.get("type", -1))
         if text_only and channel_type not in TEXT_CHANNEL_TYPES:
             continue
 
         parent_id = channel.get("parent_id")
+        parent = raw_by_id.get(str(parent_id)) if parent_id else None
+        thread_metadata = channel.get("thread_metadata") or {}
         payload.append(
             ServerChannelModel(
                 id=str(channel["id"]),
@@ -342,7 +404,9 @@ async def list_server_channels(server_id: int, text_only: bool = True) -> list[S
                 type=channel_type,
                 position=int(channel.get("position", 0)),
                 parent_id=str(parent_id) if parent_id else None,
-                parent_name=categories.get(parent_id) if parent_id else None,
+                parent_name=parent.get("name") if parent else None,
+                parent_type=int(parent.get("type", -1)) if parent else None,
+                archived=bool(thread_metadata.get("archived", False)),
                 rate_limit_per_user=int(channel.get("rate_limit_per_user") or 0),
             )
         )
