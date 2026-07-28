@@ -196,12 +196,22 @@ def test_create_response_to_dialog_preserves_conversation_and_current_images(mon
                 {"role": "user", "content": "this one", "images": [current_image]},
             ],
             message=FakeMessage(),
+            reply_context={
+                "message_id": 222,
+                "author": 777,
+                "author_display_name": "Original Poster",
+                "author_is_bot": False,
+            },
         )
     )
 
     assert ai.assistant_input is not None
     assert ai.assistant_input.images == [current_image]
     assert ai.assistant_input.conversation[0].images == [previous_image]
+    assert ai.assistant_input.reply_to_message_id == 222
+    assert ai.assistant_input.reply_to_author_user_id == 777
+    assert ai.assistant_input.reply_to_author_display_name == "Original Poster"
+    assert ai.assistant_input.reply_to_author_is_bot is False
 
 
 def test_decide_on_response_localizes_reply_thread_limit(monkeypatch):
@@ -261,11 +271,27 @@ def test_decide_on_response_allows_other_user_reference(monkeypatch):
         user = type("BotUser", (), {"id": 999})()
 
     async def fake_count_replies(_message):
-        return 1, [{"author": 111, "content": "hello"}]
+        return 1, [
+            {
+                "message_id": 222,
+                "author": 111,
+                "author_display_name": "Original Poster",
+                "author_is_bot": False,
+                "content": "hello",
+            }
+        ]
 
-    async def fake_create_response_to_dialog(messages, **_kwargs):
+    async def fake_create_response_to_dialog(messages, **kwargs):
         assert len(messages) == 2
         assert [item["role"] for item in messages] == ["user", "user"]
+        assert messages[0]["content"] == "[Discord message author: Original Poster (user_id: 111)]\nhello"
+        assert kwargs["reply_context"] == {
+            "message_id": 222,
+            "author": 111,
+            "author_display_name": "Original Poster",
+            "author_is_bot": False,
+            "content": "hello",
+        }
         return "answer", 12
 
     monkeypatch.setattr(message_processing, "check_replies", lambda _message: True)

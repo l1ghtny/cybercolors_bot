@@ -20,6 +20,7 @@ async def decide_on_response(message, client, *, locale: str | None = None):
             bot_response = tr(locale, "ai_reply.thread_limit", limit=REPLY_THREAD_LIMIT)
             token_total = 0
         elif verify_user(messages_raw, message, client):
+            reply_context = messages_raw[0] if messages_raw else None
             messages_processed = await organise_messages(messages_raw, client)
             messages_processed.append(
                 {
@@ -28,7 +29,11 @@ async def decide_on_response(message, client, *, locale: str | None = None):
                     "images": ai_images_from_discord_message(message, detail="high"),
                 }
             )
-            bot_response, token_total = await create_response_to_dialog(messages_processed, message=message)
+            bot_response, token_total = await create_response_to_dialog(
+                messages_processed,
+                message=message,
+                reply_context=reply_context,
+            )
         else:
             bot_response = tr(locale, "ai_reply.thread_multi_user")
             token_total = 0
@@ -89,7 +94,14 @@ async def count_replies(message):
         message = await channel.fetch_message(my_message_id)
         messages_raw.append(
             {
+                "message_id": message.id,
                 "author": message.author.id,
+                "author_display_name": (
+                    getattr(message.author, "display_name", None)
+                    or getattr(message.author, "global_name", None)
+                    or getattr(message.author, "name", None)
+                ),
+                "author_is_bot": bool(getattr(message.author, "bot", False)),
                 "content": message.content,
                 "images": ai_images_from_discord_message(message, detail="high"),
             }
@@ -98,21 +110,38 @@ async def count_replies(message):
 
 
 async def organise_messages(messages, client):
-    messages.reverse()
     messages_processed = []
-    for i in messages:
+    for i in reversed(messages):
         if i["content"].startswith(f"<@{client.user.id}>"):
             content = i["content"]
             new_message = content.replace(f"<@{client.user.id}>", "")
             new_message = new_message.replace(f"<@!{client.user.id}>", "")
-            messages_processed.append({"role": "user", "content": new_message, "images": i.get("images") or []})
+            messages_processed.append(
+                {
+                    "role": "user",
+                    "content": _attributed_user_content(i, new_message),
+                    "images": i.get("images") or [],
+                }
+            )
         elif i["author"] == client.user.id:
             new_message = i["content"]
             messages_processed.append({"role": "assistant", "content": new_message})
         else:
             new_message = i["content"]
-            messages_processed.append({"role": "user", "content": new_message, "images": i.get("images") or []})
+            messages_processed.append(
+                {
+                    "role": "user",
+                    "content": _attributed_user_content(i, new_message),
+                    "images": i.get("images") or [],
+                }
+            )
     return messages_processed
+
+
+def _attributed_user_content(message_data: dict, content: str) -> str:
+    author_id = message_data.get("author")
+    display_name = message_data.get("author_display_name") or str(author_id or "unknown")
+    return f"[Discord message author: {display_name} (user_id: {author_id})]\n{content}"
 
 
 def verify_user(messages, message, client):

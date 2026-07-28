@@ -185,6 +185,10 @@ class AssistantInput:
     server_id: int | None = None
     author_user_id: int | None = None
     channel_id: int | None = None
+    reply_to_message_id: int | None = None
+    reply_to_author_user_id: int | None = None
+    reply_to_author_display_name: str | None = None
+    reply_to_author_is_bot: bool = False
     conversation: list[AIMessage] = field(default_factory=list)
     images: list[AIImageInput] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)

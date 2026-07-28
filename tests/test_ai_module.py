@@ -1,10 +1,20 @@
 import asyncio
 import json
+from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import src.modules.ai.ai_main as ai_main_module
 from src.modules.ai.ai_main import AIMain, moderation_system_prompt
 from src.modules.ai.context import moderation_member_profile, public_member_profile
-from src.modules.ai.models import AIImageInput, AIRequest, AIResponse, AIToolCall, AssistantInput, MessageModerationInput
+from src.modules.ai.models import (
+    AIImageInput,
+    AIMessage,
+    AIRequest,
+    AIResponse,
+    AIToolCall,
+    AssistantInput,
+    MessageModerationInput,
+)
 from src.modules.ai.tools import AITool, AIToolRegistry, build_default_tool_registry
 from src.modules.chat_bot.create_response import _expand_message_mentions
 
@@ -97,6 +107,7 @@ def _full_profile() -> dict:
         "display_name": "Target",
         "avatar_hash": "avatar",
         "joined_discord": "2026-01-01T00:00:00",
+        "joined_server_at": "2026-02-01T00:00:00",
         "is_member": True,
         "flagged_absent_at": "2026-02-01T00:00:00",
         "birthday": {"day": 7, "month": 11, "timezone": "Europe/Moscow"},
@@ -126,7 +137,9 @@ def test_public_member_profile_filters_internal_moderation_data():
 
     assert public_profile["visibility"] == "public_answer"
     assert public_profile["avatar_hash"] == "avatar"
-    assert public_profile["joined_discord"] == "2026-01-01T00:00:00"
+    assert public_profile["discord_account_created_at"] == "2026-01-01T00:00:00"
+    assert public_profile["joined_server_at"] == "2026-02-01T00:00:00"
+    assert "joined_discord" not in public_profile
     assert public_profile["birthday"] == {"day": 7, "month": 11, "timezone": "Europe/Moscow"}
     assert public_profile["activity"] == {"message_count": 25}
     assert public_profile["nickname_history"] == [{"nickname": "old"}]
@@ -713,6 +726,57 @@ def test_answer_includes_visual_inputs():
     assert "label=:badge:" in prompt_message.content
 
 
+def test_answer_attributes_replied_message_and_loads_original_author_profile(monkeypatch):
+    provider = FakeProvider("That message was written by Original Poster.")
+    ai = AIMain(provider=provider, model="test-model")
+
+    async def fake_build_context_block(**_kwargs):
+        return '{"member_profile": {"user_id": "456"}}'
+
+    async def fake_get_member_profile_context(*, session, server_id, user_id, visibility):
+        assert session == "session"
+        assert server_id == 123
+        assert user_id == 777
+        assert visibility == "public_answer"
+        return {
+            "user_id": "777",
+            "display_name": "Original Poster",
+            "discord_account_created_at": "2020-01-01T00:00:00+00:00",
+            "joined_server_at": "2024-06-15T00:00:00+00:00",
+        }
+
+    monkeypatch.setattr(ai, "_build_context_block", fake_build_context_block)
+    monkeypatch.setattr(ai_main_module, "get_member_profile_context", fake_get_member_profile_context)
+
+    response = asyncio.run(
+        ai.answer(
+            AssistantInput(
+                content="Who wrote this?",
+                server_id=123,
+                author_user_id=456,
+                reply_to_message_id=222,
+                reply_to_author_user_id=777,
+                reply_to_author_display_name="Original Poster",
+                conversation=[
+                    AIMessage(
+                        role="user",
+                        content="[Discord message author: Original Poster (user_id: 777)]\nHello",
+                    )
+                ],
+            ),
+            session="session",
+            enable_tools=False,
+        )
+    )
+
+    assert response.content == "That message was written by Original Poster."
+    prompt = provider.last_request.messages[-1].content
+    assert '"user_id": "777"' in prompt
+    assert '"display_name": "Original Poster"' in prompt
+    assert '"discord_account_created_at": "2020-01-01T00:00:00+00:00"' in prompt
+    assert '"joined_server_at": "2024-06-15T00:00:00+00:00"' in prompt
+
+
 def test_check_message_includes_visual_inputs_and_metadata_count():
     provider = FakeProvider(
         '{"flagged": false, "severity": "none", "categories": [], '
@@ -1138,8 +1202,83 @@ def test_default_tool_registry_exposes_initial_database_tools():
 
     assert "get_active_rules" in specs
     assert "get_member_profile" in specs
+    assert "get_server_activity" in specs
     assert specs["get_member_profile"]["requires_admin_context"] is False
     assert "public-safe member context" in specs["get_member_profile"]["description"]
+    assert specs["get_server_activity"]["requires_admin_context"] is False
+    assert "same date, user, role" in specs["get_server_activity"]["description"]
+
+
+def test_server_activity_tool_reuses_dashboard_filters_and_omits_moderation_data(monkeypatch):
+    import src.modules.ai.tools as tools_module
+
+    captured = {}
+
+    async def fake_leaderboard(**kwargs):
+        captured.update(kwargs)
+        kwargs["response"].headers["X-Activity-Server-Excludes-Applied"] = "true"
+        return [
+            SimpleNamespace(
+                user_id="777",
+                username="original",
+                server_nickname="OP",
+                display_name="Original Poster",
+                message_count=42,
+                last_message_at=datetime(2026, 7, 28, 20, 0, tzinfo=timezone.utc),
+                channels=[SimpleNamespace(channel_id="789", message_count=30)],
+                warn_count=3,
+                warnings=[SimpleNamespace(reason="must stay private to this tool")],
+            )
+        ]
+
+    async def fake_fetch_channels(server_id):
+        assert server_id == 123
+        return [{"id": "789", "name": "general"}]
+
+    monkeypatch.setattr(tools_module, "get_server_activity_leaderboard", fake_leaderboard)
+    monkeypatch.setattr(tools_module, "fetch_guild_channels", fake_fetch_channels)
+
+    result = asyncio.run(
+        tools_module._server_activity_tool(
+            session="session",
+            server_id=123,
+            date_from="2026-07-01",
+            date_to="2026-07-28",
+            include_user_ids=[777],
+            exclude_role_ids=[888],
+            include_channel_ids=[789],
+            limit=5,
+            channels_limit=3,
+        )
+    )
+
+    assert captured["session"] == "session"
+    assert captured["date_from"].isoformat() == "2026-07-01"
+    assert captured["date_to"].isoformat() == "2026-07-28"
+    assert captured["include_user_ids"] == ["777"]
+    assert captured["exclude_role_ids"] == ["888"]
+    assert captured["include_channel_ids"] == ["789"]
+    assert captured["ignore_server_excludes"] is False
+    assert result["server_channel_exclusions_applied"] is True
+    assert result["members"] == [
+        {
+            "user_id": "777",
+            "username": "original",
+            "server_nickname": "OP",
+            "display_name": "Original Poster",
+            "message_count": 42,
+            "last_message_at": "2026-07-28T20:00:00+00:00",
+            "channels": [
+                {
+                    "channel_id": "789",
+                    "channel_name": "general",
+                    "message_count": 30,
+                }
+            ],
+        }
+    ]
+    assert "warnings" not in result["members"][0]
+    assert "warn_count" not in result["members"][0]
 
 
 def test_moderation_strictness_is_sent_to_prompt_and_metadata():

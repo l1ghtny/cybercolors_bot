@@ -36,7 +36,7 @@ async def create_one_response(message, client):
     )
 
 
-async def create_response_to_dialog(message_list, message=None):
+async def create_response_to_dialog(message_list, message=None, *, reply_context: dict | None = None):
     conversation = [
         AIMessage(role=item["role"], content=item["content"], images=item.get("images") or [])
         for item in message_list
@@ -56,6 +56,7 @@ async def create_response_to_dialog(message_list, message=None):
         message=message,
         conversation=conversation,
         images=current_images,
+        reply_context=reply_context,
     )
 
 
@@ -65,6 +66,7 @@ async def _create_ai_response(
     message,
     conversation: list[AIMessage],
     images: list | None = None,
+    reply_context: dict | None = None,
 ) -> tuple[str | None, int]:
     guild = getattr(message, "guild", None)
     author = getattr(message, "author", None)
@@ -74,6 +76,10 @@ async def _create_ai_response(
         server_id=getattr(guild, "id", None),
         author_user_id=getattr(author, "id", None),
         channel_id=getattr(channel, "id", None),
+        reply_to_message_id=(reply_context or {}).get("message_id"),
+        reply_to_author_user_id=(reply_context or {}).get("author"),
+        reply_to_author_display_name=(reply_context or {}).get("author_display_name"),
+        reply_to_author_is_bot=bool((reply_context or {}).get("author_is_bot", False)),
         conversation=conversation,
         images=(
             images

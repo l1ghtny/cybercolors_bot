@@ -1,9 +1,13 @@
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any, Awaitable, Callable
 from uuid import UUID
 
+from fastapi import Response
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from api.routers.activity import get_server_activity_leaderboard
+from api.services.discord_guilds import fetch_guild_channels
 from src.modules.ai.context import get_active_rules_context, get_member_profile_context
 from src.modules.ai.knowledge import search_server_knowledge
 from src.modules.ai.models import AIToolSpec
@@ -91,6 +95,101 @@ async def _server_knowledge_tool(
     )
 
 
+def _activity_date(value: str | None, field_name: str) -> date | None:
+    if value is None:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"{field_name} must be an ISO date in YYYY-MM-DD format") from exc
+
+
+def _activity_ids(values: list[int] | None) -> list[str] | None:
+    if not values:
+        return None
+    return [str(int(value)) for value in values]
+
+
+async def _server_activity_tool(
+    *,
+    session: AsyncSession,
+    server_id: int,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    include_user_ids: list[int] | None = None,
+    exclude_user_ids: list[int] | None = None,
+    include_role_ids: list[int] | None = None,
+    exclude_role_ids: list[int] | None = None,
+    include_channel_ids: list[int] | None = None,
+    exclude_channel_ids: list[int] | None = None,
+    limit: int = 10,
+    channels_limit: int = 5,
+) -> dict[str, Any]:
+    parsed_date_from = _activity_date(date_from, "date_from")
+    parsed_date_to = _activity_date(date_to, "date_to")
+    response = Response()
+    rows = await get_server_activity_leaderboard(
+        server_id=server_id,
+        response=response,
+        limit=min(max(int(limit), 1), 25),
+        all_users=False,
+        date_from=parsed_date_from,
+        date_to=parsed_date_to,
+        channels_limit=min(max(int(channels_limit), 1), 10),
+        include_user_ids=_activity_ids(include_user_ids),
+        exclude_user_ids=_activity_ids(exclude_user_ids),
+        include_role_ids=_activity_ids(include_role_ids),
+        exclude_role_ids=_activity_ids(exclude_role_ids),
+        include_channel_ids=_activity_ids(include_channel_ids),
+        exclude_channel_ids=_activity_ids(exclude_channel_ids),
+        ignore_server_excludes=False,
+        refresh_member_roles=False,
+        refresh_channels=False,
+        session=session,
+    )
+
+    channel_names: dict[str, str] = {}
+    try:
+        channel_names = {
+            str(channel["id"]): str(channel.get("name") or channel["id"])
+            for channel in await fetch_guild_channels(server_id)
+            if channel.get("id") is not None
+        }
+    except Exception:
+        channel_names = {}
+
+    members = []
+    for row in rows:
+        members.append(
+            {
+                "user_id": row.user_id,
+                "username": row.username,
+                "server_nickname": row.server_nickname,
+                "display_name": row.display_name,
+                "message_count": row.message_count,
+                "last_message_at": row.last_message_at.isoformat(),
+                "channels": [
+                    {
+                        "channel_id": channel.channel_id,
+                        "channel_name": channel_names.get(channel.channel_id),
+                        "message_count": channel.message_count,
+                    }
+                    for channel in row.channels
+                ],
+            }
+        )
+
+    return {
+        "date_from": parsed_date_from.isoformat() if parsed_date_from else None,
+        "date_to": parsed_date_to.isoformat() if parsed_date_to else None,
+        "server_channel_exclusions_applied": (
+            response.headers.get("X-Activity-Server-Excludes-Applied") == "true"
+        ),
+        "returned_member_count": len(members),
+        "members": members,
+    }
+
+
 async def _youtube_channel_catalog_tool(
     *,
     session: AsyncSession,
@@ -132,8 +231,8 @@ def build_default_tool_registry() -> AIToolRegistry:
             name="get_member_profile",
             description=(
                 "Fetch public-safe member context for user-facing answers, including profile basics, "
-                "nickname history, activity summary, avatar hash, joined Discord date, public moderation "
-                "actions taken against the member, and rule violation summaries. Does not return cases, "
+                "nickname history, activity summary, avatar hash, Discord account creation time, server join time, "
+                "public moderation actions taken against the member, and rule violation summaries. Does not return cases, "
                 "notes, monitoring status, or internal moderation workspace data."
             ),
             parameters={
@@ -146,6 +245,68 @@ def build_default_tool_registry() -> AIToolRegistry:
                 "additionalProperties": False,
             },
             handler=_member_profile_tool,
+            requires_admin_context=False,
+        )
+    )
+    registry.register(
+        AITool(
+            name="get_server_activity",
+            description=(
+                "Fetch public-safe Discord server message activity on demand using the same date, user, role, "
+                "and channel include/exclude filters as the dashboard leaderboard. Returns member message counts, "
+                "last-message timestamps, and per-channel counts without moderation warnings or private monitoring data. "
+                "Exclusions win; user and role include filters are combined with OR; configured server channel exclusions "
+                "apply unless explicit include_channel_ids are supplied."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "server_id": {"type": "integer"},
+                    "date_from": {
+                        "type": "string",
+                        "description": "Optional inclusive UTC start date in YYYY-MM-DD format.",
+                    },
+                    "date_to": {
+                        "type": "string",
+                        "description": "Optional inclusive UTC end date in YYYY-MM-DD format.",
+                    },
+                    "include_user_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "maxItems": 50,
+                    },
+                    "exclude_user_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "maxItems": 50,
+                    },
+                    "include_role_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "maxItems": 50,
+                    },
+                    "exclude_role_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "maxItems": 50,
+                    },
+                    "include_channel_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "maxItems": 50,
+                    },
+                    "exclude_channel_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "maxItems": 50,
+                    },
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 25},
+                    "channels_limit": {"type": "integer", "minimum": 1, "maximum": 10},
+                },
+                "required": ["server_id"],
+                "additionalProperties": False,
+            },
+            handler=_server_activity_tool,
             requires_admin_context=False,
         )
     )

@@ -8,7 +8,13 @@ from fastapi import HTTPException
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.services.discord_guilds import fetch_channel
-from src.modules.ai.context import ChannelFetcher, MemberProfileVisibility, build_ai_context, context_to_prompt_block
+from src.modules.ai.context import (
+    ChannelFetcher,
+    MemberProfileVisibility,
+    build_ai_context,
+    context_to_prompt_block,
+    get_member_profile_context,
+)
 from src.modules.ai.discord_media import ai_images_from_discord_message, append_image_context
 from src.modules.ai.moderation_contract import (
     MODERATION_ACTIONS,
@@ -117,6 +123,10 @@ Use provided server context when it is relevant, but turn it into normal convers
 Use Context.bot_persona.configured_persona as your server-specific persona and tone guidance when present, as long as it does not conflict with safety or privacy rules.
 Use Context.server_profile.configured_brief as authoritative public server background when present. You may also use Context.server_name and channel context.
 You may call available tools to retrieve server rules, approved server knowledge, followed YouTube channel catalogues, or public-safe member context when the user asks for server-specific information.
+Use get_server_activity for questions about message activity, activity rankings, active members, or activity within a date, user, role, or channel filter. Do not guess activity from member profiles or conversation context.
+Conversation messages prefixed with "Discord message author" are attributed quoted messages. Keep their author separate from the current requester.
+When Replied-to message context is present, use its author identity and public member profile when interpreting questions about that message or its author.
+discord_account_created_at is the date the Discord account was created. It is not a server join date. Only joined_server_at means when the member joined this server; if joined_server_at is absent, say that the server join date is unknown.
 When a user asks about a followed YouTube channel, its latest or historical videos, publication dates, video links, or video contents, use search_youtube_channel_catalog before answering. Pass the user's name or abbreviation as channel_query; the tool resolves aliases and grammatical variants. Use search_transcripts mode for questions about what was said or discussed in the channel's indexed videos.
 If search_youtube_channel_catalog returns needs_channel_clarification=true, do not choose a channel or combine their videos. Ask one concise clarification using the returned channel names. When reporting videos or transcript matches, preserve each item's channel_name exactly and never relabel it as another related channel.
 Answer only the YouTube information the user requested. Never expose channel IDs, video IDs, knowledge source IDs, sync states, database fields, or retrieval mechanics. If channel resolution fails, do not substitute unrelated facts about members or other channels; give a brief clarification using only the returned channel names.
@@ -294,6 +304,10 @@ class AIMain:
             member_profile_visibility="public_answer",
             include_rules=True,
         )
+        reply_context_block = await self._assistant_reply_context_block(
+            assistant_input=normalized,
+            session=session,
+        )
         context_block = await self._append_relevant_knowledge(
             context_block,
             session=session,
@@ -311,6 +325,7 @@ class AIMain:
                     (
                         "Context:\n"
                         f"{context_block}\n\n"
+                        f"{reply_context_block}"
                         "User message:\n"
                         f"{normalized.content}"
                     ),
@@ -379,6 +394,61 @@ class AIMain:
         response.total_tokens = total_tokens
         response.tool_call_count = tool_call_count
         return response
+
+    async def _assistant_reply_context_block(
+        self,
+        *,
+        assistant_input: AssistantInput,
+        session: AsyncSession | None,
+    ) -> str:
+        if assistant_input.reply_to_message_id is None and assistant_input.reply_to_author_user_id is None:
+            return ""
+
+        payload: dict[str, Any] = {
+            "message_id": (
+                str(assistant_input.reply_to_message_id)
+                if assistant_input.reply_to_message_id is not None
+                else None
+            ),
+            "author": {
+                "user_id": (
+                    str(assistant_input.reply_to_author_user_id)
+                    if assistant_input.reply_to_author_user_id is not None
+                    else None
+                ),
+                "display_name": assistant_input.reply_to_author_display_name,
+                "is_bot": assistant_input.reply_to_author_is_bot,
+            },
+            "member_profile": None,
+        }
+        if (
+            session is not None
+            and assistant_input.server_id is not None
+            and assistant_input.reply_to_author_user_id is not None
+            and not assistant_input.reply_to_author_is_bot
+        ):
+            try:
+                payload["member_profile"] = await get_member_profile_context(
+                    session=session,
+                    server_id=assistant_input.server_id,
+                    user_id=assistant_input.reply_to_author_user_id,
+                    visibility="public_answer",
+                )
+            except HTTPException as exc:
+                logger.info(
+                    "Public reply-author profile unavailable in guild %s for user %s: %s",
+                    assistant_input.server_id,
+                    assistant_input.reply_to_author_user_id,
+                    exc.detail,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to build public reply-author profile in guild %s for user %s",
+                    assistant_input.server_id,
+                    assistant_input.reply_to_author_user_id,
+                )
+
+        return f"Replied-to message context:\n{json.dumps(payload, ensure_ascii=False, default=str, indent=2)}\n\n"
 
     async def _execute_assistant_tool_call(
         self,
