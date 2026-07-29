@@ -12,7 +12,9 @@ from src.db.database import engine
 from src.db.models import Replies, ReplyConcept, ServerReplySettings, Triggers
 from src.modules.on_message_processing.processing_methods import (
     normalize_and_stem_reply_text,
+    normalize_reply_surface_text,
     normalize_reply_text,
+    russian_reply_token_stems,
     russian_word_forms_matching_reply_stem,
 )
 
@@ -145,8 +147,19 @@ def _settings_snapshot(settings: ServerReplySettings | None) -> CompiledReplySet
     )
 
 
-def _literal_tokens(text: str) -> list[str]:
-    return normalize_and_stem_reply_text(text).split()
+def _literal_pattern_units(text: str) -> list[str]:
+    units: list[str] = []
+    for token in normalize_reply_text(text).split():
+        stems = russian_reply_token_stems(token)
+        if not stems:
+            continue
+        escaped = [re.escape(stem) for stem in stems]
+        units.append(
+            escaped[0]
+            if len(escaped) == 1
+            else "(?:" + "|".join(sorted(escaped, key=len, reverse=True)) + ")"
+        )
+    return units
 
 
 def canonicalize_reply_concept_references(
@@ -176,12 +189,17 @@ def canonicalize_reply_concept_references(
     tokens = list(CONCEPT_TEXT_TOKEN_RE.finditer(canonical))
     token_stems = [normalize_and_stem_reply_text(match.group(0)) for match in tokens]
 
-    variant_patterns: list[tuple[tuple[str, ...], str, int]] = []
+    variant_patterns: list[tuple[tuple[frozenset[str], ...], str, int]] = []
     for concept_name, variants in concepts_by_name.items():
         for variant in variants:
-            stems = tuple(normalize_and_stem_reply_text(variant).split())
-            if stems:
-                variant_patterns.append((stems, concept_name, len(normalize_reply_text(variant))))
+            stem_options = tuple(
+                frozenset(russian_reply_token_stems(token))
+                for token in normalize_reply_text(variant).split()
+            )
+            if stem_options and all(stem_options):
+                variant_patterns.append(
+                    (stem_options, concept_name, len(normalize_reply_text(variant)))
+                )
     variant_patterns.sort(key=lambda item: (len(item[0]), item[2]), reverse=True)
 
     replacements: list[tuple[int, int, str]] = []
@@ -193,8 +211,8 @@ def canonicalize_reply_concept_references(
             continue
 
         matched = False
-        for stems, concept_name, _variant_length in variant_patterns:
-            end_index = token_index + len(stems)
+        for stem_options, concept_name, _variant_length in variant_patterns:
+            end_index = token_index + len(stem_options)
             if end_index > len(tokens):
                 continue
             candidate_tokens = tokens[token_index:end_index]
@@ -203,7 +221,14 @@ def canonicalize_reply_concept_references(
                 for candidate in candidate_tokens
             ):
                 continue
-            if tuple(token_stems[token_index:end_index]) != stems:
+            if any(
+                candidate_stem not in allowed_stems
+                for candidate_stem, allowed_stems in zip(
+                    token_stems[token_index:end_index],
+                    stem_options,
+                    strict=True,
+                )
+            ):
                 continue
             replacements.append(
                 (token.start(), candidate_tokens[-1].end(), f"{{{{{concept_name}}}}}")
@@ -228,9 +253,9 @@ def _compile_trigger_pattern(
     cursor = 0
     for placeholder in CONCEPT_PLACEHOLDER_RE.finditer(trigger_text):
         literal = trigger_text[cursor:placeholder.start()]
-        literal_tokens = _literal_tokens(literal)
-        units.extend(re.escape(token) for token in literal_tokens)
-        specificity += len(literal_tokens)
+        literal_units = _literal_pattern_units(literal)
+        units.extend(literal_units)
+        specificity += len(literal_units)
 
         concept_name = placeholder.group(1).casefold()
         variants = concepts.get(concept_name)
@@ -238,18 +263,18 @@ def _compile_trigger_pattern(
             return None
         variant_patterns: list[str] = []
         for variant in variants:
-            tokens = _literal_tokens(variant)
-            if tokens:
-                variant_patterns.append(r"\s+".join(re.escape(token) for token in tokens))
+            variant_units = _literal_pattern_units(variant)
+            if variant_units:
+                variant_patterns.append(r"\s+".join(variant_units))
         if not variant_patterns:
             return None
         units.append("(?:" + "|".join(sorted(set(variant_patterns), key=len, reverse=True)) + ")")
         specificity += 1
         cursor = placeholder.end()
 
-    trailing_tokens = _literal_tokens(trigger_text[cursor:])
-    units.extend(re.escape(token) for token in trailing_tokens)
-    specificity += len(trailing_tokens)
+    trailing_units = _literal_pattern_units(trigger_text[cursor:])
+    units.extend(trailing_units)
+    specificity += len(trailing_units)
     if not units:
         return None
 
@@ -289,8 +314,8 @@ def analyze_reply_trigger_coverage(
                     covered_by_id = canonical_id
                     reason = (
                         "exact_duplicate"
-                        if normalize_reply_text(canonical_text)
-                        == normalize_reply_text(phrase_text)
+                        if normalize_reply_surface_text(canonical_text)
+                        == normalize_reply_surface_text(phrase_text)
                         else "language_matching"
                     )
                     break

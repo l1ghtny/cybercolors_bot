@@ -141,6 +141,34 @@ def test_russian_normalization_handles_punctuation_whitespace_and_inflection():
     )
 
 
+@pytest.mark.parametrize(
+    ("variant", "canonical"),
+    [
+        ("что", "что"),
+        ("што", "что"),
+        ("чо", "что"),
+        ("Шо", "что"),
+        ("чё", "что"),
+        ("кто", "кто"),
+        ("хто", "кто"),
+        ("зачем", "зачем"),
+        ("почему", "зачем"),
+        ("для чего", "зачем"),
+        ("нахрена", "зачем"),
+        ("нахрен", "зачем"),
+        ("нахера", "зачем"),
+        ("нахуя", "зачем"),
+        ("кого", "кого"),
+        ("каво", "кого"),
+        ("ково", "кого"),
+        ("когда", "когда"),
+        ("када", "когда"),
+    ],
+)
+def test_russian_language_variants_normalize_to_one_canonical_form(variant, canonical):
+    assert normalize_reply_text(variant) == canonical
+
+
 def test_compiled_matcher_resolves_concept_placeholder_and_russian_inflection():
     reply = Replies(
         server_id=1,
@@ -174,6 +202,37 @@ def test_compiled_matcher_resolves_concept_placeholder_and_russian_inflection():
     assert matched.mention_role_ids == frozenset({"84"})
     assert matched.cooldown_seconds == 90
     assert matcher.match("Когда выдадут другую роль?") is None
+
+
+def test_compiled_matcher_handles_colloquial_question_words_and_plural_agreement():
+    reply = Replies(server_id=1, bot_reply="Answer", created_by_id=2)
+    triggers = [
+        Triggers(
+            message="что за завсегдатай",
+            reply_id=reply.id,
+            source="representative",
+        ),
+        Triggers(
+            message="кто этот ваш завсегдатай",
+            reply_id=reply.id,
+            source="representative",
+        ),
+        Triggers(
+            message="зачем нужен завсегдатай",
+            reply_id=reply.id,
+            source="representative",
+        ),
+    ]
+    matcher = compile_guild_reply_matcher(
+        1,
+        None,
+        [],
+        [(trigger, reply) for trigger in triggers],
+    )
+
+    assert matcher.match("Шо за завсегдатай?") is not None
+    assert matcher.match("Кто эти ваши завсегдатаи?") is not None
+    assert matcher.match("Для чего нужен завсегдатай?") is not None
 
 
 def test_compiled_matcher_ignores_trigger_with_unknown_concept():
@@ -257,6 +316,28 @@ def test_coverage_uses_live_language_matching_and_source_priority():
     assert by_id["generated:0"].covered_by_id == "representative:0"
 
 
+def test_coverage_recognizes_colloquial_and_plural_variations():
+    coverage = analyze_reply_trigger_coverage(
+        [
+            ("representative:0", "что за завсегдатай", "representative"),
+            ("manual:0", "шо за завсегдатай", "manual"),
+            (
+                "representative:1",
+                "кто этот ваш завсегдатай",
+                "representative",
+            ),
+            ("generated:0", "кто эти ваши завсегдатаи", "generated"),
+        ],
+        {},
+    )
+
+    by_id = {item.id: item for item in coverage}
+    assert by_id["manual:0"].covered_by_id == "representative:0"
+    assert by_id["manual:0"].reason == "language_matching"
+    assert by_id["generated:0"].covered_by_id == "representative:1"
+    assert by_id["generated:0"].reason == "language_matching"
+
+
 def test_trigger_variation_preview_returns_inflection_and_concept_groups():
     groups = describe_reply_trigger_variations(
         "когда дадут {{role}}",
@@ -273,6 +354,24 @@ def test_trigger_variation_preview_returns_inflection_and_concept_groups():
     assert all(group.variants for group in groups)
 
 
+def test_trigger_variation_preview_lists_colloquialisms_and_plural_forms():
+    groups = describe_reply_trigger_variations(
+        "что и зачем нужен этот ваш завсегдатай",
+        {},
+    )
+
+    by_label = {group.label: group for group in groups}
+    assert {"што", "чо", "чё", "шо"}.issubset(by_label["что"].variants)
+    assert {"почему", "для чего", "нахрена", "нахрен", "нахера", "нахуя"}.issubset(
+        by_label["зачем"].variants
+    )
+    assert "эти" in by_label["этот"].variants
+    assert "ваши" in by_label["ваш"].variants
+    assert {"завсегдатая", "завсегдатаи", "завсегдатаем"}.issubset(
+        by_label["завсегдатай"].variants
+    )
+
+
 def test_concept_references_are_canonicalized_with_live_russian_matching():
     concepts = {
         "cybercolors": ("КиберКолорс", "Cyber Colors", "Кибер Королс"),
@@ -287,6 +386,10 @@ def test_concept_references_are_canonicalized_with_live_russian_matching():
         "Что умеет {{ CyberColors }}?",
         concepts,
     ) == "Что умеет {{cybercolors}}?"
+    assert canonicalize_reply_concept_references(
+        "Кто эти ваши завсегдатаи?",
+        concepts,
+    ) == "Кто эти ваши {{role}}?"
 
 
 def test_intent_save_drops_manual_and_generated_triggers_already_covered(monkeypatch):

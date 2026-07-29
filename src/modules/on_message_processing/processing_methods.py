@@ -20,8 +20,7 @@ def em_replace(string):
     return string
 
 
-def normalize_reply_text(value: str) -> str:
-    """Normalize configured reply triggers and incoming messages identically."""
+def normalize_reply_surface_text(value: str) -> str:
     normalized = unicodedata.normalize("NFKC", value or "").casefold()
     normalized = re.sub(
         r"([0-9#*])\ufe0f?\u20e3",
@@ -35,6 +34,55 @@ def normalize_reply_text(value: str) -> str:
     )
     normalized = normalized.translate(str.maketrans({character: " " for character in string.punctuation}))
     return " ".join(normalized.split())
+
+
+# These are intentionally product-level language rules, not administrator data.
+# Genuine server-specific synonyms still belong in reusable reply concepts.
+_REPLY_LANGUAGE_VARIATION_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("что", ("что", "што", "чо", "чё", "шо")),
+    ("кто", ("кто", "хто")),
+    (
+        "зачем",
+        ("зачем", "почему", "для чего", "нахрена", "нахрен", "нахера", "нахуя"),
+    ),
+    ("кого", ("кого", "каво", "ково")),
+    ("когда", ("когда", "када")),
+)
+
+_REPLY_LANGUAGE_VARIANTS_BY_CANONICAL = {
+    canonical: variants for canonical, variants in _REPLY_LANGUAGE_VARIATION_GROUPS
+}
+_REPLY_LANGUAGE_ALIAS_TOKENS = {
+    tuple(normalize_reply_surface_text(variant).split()): (canonical,)
+    for canonical, variants in _REPLY_LANGUAGE_VARIATION_GROUPS
+    for variant in variants
+}
+_MAX_REPLY_LANGUAGE_ALIAS_TOKENS = max(
+    (len(tokens) for tokens in _REPLY_LANGUAGE_ALIAS_TOKENS),
+    default=1,
+)
+
+
+def normalize_reply_text(value: str) -> str:
+    """Normalize triggers/messages and canonicalize built-in language variants."""
+    tokens = normalize_reply_surface_text(value).split()
+    canonical_tokens: list[str] = []
+    index = 0
+    while index < len(tokens):
+        matched = False
+        max_size = min(_MAX_REPLY_LANGUAGE_ALIAS_TOKENS, len(tokens) - index)
+        for size in range(max_size, 0, -1):
+            replacement = _REPLY_LANGUAGE_ALIAS_TOKENS.get(tuple(tokens[index:index + size]))
+            if replacement is None:
+                continue
+            canonical_tokens.extend(replacement)
+            index += size
+            matched = True
+            break
+        if not matched:
+            canonical_tokens.append(tokens[index])
+            index += 1
+    return " ".join(canonical_tokens)
 
 
 _RUSSIAN_VOWELS = "аеиоуыэюя"
@@ -95,34 +143,67 @@ def _russian_morphology() -> MorphAnalyzer:
 
 @lru_cache(maxsize=4096)
 def russian_word_forms_matching_reply_stem(word: str) -> tuple[str, ...]:
-    """Return dictionary word forms accepted by the live reply stemmer."""
+    """Return language variants and dictionary forms accepted by live matching."""
     normalized = normalize_reply_text(word)
-    if not re.fullmatch(r"[а-я]+", normalized) or len(normalized) < 4:
+    if not normalized or " " in normalized:
         return (normalized,) if normalized else ()
 
-    parses = _russian_morphology().parse(normalized)
-    if not parses or not parses[0].is_known:
-        return (normalized,)
-
-    expected_stem = _russian_stem(normalized)
     forms: list[str] = []
     seen: set[str] = set()
-    for lexeme in parses[0].lexeme:
-        candidate = normalize_reply_text(lexeme.word)
-        if (
-            candidate
-            and candidate not in seen
-            and _russian_stem(candidate) == expected_stem
-        ):
+
+    def add(candidate: str) -> None:
+        if candidate and candidate not in seen:
             seen.add(candidate)
             forms.append(candidate)
 
-    if normalized not in seen:
-        forms.insert(0, normalized)
-    else:
-        forms.remove(normalized)
-        forms.insert(0, normalized)
+    add(normalized)
+    for variant in _REPLY_LANGUAGE_VARIANTS_BY_CANONICAL.get(normalized, ()):
+        add(variant)
+
+    if not re.fullmatch(r"[а-я]+", normalized):
+        return tuple(forms)
+
+    parses = _russian_morphology().parse(normalized)
+    if not parses or not parses[0].is_known:
+        return tuple(forms)
+
+    # Pronouns such as "кто" and "кого" are distinct question meanings, while
+    # nouns, adjectives, and verbs need case/gender/number coverage.
+    inflectable_parts_of_speech = {
+        "NOUN",
+        "ADJF",
+        "ADJS",
+        "COMP",
+        "VERB",
+        "INFN",
+        "PRTF",
+        "PRTS",
+        "GRND",
+        "NUMR",
+    }
+    if parses[0].tag.POS not in inflectable_parts_of_speech:
+        return tuple(forms)
+
+    for lexeme in parses[0].lexeme:
+        add(normalize_reply_surface_text(lexeme.word))
     return tuple(forms)
+
+
+@lru_cache(maxsize=4096)
+def russian_reply_token_stems(word: str) -> tuple[str, ...]:
+    """Return every fast runtime stem compiled for a configured Russian word."""
+    stems: list[str] = []
+    seen: set[str] = set()
+    for form in russian_word_forms_matching_reply_stem(word):
+        normalized_form = normalize_reply_text(form)
+        form_tokens = normalized_form.split()
+        if len(form_tokens) != 1:
+            continue
+        stem = _russian_stem(form_tokens[0])
+        if stem not in seen:
+            seen.add(stem)
+            stems.append(stem)
+    return tuple(stems)
 
 
 def normalize_and_stem_reply_text(value: str) -> str:
@@ -130,26 +211,22 @@ def normalize_and_stem_reply_text(value: str) -> str:
     return " ".join(_russian_stem(token) for token in normalized.split())
 
 
-def string_found(string1, string2):
-    search = re.search(r"\b" + re.escape(string1) + r"\b", string2)
-    if search:
-        return True
-    return False
-
-
 def normalized_reply_trigger_matches(
     trigger_text_raw: str,
     normalized_message: str,
 ) -> bool:
-    trigger_text = normalize_and_stem_reply_text(trigger_text_raw)
-    if not trigger_text:
+    trigger_tokens = normalize_reply_text(trigger_text_raw).split()
+    if not trigger_tokens:
         return False
 
     normalized_message = normalize_and_stem_reply_text(normalized_message)
-
-    if trigger_text_raw.startswith('<'):
-        return trigger_text in normalized_message
-    return string_found(trigger_text, normalized_message)
+    units: list[str] = []
+    for token in trigger_tokens:
+        stems = russian_reply_token_stems(token) or (_russian_stem(token),)
+        escaped = [re.escape(stem) for stem in stems]
+        units.append(escaped[0] if len(escaped) == 1 else "(?:" + "|".join(escaped) + ")")
+    expression = r"(?<!\w)" + r"\s+".join(units) + r"(?!\w)"
+    return re.search(expression, normalized_message, re.UNICODE) is not None
 
 
 def reply_trigger_matches(trigger_text: str, message_content: str) -> bool:
