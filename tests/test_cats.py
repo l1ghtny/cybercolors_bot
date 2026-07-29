@@ -107,7 +107,7 @@ def test_fetch_cat_with_text_url_encodes_path_and_uses_query_params(monkeypatch)
     assert session.requests == [
         (
             "https://cataas.com/cat/says/%D0%BA%D0%BE%D1%82%20%2F%20cat%3F",
-            {"fontColor": "#FFFFFF", "fontSize": 30, "width": 1000},
+            {"fontColor": "#FFFFFF", "fontSize": 80, "width": 1000},
         )
     ]
 
@@ -119,7 +119,13 @@ def test_long_caption_wraps_to_three_readable_lines():
 
     assert lines == ["Ж" * 32, "Ж" * 32, "Ж" * 32]
     assert cats._caption_font_size(lines) == 28
-    assert cats._caption_font_size("кот") == cats.CAT_CAPTION_MAX_FONT_SIZE
+
+
+def test_short_caption_uses_larger_single_line_font():
+    assert cats._caption_font_size("кот") == cats.CAT_CAPTION_SINGLE_LINE_MAX_FONT_SIZE
+    assert cats._caption_font_size(["короткая", "подпись"]) == (
+        cats.CAT_CAPTION_MULTI_LINE_MAX_FONT_SIZE
+    )
 
 
 def test_caption_overflow_truncates_at_word_boundary():

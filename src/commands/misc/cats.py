@@ -23,7 +23,8 @@ CAT_CAPTION_MAX_LINES = 3
 CAT_CAPTION_LINE_HEIGHT = 1.15
 CAT_CAPTION_HORIZONTAL_PADDING = 80
 CAT_CAPTION_MIN_FONT_SIZE = 14
-CAT_CAPTION_MAX_FONT_SIZE = 30
+CAT_CAPTION_MULTI_LINE_MAX_FONT_SIZE = 30
+CAT_CAPTION_SINGLE_LINE_MAX_FONT_SIZE = 80
 
 
 class CatImageUnavailable(RuntimeError):
@@ -94,7 +95,12 @@ def _caption_font_size(lines: str | list[str]) -> int:
     widest_line = max((_caption_visual_units(line) for line in lines), default=1.0)
     available_width = CAT_CAPTION_IMAGE_WIDTH - CAT_CAPTION_HORIZONTAL_PADDING
     fitted_size = int(available_width / max(widest_line, 1.0))
-    return max(CAT_CAPTION_MIN_FONT_SIZE, min(CAT_CAPTION_MAX_FONT_SIZE, fitted_size))
+    max_font_size = (
+        CAT_CAPTION_SINGLE_LINE_MAX_FONT_SIZE
+        if len(lines) == 1
+        else CAT_CAPTION_MULTI_LINE_MAX_FONT_SIZE
+    )
+    return max(CAT_CAPTION_MIN_FONT_SIZE, min(max_font_size, fitted_size))
 
 
 def _caption_svg_text(lines: list[str]) -> str:
