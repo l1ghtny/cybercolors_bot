@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from src.modules.ai.tool_access import normalize_ai_companion_tool_names
 
 AIChannelMode = Literal["none", "all", "selected", "exclude_selected"]
+AICommandGuidanceMode = Literal["personalized", "public_only"]
 AIModerationStrictness = Literal["low", "standard", "high"]
 AIModerationActionMode = Literal["review_only"]
 
@@ -41,6 +42,7 @@ class ServerAISettingsReadModel(BaseModel):
     answer_allowed_channel_ids: list[str] = Field(default_factory=list)
     answer_allowed_role_ids: list[str] = Field(default_factory=list)
     answer_enabled_tools: list[str] = Field(default_factory=list)
+    answer_command_guidance_mode: AICommandGuidanceMode = "personalized"
     moderation_enabled: bool
     moderation_channel_mode: AIChannelMode
     moderation_included_channel_ids: list[str] = Field(default_factory=list)
@@ -67,6 +69,7 @@ class ServerAISettingsUpdateModel(BaseModel):
     answer_allowed_channel_ids: list[str] | None = None
     answer_allowed_role_ids: list[str] | None = None
     answer_enabled_tools: list[str] | None = None
+    answer_command_guidance_mode: AICommandGuidanceMode | None = None
     moderation_enabled: bool | None = None
     moderation_channel_mode: AIChannelMode | None = None
     moderation_included_channel_ids: list[str] | None = None

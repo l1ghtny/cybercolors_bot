@@ -4,7 +4,6 @@ from typing import Any, Awaitable, Callable, Literal
 from fastapi import HTTPException
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from api.services.bot_command_catalog import list_bot_commands
 from api.services.discord_guilds import fetch_channel
 from api.services.moderation_rules_service import list_rules, to_rule_read_model
 from api.services.moderation_users_service import build_user_profile_card
@@ -108,20 +107,6 @@ async def get_active_rules_context(
     return [_model_to_dict(to_rule_read_model(rule)) for rule in rules]
 
 
-def _command_catalog_context() -> list[dict[str, Any]]:
-    commands = []
-    for command in list_bot_commands(locale=None):
-        commands.append(
-            {
-                "name": command.qualified_name,
-                "summary": command.summary,
-                "category": command.category,
-                "discord_type": command.discord_type,
-            }
-        )
-    return commands
-
-
 async def get_server_answer_context(session: AsyncSession, server_id: int) -> dict[str, Any]:
     server = await session.get(Server, server_id)
     settings = await session.get(ServerAISettings, server_id)
@@ -136,7 +121,6 @@ async def get_server_answer_context(session: AsyncSession, server_id: int) -> di
             "product_name": "CyberColors",
             "role": "Discord server assistant and moderation helper",
             "configured_persona": settings.answer_persona if settings is not None else None,
-            "available_commands": _command_catalog_context(),
         },
     }
 

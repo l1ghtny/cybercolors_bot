@@ -94,6 +94,7 @@ from src.modules.birthdays_module.hourly_check.check_time import check_time
 from src.modules.birthdays_module.user_validation.flag_users_who_left import flag_user
 from src.modules.birthdays_module.user_validation.validation_main import main_validation_process
 from src.modules.guild_lifecycle import mark_guild_presence, sync_active_guild_presence
+from src.modules.localization.service import get_server_locale, tr
 from src.modules.logs_setup import logger
 from src.modules.on_message_processing.background_message_processing import process_background_tasks
 from src.modules.ai.moderation_review import register_ai_moderation_review_views
@@ -108,6 +109,7 @@ from src.modules.on_voice_state_processing.create_voice_channel import create_vo
 from src.modules.moderation.ban_worker import process_expired_bans
 from src.modules.moderation.mute_worker import process_expired_mutes
 from src.modules.moderation.newcomer_restrictions import handle_newcomer_role_granted
+from src.modules.moderation.bot_rbac import ensure_bot_permission
 from src.modules.nickname_history import (
     record_member_nickname_change,
     record_user_display_name_change,
@@ -119,6 +121,7 @@ from src.modules.monitoring.activity import (
     record_voice_join_activity,
 )
 from api.services.moderation_rules_service import sync_rules_from_source_message_edit
+from api.services.newcomer_probation import can_use_public_member_commands
 from src.views.replies.delete_multiple_replies import DeleteReplyMultiple, DeleteReplyMultipleSelect
 from src.views.replies.delete_one_reply import DeleteOneReply
 from src.views.pagination.pagination import PaginationView
@@ -134,6 +137,8 @@ intents.message_content = True
 intents.voice_states = True
 
 logger = logger.logging.getLogger("bot")
+
+PUBLIC_MEMBER_COMMAND_NAMES = frozenset({"bday add", "bday change", "bday list", "cat"})
 
 
 # main class
@@ -281,6 +286,21 @@ class CyberColorsCommandTree(app_commands.CommandTree):
 
         async with get_async_session() as session:
             settings = await session.get(ServerSecuritySettings, interaction.guild_id)
+        member_role_ids = {role.id for role in interaction.user.roles}
+        if (
+            command_name in PUBLIC_MEMBER_COMMAND_NAMES
+            and not can_use_public_member_commands(settings, role_ids=member_role_ids)
+        ):
+            message = (
+                "Эта команда станет доступна после окончания испытательного срока. "
+                "Если срок уже закончился, обратитесь к модератору.\n"
+                "This command becomes available after the newcomer probation period."
+            )
+            if interaction.response.is_done():
+                await interaction.followup.send(message, ephemeral=True)
+            else:
+                await interaction.response.send_message(message, ephemeral=True)
+            return False
         if (
             settings is None
             or not settings.newcomer_restriction_enabled
@@ -288,7 +308,7 @@ class CyberColorsCommandTree(app_commands.CommandTree):
             or settings.newcomer_role_id is None
         ):
             return True
-        if settings.newcomer_role_id not in {role.id for role in interaction.user.roles}:
+        if settings.newcomer_role_id not in member_role_ids:
             return True
 
         message = (
@@ -450,8 +470,15 @@ async def change_birthday_command(interaction: discord.Interaction, day: int, mo
 # TODO:
 #  1. Move it to a dedicated function
 #  2. Move the feature to the UI
+@app_commands.checks.has_permissions(manage_guild=True)
 @tree.command(name='birthdays_settings', description='Настрой дни рождения для своего сервера')
 async def birthdays_settings(interaction: discord.Interaction):
+    if interaction.guild is None:
+        await interaction.response.send_message(tr(None, "common.server_only"), ephemeral=True)
+        return
+    locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "birthdays.settings.edit", locale=locale):
+        return
     await interaction.response.defer()
     server_id = interaction.guild.id
     try:
@@ -486,6 +513,7 @@ async def birthdays_settings(interaction: discord.Interaction):
         raise Exception(error)
 
 
+@app_commands.checks.has_permissions(manage_guild=True)
 @tree.command(name='add_reply', description='Add a custom bot reply trigger.')
 async def add_reply(interaction: discord.Interaction, phrase: str, response: str):
     def em_replace(string):
@@ -498,6 +526,12 @@ async def add_reply(interaction: discord.Interaction, phrase: str, response: str
     def e_replace(string):
         return string.replace('ё', 'е')
 
+    if interaction.guild is None:
+        await interaction.response.send_message(tr(None, "common.server_only"), ephemeral=True)
+        return
+    locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "replies.manage", locale=locale):
+        return
     await interaction.response.defer(ephemeral=True)
     server_id = interaction.guild_id
     user_id = interaction.user.id
@@ -531,8 +565,15 @@ async def add_reply(interaction: discord.Interaction, phrase: str, response: str
         await interaction.followup.send(f'Не получилось записать словосочетание из-за ошибки: {error}', ephemeral=True)
 
 
+@app_commands.checks.has_permissions(manage_guild=True)
 @tree.command(name='delete_reply', description='Позволяет удалить заведенные триггеры на фразы')
 async def delete_reply(interaction: discord.Interaction, trigger: str):
+    if interaction.guild is None:
+        await interaction.response.send_message(tr(None, "common.server_only"), ephemeral=True)
+        return
+    locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "replies.manage", locale=locale):
+        return
     search_pattern = f'%{trigger}%'
     server_id = interaction.guild_id
     
@@ -599,8 +640,15 @@ async def delete_reply_autocomplete(interaction: discord.Interaction, current: s
     return result_list
 
 
+@app_commands.checks.has_permissions(manage_guild=True)
 @app_commands.command(name='check', description='Force birthday role check.')
 async def birthday_check(interaction: discord.Interaction):
+    if interaction.guild is None:
+        await interaction.response.send_message(tr(None, "common.server_only"), ephemeral=True)
+        return
+    locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "birthdays.settings.edit", locale=locale):
+        return
     await interaction.response.defer()
     await check_birthday_new(client)
     await check_roles(client)
@@ -626,8 +674,15 @@ moderation_birthday_group.add_command(birthday_check)
 tree.add_command(birthday_group)
 
 
+@app_commands.checks.has_permissions(manage_guild=True)
 @tree.command(name='show_replies', description='Вызывает список всех вопросов-ответов на сервере')
 async def show_replies(interaction: discord.Interaction):
+    if interaction.guild is None:
+        await interaction.response.send_message(tr(None, "common.server_only"), ephemeral=True)
+        return
+    locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "replies.view", locale=locale):
+        return
     await interaction.response.defer()
     server_id = interaction.guild_id
     data = []
@@ -659,9 +714,16 @@ async def show_replies(interaction: discord.Interaction):
         await interaction.followup.send(f'Ошибка при выводе списка: {error}')
 
 
+@app_commands.checks.has_permissions(manage_guild=True)
 @tree.command(name='force_validation',
               description='command for testing purposes to check if validation works fine or not')
 async def force_validation(interaction: discord.Interaction):
+    if interaction.guild is None:
+        await interaction.response.send_message(tr(None, "common.server_only"), ephemeral=True)
+        return
+    locale = await get_server_locale(interaction.guild.id)
+    if not await ensure_bot_permission(interaction, "maintenance.memberships.reconcile", locale=locale):
+        return
     await interaction.response.defer(ephemeral=True)
     try:
         logger.info('validation process started (forced)')

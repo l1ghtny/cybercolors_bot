@@ -276,12 +276,37 @@ async def resolve_effective_permissions(
     access_token: str | None = None,
 ) -> RbacEffectivePermissionsModel:
     user_role_ids = await get_dashboard_member_role_ids(server_id=server_id, user_id=user_id)
-    matched_role_ids = {str(role_id) for role_id in user_role_ids}
     owner_fallback, admin_fallback = await _resolve_fallback_flags(
         server_id=server_id,
         user_id=user_id,
         access_token=access_token,
     )
+    return await resolve_effective_permissions_for_member_context(
+        session=session,
+        server_id=server_id,
+        user_id=user_id,
+        role_ids=user_role_ids,
+        owner_fallback=owner_fallback,
+        admin_fallback=admin_fallback,
+    )
+
+
+async def resolve_effective_permissions_for_member_context(
+    session: AsyncSession,
+    server_id: int,
+    user_id: int,
+    role_ids: set[int] | list[int] | tuple[int, ...],
+    *,
+    owner_fallback: bool = False,
+    admin_fallback: bool = False,
+) -> RbacEffectivePermissionsModel:
+    """Resolve product permissions from trusted Discord message member context.
+
+    Bot message handlers already have the member's current roles and guild flags, so
+    they can avoid an additional Discord REST lookup while retaining the same RBAC
+    direct-user, role-union, and owner/administrator fallback semantics.
+    """
+    matched_role_ids = {str(role_id) for role_id in role_ids}
 
     direct_assignment = await _get_assignment(session, server_id, "user", str(user_id))
     role_assignments: list[ServerRbacAssignment] = []

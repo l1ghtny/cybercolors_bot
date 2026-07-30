@@ -13,7 +13,7 @@ REPLY_THREAD_LIMIT = 20
 
 async def decide_on_response(message, client, *, locale: str | None = None):
     if check_replies(message) is False:
-        bot_response, token_total = await create_one_response(message, client)
+        bot_response, token_total = await create_one_response(message, client, locale=locale)
     else:
         n, messages_raw = await count_replies(message)
         if n > REPLY_THREAD_LIMIT:
@@ -33,6 +33,7 @@ async def decide_on_response(message, client, *, locale: str | None = None):
                 messages_processed,
                 message=message,
                 reply_context=reply_context,
+                locale=locale,
             )
         else:
             bot_response = tr(locale, "ai_reply.thread_multi_user")

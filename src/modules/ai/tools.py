@@ -7,11 +7,18 @@ from fastapi import Response
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.routers.activity import get_server_activity_leaderboard
+from api.services.bot_command_catalog import list_bot_commands
 from api.services.discord_guilds import fetch_guild_channels
+from api.services.newcomer_probation import (
+    can_use_public_member_commands,
+    required_public_member_role_id,
+)
+from api.services.rbac_service import resolve_effective_permissions_for_member_context
 from src.modules.ai.context import get_active_rules_context, get_member_profile_context
 from src.modules.ai.knowledge import search_server_knowledge
 from src.modules.ai.models import AIToolSpec
 from src.modules.ai.youtube_channel_catalog import search_youtube_channel_catalog
+from src.db.models import ServerSecuritySettings
 
 AIToolHandler = Callable[..., Awaitable[dict[str, Any] | list[dict[str, Any]]]]
 
@@ -23,6 +30,7 @@ class AITool:
     parameters: dict[str, Any]
     handler: AIToolHandler
     requires_admin_context: bool = False
+    requires_requester_context: bool = False
 
 
 @dataclass(slots=True)
@@ -59,6 +67,7 @@ class AIToolRegistry:
                 "description": tool.description,
                 "parameters": tool.parameters,
                 "requires_admin_context": tool.requires_admin_context,
+                "requires_requester_context": tool.requires_requester_context,
             }
             for tool in self.tools.values()
         ]
@@ -66,6 +75,106 @@ class AIToolRegistry:
 
 async def _active_rules_tool(*, session: AsyncSession, server_id: int) -> list[dict[str, Any]]:
     return await get_active_rules_context(session=session, server_id=server_id)
+
+
+async def _available_commands_tool(
+    *,
+    session: AsyncSession,
+    server_id: int,
+    requester_user_id: int,
+    requester_role_ids: list[int],
+    requester_permission_names: list[str],
+    requester_is_owner: bool,
+    requester_is_administrator: bool,
+    requester_locale: str | None,
+    guidance_mode: str,
+    query: str | None = None,
+    category: str | None = None,
+    details: bool = False,
+) -> dict[str, Any]:
+    role_ids = {int(role_id) for role_id in requester_role_ids}
+    permission_names = {str(name) for name in requester_permission_names}
+    privileged = requester_is_owner or requester_is_administrator or "administrator" in permission_names
+    security_settings = await session.get(ServerSecuritySettings, server_id)
+    required_member_role_id = required_public_member_role_id(security_settings)
+    has_public_member_access = can_use_public_member_commands(
+        security_settings,
+        role_ids=role_ids,
+        privileged=privileged,
+    )
+
+    effective_permission_keys: set[str] = set()
+    if guidance_mode == "personalized":
+        effective = await resolve_effective_permissions_for_member_context(
+            session=session,
+            server_id=server_id,
+            user_id=requester_user_id,
+            role_ids=role_ids,
+            owner_fallback=requester_is_owner,
+            admin_fallback=requester_is_administrator,
+        )
+        effective_permission_keys = set(effective.permission_keys)
+
+    available = []
+    for command in list_bot_commands(locale=requester_locale or "en"):
+        if command.audience == "public_member":
+            if not has_public_member_access:
+                continue
+        else:
+            if guidance_mode != "personalized":
+                continue
+            required_rbac = set(command.required_rbac_permissions)
+            required_native = set(command.required_permissions)
+            if not required_rbac and not required_native:
+                continue
+            if required_rbac and not required_rbac.issubset(effective_permission_keys):
+                continue
+            if required_native and not privileged and not required_native.issubset(permission_names):
+                continue
+        available.append(command)
+
+    total_available = len(available)
+    normalized_category = (category or "").strip().lower()
+    if normalized_category:
+        available = [command for command in available if command.category.lower() == normalized_category]
+    normalized_query = (query or "").strip().lower().lstrip("/")
+    if normalized_query:
+        available = [
+            command
+            for command in available
+            if normalized_query
+            in " ".join(
+                (
+                    command.id,
+                    command.qualified_name,
+                    command.invoke,
+                    command.category,
+                    command.summary,
+                )
+            ).lower()
+        ]
+
+    commands: list[dict[str, Any]] = []
+    for command in available:
+        item: dict[str, Any] = {
+            "id": command.id,
+            "invoke": command.invoke,
+            "category": command.category,
+            "summary": command.summary,
+        }
+        if details:
+            item["parameters"] = [parameter.model_dump(mode="json") for parameter in command.parameters]
+            item["workflow"] = list(command.workflow)
+            item["notes"] = list(command.notes)
+        commands.append(item)
+
+    return {
+        "guidance_mode": guidance_mode,
+        "member_role_required": required_member_role_id is not None,
+        "total_available": total_available,
+        "returned_count": len(commands),
+        "commands": commands,
+    }
 
 
 async def _member_profile_tool(
@@ -219,6 +328,33 @@ async def _youtube_channel_catalog_tool(
 
 def build_default_tool_registry() -> AIToolRegistry:
     registry = AIToolRegistry()
+    registry.register(
+        AITool(
+            name="get_available_commands",
+            description=(
+                "List only the Discord bot commands the current requester is allowed to use. "
+                "Use without query for a concise command list. For instructions about one command, "
+                "pass its name in query and set details=true. The requester identity and permissions "
+                "are supplied by the bot and cannot be selected by the model."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "server_id": {"type": "integer"},
+                    "query": {
+                        "type": "string",
+                        "description": "Optional command name or topic, such as birthday, replies, or mod warn.",
+                    },
+                    "category": {"type": "string"},
+                    "details": {"type": "boolean"},
+                },
+                "required": ["server_id"],
+                "additionalProperties": False,
+            },
+            handler=_available_commands_tool,
+            requires_requester_context=True,
+        )
+    )
     registry.register(
         AITool(
             name="get_active_rules",

@@ -695,6 +695,7 @@ def test_answer_uses_assistant_task_and_context_block():
     assert "Who are the admins?" in provider.last_request.messages[-1].content
     assert "No database context was provided" in provider.last_request.messages[-1].content
     assert "Do not reveal internal moderation cases" in provider.last_request.system_prompt
+    assert "Do not invent bot commands or command access" in provider.last_request.system_prompt
     assert "activity traces" not in provider.last_request.system_prompt
     assert "nickname history" not in provider.last_request.system_prompt
 
@@ -1201,11 +1202,13 @@ def test_default_tool_registry_exposes_initial_database_tools():
     specs = {tool["name"]: tool for tool in registry.as_specs()}
 
     assert "get_active_rules" in specs
+    assert "get_available_commands" in specs
     assert "get_member_profile" in specs
     assert "get_server_activity" in specs
     assert specs["get_member_profile"]["requires_admin_context"] is False
     assert "public-safe member context" in specs["get_member_profile"]["description"]
     assert specs["get_server_activity"]["requires_admin_context"] is False
+    assert specs["get_available_commands"]["requires_requester_context"] is True
     assert "same date, user, role" in specs["get_server_activity"]["description"]
 
 
@@ -1215,6 +1218,119 @@ def test_tool_registry_specs_can_be_filtered_per_server():
     specs = registry.specs(enabled_names={"get_member_profile", "get_server_activity"})
 
     assert [tool.name for tool in specs] == ["get_member_profile", "get_server_activity"]
+
+
+def test_available_commands_tool_filters_public_newcomer_and_staff_access(monkeypatch):
+    import src.modules.ai.tools as tools_module
+    from src.db.models import ServerSecuritySettings
+
+    settings = ServerSecuritySettings(
+        server_id=123,
+        newcomer_restriction_enabled=True,
+        newcomer_role_id=101,
+        newcomer_member_role_id=202,
+    )
+
+    class FakeSession:
+        async def get(self, model, server_id):
+            assert model is ServerSecuritySettings
+            assert server_id == 123
+            return settings
+
+    async def fake_effective_permissions(*, role_ids, **_kwargs):
+        permission_keys = []
+        if 303 in role_ids:
+            permission_keys = [
+                "birthdays.settings.edit",
+                "moderation.actions.apply.warn",
+                "replies.manage",
+                "replies.view",
+            ]
+        return SimpleNamespace(permission_keys=permission_keys)
+
+    monkeypatch.setattr(
+        tools_module,
+        "resolve_effective_permissions_for_member_context",
+        fake_effective_permissions,
+    )
+
+    async def run(role_ids, permission_names=None, *, guidance_mode="personalized", administrator=False):
+        return await tools_module._available_commands_tool(
+            session=FakeSession(),
+            server_id=123,
+            requester_user_id=456,
+            requester_role_ids=role_ids,
+            requester_permission_names=permission_names or [],
+            requester_is_owner=False,
+            requester_is_administrator=administrator,
+            requester_locale="en",
+            guidance_mode=guidance_mode,
+        )
+
+    member = asyncio.run(run([202]))
+    assert {command["id"] for command in member["commands"]} == {
+        "bday.add",
+        "bday.change",
+        "bday.list",
+        "cat",
+    }
+
+    newcomer = asyncio.run(run([101]))
+    assert newcomer["commands"] == []
+
+    staff = asyncio.run(run([202, 303], ["manage_guild", "moderate_members"]))
+    staff_ids = {command["id"] for command in staff["commands"]}
+    assert {"bday.add", "birthdays_settings", "add_reply", "delete_reply", "show_replies", "mod.warn"}.issubset(
+        staff_ids
+    )
+    assert "force_validation" not in staff_ids
+
+    public_only_admin = asyncio.run(run([], guidance_mode="public_only", administrator=True))
+    assert {command["id"] for command in public_only_admin["commands"]} == {
+        "bday.add",
+        "bday.change",
+        "bday.list",
+        "cat",
+    }
+
+
+def test_available_commands_tool_returns_details_only_when_requested(monkeypatch):
+    import src.modules.ai.tools as tools_module
+    from src.db.models import ServerSecuritySettings
+
+    class FakeSession:
+        async def get(self, model, server_id):
+            assert model is ServerSecuritySettings
+            return ServerSecuritySettings(server_id=server_id)
+
+    async def fake_effective_permissions(**_kwargs):
+        return SimpleNamespace(permission_keys=["replies.manage"])
+
+    monkeypatch.setattr(
+        tools_module,
+        "resolve_effective_permissions_for_member_context",
+        fake_effective_permissions,
+    )
+
+    result = asyncio.run(
+        tools_module._available_commands_tool(
+            session=FakeSession(),
+            server_id=123,
+            requester_user_id=456,
+            requester_role_ids=[],
+            requester_permission_names=["manage_guild"],
+            requester_is_owner=False,
+            requester_is_administrator=False,
+            requester_locale="en",
+            guidance_mode="personalized",
+            query="add_reply",
+            details=True,
+        )
+    )
+
+    assert [command["id"] for command in result["commands"]] == ["add_reply"]
+    assert result["commands"][0]["parameters"]
+    assert result["commands"][0]["workflow"]
 
 
 def test_server_activity_tool_reuses_dashboard_filters_and_omits_moderation_data(monkeypatch):
@@ -1428,6 +1544,24 @@ def test_answer_rejects_tool_call_disabled_for_server():
     assert result.output == {
         "ok": False,
         "error": "Tool is disabled for this server: get_active_rules",
+    }
+
+
+def test_command_guidance_tool_requires_trusted_requester_context():
+    ai = AIMain(provider=FakeProvider("unused"), model="test-model")
+
+    result = asyncio.run(
+        ai._execute_assistant_tool_call(
+            AIToolCall(id="call-1", name="get_available_commands", arguments={"server_id": 123}),
+            session="session",
+            server_id=123,
+            enabled_tool_names={"get_available_commands"},
+        )
+    )
+
+    assert result.output == {
+        "ok": False,
+        "error": "Tool call rejected because requester context is unavailable.",
     }
 
 

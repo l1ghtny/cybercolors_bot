@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -29,6 +31,7 @@ class BotCommandDocModel(BaseModel):
     invoke: str
     category: str
     discord_type: str = "slash_command"
+    audience: Literal["public_member", "staff"] = "staff"
     summary: str
     required_permissions: list[str] = Field(default_factory=list)
     required_rbac_permissions: list[str] = Field(default_factory=list)

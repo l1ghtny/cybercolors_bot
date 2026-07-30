@@ -90,6 +90,18 @@ def test_ai_settings_read_model_defaults_to_read_only_permission():
     assert payload.moderation_provider_timeout_seconds == 20
     assert payload.knowledge_subject_priority_role_ids == []
     assert payload.answer_enabled_tools == list(AI_COMPANION_TOOL_NAMES)
+    assert payload.answer_command_guidance_mode == "personalized"
+
+
+def test_ai_settings_update_accepts_command_guidance_modes():
+    personalized = ServerAISettingsUpdateModel(answer_command_guidance_mode="personalized")
+    public_only = ServerAISettingsUpdateModel(answer_command_guidance_mode="public_only")
+
+    assert personalized.answer_command_guidance_mode == "personalized"
+    assert public_only.answer_command_guidance_mode == "public_only"
+
+    with pytest.raises(ValidationError):
+        ServerAISettingsUpdateModel(answer_command_guidance_mode="show_everything")
 
 
 def test_ai_settings_read_model_includes_review_channel():

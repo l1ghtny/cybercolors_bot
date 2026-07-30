@@ -54,6 +54,7 @@ def test_rbac_catalog_contains_presets_and_permission_keys():
     assert "moderation.cases.view" in permission_keys
     assert "moderation.cases.manage" in permission_keys
     assert "communications.send_as_bot" in permission_keys
+    assert "maintenance.memberships.reconcile" in permission_keys
     for action_type in ActionType:
         assert f"moderation.actions.apply.{action_type.value}" in permission_keys
     assert "admin" in preset_keys
@@ -400,6 +401,29 @@ async def _assignment_resolution_scenario(monkeypatch) -> None:
 
 def test_rbac_assignments_resolve_direct_and_role_permissions(monkeypatch):
     asyncio.run(_assignment_resolution_scenario(monkeypatch))
+
+
+def test_member_context_rbac_resolver_uses_trusted_admin_fallback_without_discord(monkeypatch):
+    import api.services.rbac_service as rbac_service
+
+    async def fake_get_assignment(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(rbac_service, "_get_assignment", fake_get_assignment)
+
+    effective = asyncio.run(
+        rbac_service.resolve_effective_permissions_for_member_context(
+            session=object(),
+            server_id=123,
+            user_id=456,
+            role_ids=[],
+            admin_fallback=True,
+        )
+    )
+
+    assert effective.admin_fallback_applied is True
+    assert "rbac.manage" in effective.permission_keys
+    assert "maintenance.memberships.reconcile" in effective.permission_keys
 
 
 async def _admin_fallback_scenario(monkeypatch) -> None:

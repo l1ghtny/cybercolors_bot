@@ -309,7 +309,7 @@ def test_bot_command_catalog_endpoint_returns_filterable_contract():
     response = client.get("/bot-commands", params={"category": "moderation-cases"})
     assert response.status_code == 200
     body = response.json()
-    assert body["version"] == "2026-07-27"
+    assert body["version"] == "2026-07-29"
     assert body["locale"] == "en"
     assert body["available_locales"] == ["en", "ru"]
     assert {command["category"] for command in body["commands"]} == {"moderation-cases"}
@@ -354,6 +354,11 @@ def test_bot_command_catalog_exposes_valid_rbac_permission_keys():
 
     assert get_bot_command("mod.warn").required_rbac_permissions == ["moderation.actions.apply.warn"]
     assert get_bot_command("mod.actions.undo").required_rbac_permissions == ["moderation.actions.revert"]
+    assert get_bot_command("birthdays_settings").required_rbac_permissions == ["birthdays.settings.edit"]
+    assert get_bot_command("add_reply").required_rbac_permissions == ["replies.manage"]
+    assert get_bot_command("delete_reply").required_rbac_permissions == ["replies.manage"]
+    assert get_bot_command("show_replies").required_rbac_permissions == ["replies.view"]
+    assert get_bot_command("force_validation").required_rbac_permissions == ["maintenance.memberships.reconcile"]
     lockdown_command = get_bot_command("mod.lockdown")
     assert lockdown_command is not None
     assert lockdown_command.invoke == "/mod lockdown"
@@ -450,6 +455,12 @@ def test_moderation_bot_commands_use_product_rbac_permissions():
         "security_capture_permissions": {"security.settings.edit"},
         "security_lockdown": {"security.lockdown.manage"},
         "verify_member": {"security.settings.edit"},
+        "birthdays_settings": {"birthdays.settings.edit"},
+        "add_reply": {"replies.manage"},
+        "delete_reply": {"replies.manage"},
+        "birthday_check": {"birthdays.settings.edit"},
+        "show_replies": {"replies.view"},
+        "force_validation": {"maintenance.memberships.reconcile"},
     }
 
     nodes = _function_nodes_by_name()
@@ -464,6 +475,12 @@ def test_moderation_bot_commands_use_product_rbac_permissions():
             missing.append(f"{function_name}: expected {sorted(expected_permissions)}, found {sorted(actual)}")
 
     assert missing == []
+
+
+def test_only_confirmed_member_commands_are_public():
+    public_commands = {command.id for command in BOT_COMMANDS if command.audience == "public_member"}
+
+    assert public_commands == {"bday.add", "bday.change", "bday.list", "cat"}
 
 
 def test_bot_command_catalog_endpoint_returns_russian_locale():

@@ -62,6 +62,7 @@ def to_server_ai_settings_read_model(settings: ServerAISettings) -> ServerAISett
             settings.answer_enabled_tools or [],
             reject_unknown=False,
         ),
+        answer_command_guidance_mode=settings.answer_command_guidance_mode,
         moderation_enabled=settings.moderation_enabled,
         moderation_channel_mode=settings.moderation_channel_mode,
         moderation_included_channel_ids=list(settings.moderation_included_channel_ids or []),
@@ -104,6 +105,8 @@ async def update_server_ai_settings(
         settings.answer_allowed_role_ids = body.answer_allowed_role_ids
     if body.answer_enabled_tools is not None:
         settings.answer_enabled_tools = body.answer_enabled_tools
+    if body.answer_command_guidance_mode is not None:
+        settings.answer_command_guidance_mode = body.answer_command_guidance_mode
     if body.moderation_enabled is not None:
         settings.moderation_enabled = body.moderation_enabled
     if body.moderation_channel_mode is not None:

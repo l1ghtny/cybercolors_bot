@@ -38,6 +38,22 @@ def test_newcomer_restriction_mask_respects_each_toggle():
     assert voice_mask == newcomer_probation.PERMISSION_STREAM
 
 
+def test_public_member_commands_require_promoted_role_when_probation_is_configured():
+    settings = _settings(newcomer_restriction_enabled=True)
+
+    assert newcomer_probation.can_use_public_member_commands(settings, role_ids=[202]) is True
+    assert newcomer_probation.can_use_public_member_commands(settings, role_ids=[101]) is False
+    assert newcomer_probation.can_use_public_member_commands(settings, role_ids=[], privileged=True) is True
+
+
+def test_public_member_commands_remain_available_without_active_probation_configuration():
+    assert newcomer_probation.can_use_public_member_commands(None, role_ids=[]) is True
+    assert newcomer_probation.can_use_public_member_commands(
+        _settings(newcomer_restriction_enabled=False),
+        role_ids=[],
+    ) is True
+
+
 async def _promotion_scenario(monkeypatch):
     calls: list[tuple[str, int]] = []
 

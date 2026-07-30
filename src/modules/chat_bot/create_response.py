@@ -27,7 +27,7 @@ def _answer_timeout_seconds() -> float:
     return max(timeout, 0.001)
 
 
-async def create_one_response(message, client):
+async def create_one_response(message, client, *, locale: str | None = None):
     from src.modules.chat_bot.message_processing import remove_bot_mention
     content = await remove_bot_mention(message, client)
     content = _expand_message_mentions(content, message=message, client=client)
@@ -35,10 +35,17 @@ async def create_one_response(message, client):
         content=content,
         message=message,
         conversation=[],
+        locale=locale,
     )
 
 
-async def create_response_to_dialog(message_list, message=None, *, reply_context: dict | None = None):
+async def create_response_to_dialog(
+    message_list,
+    message=None,
+    *,
+    reply_context: dict | None = None,
+    locale: str | None = None,
+):
     conversation = [
         AIMessage(role=item["role"], content=item["content"], images=item.get("images") or [])
         for item in message_list
@@ -59,6 +66,7 @@ async def create_response_to_dialog(message_list, message=None, *, reply_context
         conversation=conversation,
         images=current_images,
         reply_context=reply_context,
+        locale=locale,
     )
 
 
@@ -69,14 +77,21 @@ async def _create_ai_response(
     conversation: list[AIMessage],
     images: list | None = None,
     reply_context: dict | None = None,
+    locale: str | None = None,
 ) -> tuple[str | None, int]:
     guild = getattr(message, "guild", None)
     author = getattr(message, "author", None)
     channel = getattr(message, "channel", None)
+    role_ids, permission_names, is_owner, is_administrator = _requester_access_context(message)
     assistant_input = AssistantInput(
         content=content,
         server_id=getattr(guild, "id", None),
         author_user_id=getattr(author, "id", None),
+        author_role_ids=role_ids,
+        author_permission_names=permission_names,
+        author_is_owner=is_owner,
+        author_is_administrator=is_administrator,
+        locale=locale,
         channel_id=getattr(channel, "id", None),
         reply_to_message_id=(reply_context or {}).get("message_id"),
         reply_to_author_user_id=(reply_context or {}).get("author"),
@@ -112,6 +127,11 @@ async def _create_ai_response(
                     include_member_profile=True,
                     enable_tools=True,
                     enabled_tool_names=enabled_tool_names,
+                    command_guidance_mode=(
+                        settings.answer_command_guidance_mode
+                        if settings is not None
+                        else "personalized"
+                    ),
                 ),
                 timeout=_answer_timeout_seconds(),
             )
@@ -141,6 +161,32 @@ async def _create_ai_response(
             response=response,
         )
     return response.content, response.total_tokens
+
+
+def _requester_access_context(message) -> tuple[list[int], list[str], bool, bool]:
+    author = getattr(message, "author", None)
+    guild = getattr(message, "guild", None)
+    role_ids = [
+        int(role.id)
+        for role in (getattr(author, "roles", None) or [])
+        if getattr(role, "id", None) is not None
+    ]
+    permissions = getattr(author, "guild_permissions", None)
+    permission_names: list[str] = []
+    if permissions is not None:
+        to_dict = getattr(permissions, "to_dict", None)
+        if callable(to_dict):
+            permission_names = sorted(name for name, allowed in to_dict().items() if allowed)
+        else:
+            try:
+                permission_names = sorted(name for name, allowed in permissions if allowed)
+            except TypeError:
+                permission_names = []
+    author_id = getattr(author, "id", None)
+    owner_id = getattr(guild, "owner_id", None)
+    is_owner = author_id is not None and owner_id is not None and int(author_id) == int(owner_id)
+    is_administrator = "administrator" in permission_names
+    return role_ids, permission_names, is_owner, is_administrator
 
 
 def _expand_message_mentions(content: str, *, message, client) -> str:

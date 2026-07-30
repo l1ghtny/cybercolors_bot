@@ -38,6 +38,28 @@ DANGEROUS_MEMBER_PERMISSIONS = (
 )
 
 
+def required_public_member_role_id(settings: ServerSecuritySettings | None) -> int | None:
+    if (
+        settings is None
+        or not settings.newcomer_restriction_enabled
+        or settings.newcomer_member_role_id is None
+    ):
+        return None
+    return settings.newcomer_member_role_id
+
+
+def can_use_public_member_commands(
+    settings: ServerSecuritySettings | None,
+    *,
+    role_ids: Iterable[int],
+    privileged: bool = False,
+) -> bool:
+    if privileged:
+        return True
+    required_role_id = required_public_member_role_id(settings)
+    return required_role_id is None or required_role_id in set(role_ids)
+
+
 def newcomer_restriction_mask(
     settings: ServerSecuritySettings,
     channel_type: int,

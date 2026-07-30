@@ -20,10 +20,19 @@ class FakeSessionContext:
 
 class FakeGuild:
     id = 123
+    owner_id = 999
 
 
 class FakeAuthor:
     id = 456
+    roles = []
+
+    class Permissions:
+        @staticmethod
+        def to_dict():
+            return {"manage_guild": True, "administrator": False}
+
+    guild_permissions = Permissions()
 
 
 class FakeChannel:
@@ -152,9 +161,13 @@ def test_create_ai_response_passes_server_tool_settings(monkeypatch):
     class CapturingAI:
         def __init__(self):
             self.enabled_tool_names = None
+            self.command_guidance_mode = None
+            self.assistant_input = None
 
-        async def answer(self, *_args, **kwargs):
+        async def answer(self, assistant_input, *_args, **kwargs):
             self.enabled_tool_names = kwargs["enabled_tool_names"]
+            self.command_guidance_mode = kwargs["command_guidance_mode"]
+            self.assistant_input = assistant_input
             return AIResponse(content="done", model="test-model", provider="fake")
 
     ai = CapturingAI()
@@ -170,6 +183,10 @@ def test_create_ai_response_passes_server_tool_settings(monkeypatch):
     )
 
     assert ai.enabled_tool_names == {"get_server_activity"}
+    assert ai.command_guidance_mode == "personalized"
+    assert ai.assistant_input.author_permission_names == ["manage_guild"]
+    assert ai.assistant_input.author_is_owner is False
+    assert ai.assistant_input.author_is_administrator is False
 
 
 def test_create_ai_response_passes_current_message_images(monkeypatch):

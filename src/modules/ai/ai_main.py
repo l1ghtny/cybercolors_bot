@@ -135,6 +135,7 @@ If priority server memory facts are present and relevant, include them before pr
 Do not let moderation history dominate a general "what do you know about X?" answer. Mention moderation briefly only if useful, unless the user specifically asks about moderation.
 If the user asks about you, admins, members, or the server, answer in a warm first-person style where appropriate.
 Do not invent server facts, admin facts, birthdays, moderation history, or rules.
+Do not invent bot commands or command access. If the command guidance tool is unavailable, say that command guidance is unavailable.
 When the user asks about server rules, answer from Context.active_rules if present before saying that no rules are configured.
 If the context does not contain the answer, say that you do not have enough server data.
 Do not reveal internal moderation cases, notes, monitoring status, or private moderation workspace data.
@@ -153,11 +154,19 @@ WEB_SEARCH_GUIDANCE = (
     "You may use web search for current public information, news, public facts, or external references. Prefer server "
     "context for server-specific facts, and distinguish public web information from server memory when useful."
 )
+COMMAND_GUIDANCE = (
+    "Use get_available_commands whenever the requester asks what bot commands exist, what they can use, "
+    "or how to use a command. Never invent or list commands from memory. The tool already filters commands "
+    "to the current requester's trusted Discord and product permissions. For instructions about one command, "
+    "call it with that command as query and details=true."
+)
 
 
 def assistant_system_prompt(enabled_tool_names: set[str] | None = None) -> str:
     enabled = AI_COMPANION_TOOL_NAME_SET if enabled_tool_names is None else enabled_tool_names
     guidance = []
+    if "get_available_commands" in enabled:
+        guidance.append(COMMAND_GUIDANCE)
     if "get_server_activity" in enabled:
         guidance.append(ACTIVITY_TOOL_GUIDANCE)
     if "search_youtube_channel_catalog" in enabled:
@@ -310,6 +319,7 @@ class AIMain:
         include_member_profile: bool = False,
         enable_tools: bool = True,
         enabled_tool_names: set[str] | None = None,
+        command_guidance_mode: str = "personalized",
         max_tool_rounds: int = 2,
     ) -> AIResponse:
         normalized = (
@@ -392,6 +402,8 @@ class AIMain:
                     session=session,
                     server_id=normalized.server_id,
                     enabled_tool_names=effective_enabled_tool_names,
+                    assistant_input=normalized,
+                    command_guidance_mode=command_guidance_mode,
                 )
                 for tool_call in response.tool_calls
             ]
@@ -489,6 +501,8 @@ class AIMain:
         session: AsyncSession | None,
         server_id: int | None,
         enabled_tool_names: set[str] | None = None,
+        assistant_input: AssistantInput | None = None,
+        command_guidance_mode: str = "personalized",
     ) -> AIToolResult:
         output: dict[str, Any] | list[dict[str, Any]] | str
         tool = self.tool_registry.get(tool_call.name)
@@ -516,6 +530,22 @@ class AIMain:
             return AIToolResult(call_id=tool_call.id, output=output)
 
         arguments["server_id"] = requested_server_id
+        if tool.requires_requester_context:
+            if assistant_input is None or assistant_input.author_user_id is None:
+                output = {"ok": False, "error": "Tool call rejected because requester context is unavailable."}
+                return AIToolResult(call_id=tool_call.id, output=output)
+            trusted_context = {
+                "requester_user_id": int(assistant_input.author_user_id),
+                "requester_role_ids": [int(role_id) for role_id in assistant_input.author_role_ids],
+                "requester_permission_names": list(assistant_input.author_permission_names),
+                "requester_is_owner": bool(assistant_input.author_is_owner),
+                "requester_is_administrator": bool(assistant_input.author_is_administrator),
+                "requester_locale": assistant_input.locale,
+                "guidance_mode": command_guidance_mode,
+            }
+            for name in trusted_context:
+                arguments.pop(name, None)
+            arguments.update(trusted_context)
         if "user_id" in arguments:
             try:
                 arguments["user_id"] = int(arguments["user_id"])

@@ -488,6 +488,7 @@ class ServerAISettings(SQLModel, table=True):
         default_factory=default_ai_companion_tool_names,
         sa_column=Column(sa.JSON, nullable=False),
     )
+    answer_command_guidance_mode: str = Field(default="personalized", nullable=False, max_length=20)
     moderation_enabled: bool = Field(default=False, nullable=False)
     moderation_channel_mode: str = Field(default="all", nullable=False, max_length=20)
     moderation_included_channel_ids: list[str] = Field(default_factory=list, sa_column=Column(sa.JSON, nullable=False))

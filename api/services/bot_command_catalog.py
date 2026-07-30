@@ -840,6 +840,7 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         qualified_name="bday add",
         invoke="/bday add",
         category="birthdays",
+        audience="public_member",
         summary="Add your birthday to the server birthday list.",
         parameters=[
             _param("day", "integer", "Day of month."),
@@ -854,6 +855,7 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         qualified_name="bday change",
         invoke="/bday change",
         category="birthdays",
+        audience="public_member",
         summary="Change your saved birthday and confirm the timezone again.",
         parameters=[
             _param("day", "integer", "Day of month."),
@@ -868,6 +870,7 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         qualified_name="birthdays_settings",
         invoke="/birthdays_settings",
         category="birthdays",
+        required_permissions=["manage_guild"],
         summary="Configure the server birthday channel and birthday role through Discord UI controls.",
         components=[
             _component("button", "Select existing", "Starts a channel select flow."),
@@ -883,6 +886,7 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         qualified_name="add_reply",
         invoke="/add_reply",
         category="replies",
+        required_permissions=["manage_guild"],
         summary="Add a custom bot reply trigger for the current server.",
         parameters=[_param("phrase", "string", "Trigger phrase."), _param("response", "string", "Bot response text.")],
         workflow=["Normalizes the trigger phrase, creates a reply and trigger row, and confirms ephemerally."],
@@ -893,6 +897,7 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         qualified_name="delete_reply",
         invoke="/delete_reply",
         category="replies",
+        required_permissions=["manage_guild"],
         summary="Delete a custom bot reply trigger.",
         parameters=[_param("trigger", "string", "Trigger search text.", autocomplete=True)],
         components=[
@@ -910,6 +915,7 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         qualified_name="mod bday check",
         invoke="/mod bday check",
         category="birthdays",
+        required_permissions=["manage_guild"],
         summary="Run the birthday and birthday-role checks immediately instead of waiting for the scheduler.",
         workflow=["Runs both scheduled checks immediately and responds with OK when they finish."],
         notes=["Operational/testing command; normal birthday checks run automatically."],
@@ -920,6 +926,7 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         qualified_name="bday list",
         invoke="/bday list",
         category="birthdays",
+        audience="public_member",
         summary="Show all birthdays on the server.",
         workflow=["Delegates to the birthday list module with page size 15."],
     ),
@@ -929,6 +936,7 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         qualified_name="show_replies",
         invoke="/show_replies",
         category="replies",
+        required_permissions=["manage_guild"],
         summary="Show all configured custom reply triggers for the server.",
         components=[_component("pagination", "Replies list", "Paginated Discord view when replies exist.")],
         workflow=["Loads triggers and replies for the server, then displays them through the pagination view."],
@@ -939,6 +947,7 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         qualified_name="force_validation",
         invoke="/force_validation",
         category="maintenance",
+        required_permissions=["manage_guild"],
         summary="Reconcile stored server memberships with Discord without waiting for the scheduled check.",
         workflow=[
             "Purges invalid absent-member records whose Discord users are no longer available.",
@@ -954,6 +963,7 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         qualified_name="cat",
         invoke="/cat",
         category="misc",
+        audience="public_member",
         summary="Send a generated cat image, optionally with text.",
         parameters=[_param("text", "string", "Optional text to render on the cat image.", required=False)],
         workflow=["Fetches an image from cataas.com, sends it as cat.png, and deletes the temporary local file."],
@@ -1005,6 +1015,12 @@ COMMAND_RBAC_PERMISSIONS: dict[str, tuple[str, ...]] = {
     "mod.cases.unlink_action": ("moderation.cases.manage",),
     "mod.actions.list": ("moderation.actions.view",),
     "mod.actions.undo": ("moderation.actions.revert",),
+    "birthdays_settings": ("birthdays.settings.edit",),
+    "add_reply": ("replies.manage",),
+    "delete_reply": ("replies.manage",),
+    "mod.bday.check": ("birthdays.settings.edit",),
+    "show_replies": ("replies.view",),
+    "force_validation": ("maintenance.memberships.reconcile",),
 }
 
 

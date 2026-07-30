@@ -2,6 +2,7 @@ from collections.abc import Iterable
 
 
 AI_COMPANION_TOOL_NAMES: tuple[str, ...] = (
+    "get_available_commands",
     "get_active_rules",
     "get_member_profile",
     "get_server_activity",

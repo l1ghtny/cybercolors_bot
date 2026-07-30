@@ -82,6 +82,13 @@ PERMISSIONS: tuple[PermissionDefinition, ...] = (
     ),
     PermissionDefinition("birthdays.settings.edit", "settings", "Edit birthday settings", "Edit birthday settings and messages.", "change"),
     PermissionDefinition("replies.manage", "settings", "Manage replies", "Create, update, delete, and duplicate bot replies.", "change"),
+    PermissionDefinition(
+        "maintenance.memberships.reconcile",
+        "admin",
+        "Reconcile server memberships",
+        "Run the server membership reconciliation process manually.",
+        "administration",
+    ),
     PermissionDefinition("ai.settings.edit", "settings", "Edit AI settings", "Edit AI settings.", "change"),
     PermissionDefinition("ai.knowledge.manage", "settings", "Manage AI knowledge", "Create, update, delete, and reindex AI knowledge sources.", "change"),
     PermissionDefinition("ai.suggestions.review", "moderation", "Review AI suggestions", "Approve, tweak, or dismiss AI moderation suggestions.", "change"),
