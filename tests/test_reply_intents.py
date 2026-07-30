@@ -23,17 +23,25 @@ from src.modules.on_message_processing.reply_matcher import (
 )
 
 
-def test_intent_payload_requires_two_distinct_representative_questions():
+def test_intent_payload_requires_one_handwritten_trigger():
     with pytest.raises(ValidationError):
         ReplyIntentCreateModel(
             bot_reply="Answer",
-            representative_questions=["What is it?", " what   is it? "],
+            representative_questions=[],
+            admin_id="123",
+        )
+
+    with pytest.raises(ValidationError):
+        ReplyIntentCreateModel(
+            bot_reply="Answer",
+            representative_questions=[],
+            generated_variations=["AI-only trigger"],
             admin_id="123",
         )
 
     payload = ReplyIntentCreateModel(
         bot_reply=" Answer ",
-        representative_questions=["What is it?", "How does it work?"],
+        representative_questions=["What is it?"],
         generated_variations=["What is it?", "Tell me how it works"],
         admin_id="123",
     )
@@ -41,6 +49,15 @@ def test_intent_payload_requires_two_distinct_representative_questions():
     assert payload.cooldown_seconds == 10
     assert payload.manual_triggers == []
     assert payload.generated_variations == ["Tell me how it works"]
+
+    manual_only_payload = ReplyIntentCreateModel(
+        bot_reply="Answer",
+        representative_questions=[],
+        manual_triggers=["Only handwritten trigger"],
+        admin_id="123",
+    )
+    assert manual_only_payload.representative_questions == []
+    assert manual_only_payload.manual_triggers == ["Only handwritten trigger"]
 
 
 def test_intent_payload_deduplicates_manual_before_generated_variations():

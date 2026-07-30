@@ -59,7 +59,7 @@ def _normalize_phrases(values: list[str], *, max_items: int) -> list[str]:
 
 class ReplyIntentCreateModel(BaseModel):
     bot_reply: str = Field(min_length=1, max_length=4000)
-    representative_questions: list[str] = Field(min_length=2, max_length=5)
+    representative_questions: list[str] = Field(default_factory=list, max_length=5)
     manual_triggers: list[str] = Field(default_factory=list, max_length=100)
     generated_variations: list[str] = Field(default_factory=list, max_length=100)
     admin_id: str = Field(pattern=r"^\d+$")
@@ -78,10 +78,7 @@ class ReplyIntentCreateModel(BaseModel):
     @field_validator("representative_questions")
     @classmethod
     def normalize_representative_questions(cls, value: list[str]) -> list[str]:
-        normalized = _normalize_phrases(value, max_items=5)
-        if len(normalized) < 2:
-            raise ValueError("Provide at least 2 distinct representative questions")
-        return normalized
+        return _normalize_phrases(value, max_items=5)
 
     @field_validator("manual_triggers", "generated_variations")
     @classmethod
@@ -103,6 +100,8 @@ class ReplyIntentCreateModel(BaseModel):
         self.generated_variations = [
             item for item in self.generated_variations if item.casefold() not in claimed
         ]
+        if not self.representative_questions and not self.manual_triggers:
+            raise ValueError("Provide at least one handwritten trigger")
         return self
 
 
