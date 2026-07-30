@@ -109,6 +109,10 @@ def _dashboard_case_url(server_id: int, case_id: UUID | str) -> str:
     return f"{_dashboard_base_url()}/dashboard/{server_id}/moderation/cases/{case_id}"
 
 
+def _dashboard_monitoring_url(server_id: int) -> str:
+    return f"{_dashboard_base_url()}/dashboard/{server_id}/monitoring"
+
+
 def _inline_code(value: object, fallback: str = "unknown") -> str:
     text = str(value if value is not None else fallback).replace("`", "'").strip()
     return f"`{text or fallback}`"

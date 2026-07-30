@@ -4,6 +4,7 @@ from uuid import UUID
 
 import discord
 
+from api.services.moderation_actions_service import _dashboard_monitoring_url
 from api.services.monitoring_service import (
     get_monitoring_notification_channel_id,
     mark_monitoring_activity_notification_sent,
@@ -65,6 +66,7 @@ async def _send_event_notification(
     display_name = member.display_name if member else str(event.user_id)
     embed = build_monitoring_activity_log_embed(
         server_id=guild.id,
+        dashboard_url=_dashboard_monitoring_url(guild.id),
         event_type=event.event_type,
         user_id=event.user_id,
         user_display=display_name,

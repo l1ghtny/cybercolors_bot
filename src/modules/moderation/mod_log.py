@@ -208,6 +208,7 @@ def _format_monitoring_metadata(metadata: dict | None, locale: str | None = None
 def build_monitoring_activity_log_embed(
     *,
     server_id: int,
+    dashboard_url: str,
     event_type: str,
     user_id: int,
     user_display: str | None,
@@ -220,6 +221,8 @@ def build_monitoring_activity_log_embed(
     event_label = tr(locale, _MONITORING_EVENT_KEYS.get(event_type, "modlog.monitoring_event_unknown"))
     embed = discord.Embed(
         title=f"{tr(locale, 'modlog.monitoring_title')}: {event_label}",
+        url=dashboard_url,
+        description=f"[{tr(locale, 'action.open_dashboard')}]({dashboard_url})",
         color=discord.Color.orange(),
         timestamp=datetime.now(timezone.utc),
     )
