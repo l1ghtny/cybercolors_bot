@@ -28,6 +28,7 @@ from src.modules.ai.moderation_contract import (
 )
 from src.modules.ai.models import (
     AIMessage,
+    AIReasoningEffort,
     AIRequest,
     AIResponse,
     AssistantInput,
@@ -359,6 +360,7 @@ class AIMain:
         web_search_enabled = _assistant_web_search_enabled() and (
             effective_enabled_tool_names is None or "web_search" in effective_enabled_tool_names
         )
+        reasoning_effort: AIReasoningEffort = "low"
         messages.append(
             AIMessage(
                 role="user",
@@ -381,6 +383,7 @@ class AIMain:
             system_prompt=system_prompt,
             messages=messages,
             max_output_tokens=1200,
+            reasoning_effort=reasoning_effort,
             metadata={"task": "assistant"},
             tools=tool_specs,
             enable_web_search=web_search_enabled,
@@ -413,6 +416,7 @@ class AIMain:
                 system_prompt=system_prompt,
                 messages=messages,
                 max_output_tokens=1200,
+                reasoning_effort=reasoning_effort,
                 metadata={"task": "assistant", "tool_round": True},
                 tools=tool_specs,
                 tool_results=tool_results,

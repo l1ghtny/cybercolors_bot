@@ -3,6 +3,7 @@ from typing import Any, Literal
 
 
 AITask = Literal["moderation", "assistant"]
+AIReasoningEffort = Literal["none", "low", "medium", "high", "xhigh"]
 AIMessageRole = Literal["system", "user", "assistant", "tool"]
 AIImageSource = Literal["attachment", "custom_emoji", "image_url"]
 ModerationSeverity = Literal["none", "low", "medium", "high"]
@@ -93,6 +94,7 @@ class AIRequest:
     messages: list[AIMessage]
     model: str = DEFAULT_AI_MODEL
     temperature: float | None = None
+    reasoning_effort: AIReasoningEffort | None = None
     max_output_tokens: int | None = 1024
     metadata: dict[str, Any] = field(default_factory=dict)
     tools: list[AIToolSpec] = field(default_factory=list)

@@ -85,6 +85,7 @@ def test_openai_provider_adds_web_search_tool_when_enabled():
                 system_prompt="Answer.",
                 messages=[AIMessage(role="user", content="What happened today?")],
                 enable_web_search=True,
+                reasoning_effort="low",
             )
         )
     )
@@ -92,6 +93,7 @@ def test_openai_provider_adds_web_search_tool_when_enabled():
     assert client.responses.kwargs is not None
     assert client.responses.kwargs["tools"] == [{"type": "web_search"}]
     assert client.responses.kwargs["tool_choice"] == "auto"
+    assert client.responses.kwargs["reasoning"] == {"effort": "low"}
 
 
 def test_openai_provider_keeps_web_search_as_auto_tool_option_with_functions():
@@ -140,6 +142,7 @@ def test_openai_provider_does_not_add_web_search_by_default():
 
     assert client.responses.kwargs is not None
     assert "tools" not in client.responses.kwargs
+    assert "reasoning" not in client.responses.kwargs
 
 
 def test_openai_provider_sends_strict_json_schema_response_format():

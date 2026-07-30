@@ -55,6 +55,8 @@ class OpenAIProvider:
             create_kwargs["max_output_tokens"] = request.max_output_tokens
         if request.temperature is not None:
             create_kwargs["temperature"] = request.temperature
+        if request.reasoning_effort is not None:
+            create_kwargs["reasoning"] = {"effort": request.reasoning_effort}
         if request.previous_response_id is not None:
             create_kwargs["previous_response_id"] = request.previous_response_id
         if request.response_format is not None:
