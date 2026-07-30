@@ -11,8 +11,8 @@ data:
   DB_POOL_RECYCLE_SECONDS: "1800"
   BOT_API_URL: https://cybercolors-api.modral.app
   DASHBOARD_BASE_URL: https://cybercolors.modral.app
-  CORS_ALLOWED_ORIGINS: https://cybercolors.lightny.pro,https://cybercolors.modral.app
-  DASHBOARD_OAUTH_REDIRECT_URIS: https://cybercolors.modral.app/callback
+  CORS_ALLOWED_ORIGINS: https://cybercolors.lightny.pro,https://cybercolors.modral.app,https://dashboard.modral.app
+  DASHBOARD_OAUTH_REDIRECT_URIS: https://cybercolors.modral.app/callback,https://dashboard.modral.app/callback
   DASHBOARD_ALLOW_LOCAL_OAUTH_REDIRECTS: "false"
   DASHBOARD_SESSION_COOKIE_SECURE: "true"
   DASHBOARD_SESSION_COOKIE_SAMESITE: lax
