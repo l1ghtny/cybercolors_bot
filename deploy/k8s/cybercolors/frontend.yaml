@@ -53,7 +53,7 @@ spec:
                   key: DISCORD_CLIENT_ID
                   optional: true
             - name: PUBLIC_DISCORD_REDIRECT_URI
-              value: https://cybercolors.modral.app/
+              value: https://dashboard.modral.app/
           ports:
             - name: http
               containerPort: 80
