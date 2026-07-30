@@ -284,6 +284,11 @@ def test_bot_command_catalog_exposes_moderation_command_details():
     for command_id in ("mod.mute", "mod.kick", "mod.ban"):
         command = get_bot_command(command_id)
         assert command is not None
+        assert {
+            "delete_messages",
+            "delete_message_limit",
+            "delete_message_channel",
+        }.issubset({parameter.name for parameter in command.parameters})
         add_warn = next(parameter for parameter in command.parameters if parameter.name == "add_warn")
         assert add_warn.type == "boolean"
         assert add_warn.required is False

@@ -532,6 +532,63 @@ def test_member_action_add_warn_reuses_new_case_and_skips_duplicate_dm(monkeypat
     session.commit.assert_awaited_once()
 
 
+def test_kick_command_forwards_message_cleanup(monkeypatch):
+    import src.commands.moderation.actions as actions_module
+
+    action_kwargs: dict = {}
+    receipt_kwargs: dict = {}
+    created = SimpleNamespace(id=uuid4(), action_number=1)
+
+    async def fake_get_locale(_server_id: int) -> str:
+        return "en"
+
+    async def fake_ensure_permission(*_args, **_kwargs) -> bool:
+        return True
+
+    async def fake_create_member_action(**kwargs):
+        action_kwargs.update(kwargs)
+        return created, "1 No scams", None
+
+    async def fake_send_public_notice(*_args, **_kwargs) -> None:
+        return None
+
+    def fake_build_receipt(**kwargs):
+        receipt_kwargs.update(kwargs)
+        return "receipt"
+
+    monkeypatch.setattr(actions_module, "get_server_locale", fake_get_locale)
+    monkeypatch.setattr(actions_module, "ensure_bot_permission", fake_ensure_permission)
+    monkeypatch.setattr(actions_module, "_create_member_action", fake_create_member_action)
+    monkeypatch.setattr(actions_module, "send_public_action_notice", fake_send_public_notice)
+    monkeypatch.setattr(actions_module, "build_moderator_action_receipt", fake_build_receipt)
+
+    interaction = SimpleNamespace(
+        guild=SimpleNamespace(id=123),
+        response=SimpleNamespace(defer=AsyncMock()),
+        followup=SimpleNamespace(send=AsyncMock()),
+    )
+    target = SimpleNamespace(id=456, mention="<@456>")
+    channel = SimpleNamespace(id=789, mention="<#789>", name="reports")
+
+    asyncio.run(
+        actions_module.kick.callback(
+            interaction=interaction,
+            user=target,
+            rule="rule-id",
+            delete_messages=discord.app_commands.Choice(name="1 hour", value=60),
+            delete_message_limit=12,
+            delete_message_channel=channel,
+        )
+    )
+
+    cleanup = action_kwargs["message_cleanup"]
+    assert cleanup.recent_period_minutes == 60
+    assert cleanup.recent_limit == 12
+    assert cleanup.channel_ids == ["789"]
+    assert receipt_kwargs["extra_lines"]
+    interaction.followup.send.assert_awaited_once()
+
+
 def test_mute_add_warn_reuses_new_case_and_skips_duplicate_dm(monkeypatch):
     import src.commands.moderation.mute as mute_module
 

@@ -226,16 +226,30 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         category="moderation-actions",
         summary="Kick a member and log the action with a rule citation.",
         required_permissions=["kick_members"],
-        parameters=[USER_PARAM, RULE_PARAM, COMMENTARY_PARAM, CASE_PARAM, ADD_WARN_PARAM],
+        parameters=[
+            USER_PARAM,
+            RULE_PARAM,
+            COMMENTARY_PARAM,
+            CASE_PARAM,
+            ADD_WARN_PARAM,
+            DELETE_MESSAGES_PARAM,
+            DELETE_MESSAGE_LIMIT_PARAM,
+            DELETE_MESSAGE_CHANNEL_PARAM,
+        ],
         components=[
             _component("autocomplete", "rule", "Searches active server moderation rules."),
             _component("autocomplete", "case", "Suggests open cases for the selected target member."),
+            _component("choices", "delete_messages", "Optional recent-message cleanup windows from 15 minutes to 7 days."),
         ],
         workflow=[
             "Validates target hierarchy and selected rule.",
+            "When delete_messages is set, deletes recent logged messages from the target user and links them as deleted-message evidence.",
             "Creates the moderation action through the shared action service with Discord effects enabled.",
             "When add_warn is enabled, creates a linked warning in the selected case or a new case.",
             "Posts public notice and an ephemeral moderator receipt.",
+        ],
+        notes=[
+            "Commands support recent target-user cleanup. The dashboard additionally supports selecting specific logged messages.",
         ],
     ),
     BotCommandDocModel(
@@ -1302,10 +1316,12 @@ RU_COMMAND_TEXT: dict[str, dict[str, list[str] | str]] = {
         "summary": "Исключить участника с сервера и записать действие со ссылкой на правило.",
         "workflow": [
             "Проверяет иерархию ролей и выбранное правило.",
+            "Если задан период удаления, удаляет недавние сообщения участника из журнала и прикрепляет их к делу как доказательства.",
             "Создаёт модераторское действие и исключает участника с сервера Discord.",
             "Если включена опция add_warn, создаёт связанный варн в выбранном или новом кейсе.",
             "Публикует уведомление и отправляет модератору приватный отчет.",
         ],
+        "notes": ["Из Discord-команды можно удалить недавние сообщения участника; в панели управления также можно выбрать отдельные сообщения."],
     },
     "mod.ban": {
         "summary": "Забанить участника на срок по умолчанию или на выбранный срок и записать действие.",

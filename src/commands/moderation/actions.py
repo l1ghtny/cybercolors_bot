@@ -463,7 +463,15 @@ def _linked_warn_receipt_lines(
 
 @app_commands.checks.has_permissions(kick_members=True)
 @app_commands.command(name="kick", description="Kick a user and log the action.")
-@app_commands.describe(add_warn="Also create a warning for the same rule and commentary.")
+@app_commands.choices(
+    delete_messages=action_message_cleanup_choices(),
+)
+@app_commands.describe(
+    add_warn="Also create a warning for the same rule and commentary.",
+    delete_messages="Delete recent logged messages by this user.",
+    delete_message_limit="Maximum messages to delete when delete_messages is set.",
+    delete_message_channel="Only delete messages from this channel.",
+)
 async def kick(
     interaction: discord.Interaction,
     user: discord.Member,
@@ -471,6 +479,9 @@ async def kick(
     commentary: str | None = None,
     case: str | None = None,
     add_warn: bool = False,
+    delete_messages: app_commands.Choice[int] | None = None,
+    delete_message_limit: app_commands.Range[int, 1, 100] | None = None,
+    delete_message_channel: discord.TextChannel | None = None,
 ):
     if interaction.guild is None:
         await interaction.response.send_message(tr(None, "common.server_only"), ephemeral=True)
@@ -479,6 +490,11 @@ async def kick(
     locale = await get_server_locale(interaction.guild.id)
     if not await ensure_bot_permission(interaction, "moderation.actions.apply.kick", locale=locale):
         return
+    message_cleanup = build_message_cleanup_request(
+        delete_messages=delete_messages,
+        delete_message_limit=delete_message_limit,
+        delete_message_channel=delete_message_channel,
+    )
     result = await _create_member_action(
         interaction=interaction,
         user=user,
@@ -486,6 +502,7 @@ async def kick(
         rule=rule,
         commentary=commentary,
         case=case,
+        message_cleanup=message_cleanup,
         add_warn=add_warn,
     )
     if result is None:
@@ -500,11 +517,18 @@ async def kick(
             public_message=success_message,
             action=created,
             rule=selected_rule_label,
-            extra_lines=_linked_warn_receipt_lines(
-                locale=locale,
-                server_id=interaction.guild.id,
-                linked_warn=linked_warn,
-            ),
+            extra_lines=[
+                *_linked_warn_receipt_lines(
+                    locale=locale,
+                    server_id=interaction.guild.id,
+                    linked_warn=linked_warn,
+                ),
+                *message_cleanup_receipt_lines(
+                    locale=locale,
+                    cleanup=message_cleanup,
+                    channel=delete_message_channel,
+                ),
+            ],
         ),
         ephemeral=True,
         allowed_mentions=discord.AllowedMentions.none(),
