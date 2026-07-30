@@ -19,6 +19,9 @@ spec:
     - hosts:
         - cybercolors-api.modral.app
       secretName: cybercolors-modral-backend-tls
+    - hosts:
+        - api.modral.app
+      secretName: modral-api-tls
   rules:
     - host: cybercolors-api.lightny.pro
       http:
@@ -31,6 +34,16 @@ spec:
                 port:
                   number: 80
     - host: cybercolors-api.modral.app
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: cybercolors-backend
+                port:
+                  number: 80
+    - host: api.modral.app
       http:
         paths:
           - path: /
@@ -57,6 +70,9 @@ spec:
     - hosts:
         - cybercolors.modral.app
       secretName: cybercolors-modral-frontend-tls
+    - hosts:
+        - dashboard.modral.app
+      secretName: modral-dashboard-tls
   rules:
     - host: cybercolors.lightny.pro
       http:
@@ -69,6 +85,16 @@ spec:
                 port:
                   number: 80
     - host: cybercolors.modral.app
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: cybercolors-frontend
+                port:
+                  number: 80
+    - host: dashboard.modral.app
       http:
         paths:
           - path: /
