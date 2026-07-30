@@ -45,7 +45,7 @@ spec:
           imagePullPolicy: Always
           env:
             - name: PUBLIC_API_BASE_URL
-              value: https://cybercolors-api.modral.app
+              value: https://api.modral.app
             - name: PUBLIC_DISCORD_CLIENT_ID
               valueFrom:
                 secretKeyRef:
