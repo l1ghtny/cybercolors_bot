@@ -262,6 +262,7 @@ class AIMain:
         )
         total_tokens = 0
         input_tokens = 0
+        cached_input_tokens = 0
         output_tokens = 0
         reasoning_tokens = 0
         last_response: AIResponse | None = None
@@ -271,10 +272,12 @@ class AIMain:
             response = await self.provider.complete(request)
             total_tokens += response.total_tokens
             input_tokens += response.input_tokens
+            cached_input_tokens += response.cached_input_tokens
             output_tokens += response.output_tokens
             reasoning_tokens += response.reasoning_tokens
             response.total_tokens = total_tokens
             response.input_tokens = input_tokens
+            response.cached_input_tokens = cached_input_tokens
             response.output_tokens = output_tokens
             response.reasoning_tokens = reasoning_tokens
             last_response = response

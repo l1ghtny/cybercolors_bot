@@ -646,7 +646,9 @@ def test_check_message_retries_incomplete_and_invalid_responses_before_success()
                 provider="fake",
                 total_tokens=10,
                 input_tokens=7,
+                cached_input_tokens=5,
                 output_tokens=3,
+                reasoning_tokens=1,
                 status="incomplete",
                 incomplete_reason="max_output_tokens",
             ),
@@ -656,7 +658,9 @@ def test_check_message_retries_incomplete_and_invalid_responses_before_success()
                 provider="fake",
                 total_tokens=12,
                 input_tokens=8,
+                cached_input_tokens=6,
                 output_tokens=4,
+                reasoning_tokens=2,
                 status="completed",
             ),
             AIResponse(
@@ -665,7 +669,9 @@ def test_check_message_retries_incomplete_and_invalid_responses_before_success()
                 provider="fake",
                 total_tokens=14,
                 input_tokens=9,
+                cached_input_tokens=7,
                 output_tokens=5,
+                reasoning_tokens=3,
                 status="completed",
             ),
         ]
@@ -680,7 +686,9 @@ def test_check_message_retries_incomplete_and_invalid_responses_before_success()
     assert verdict.raw_response is not None
     assert verdict.raw_response.total_tokens == 36
     assert verdict.raw_response.input_tokens == 24
+    assert verdict.raw_response.cached_input_tokens == 18
     assert verdict.raw_response.output_tokens == 12
+    assert verdict.raw_response.reasoning_tokens == 6
 
 
 def test_answer_uses_assistant_task_and_context_block():

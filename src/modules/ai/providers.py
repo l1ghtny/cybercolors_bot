@@ -100,6 +100,10 @@ class OpenAIProvider:
         usage = getattr(response, "usage", None)
         total_tokens = getattr(usage, "total_tokens", 0) if usage is not None else 0
         input_tokens = getattr(usage, "input_tokens", 0) if usage is not None else 0
+        input_token_details = getattr(usage, "input_tokens_details", None) if usage is not None else None
+        cached_input_tokens = (
+            getattr(input_token_details, "cached_tokens", 0) if input_token_details is not None else 0
+        )
         output_tokens = getattr(usage, "output_tokens", 0) if usage is not None else 0
         output_token_details = getattr(usage, "output_tokens_details", None) if usage is not None else None
         reasoning_tokens = getattr(output_token_details, "reasoning_tokens", 0) if output_token_details is not None else 0
@@ -112,6 +116,7 @@ class OpenAIProvider:
             provider=self.provider_name,
             total_tokens=int(total_tokens or 0),
             input_tokens=int(input_tokens or 0),
+            cached_input_tokens=int(cached_input_tokens or 0),
             output_tokens=int(output_tokens or 0),
             reasoning_tokens=int(reasoning_tokens or 0),
             status=getattr(response, "status", None),

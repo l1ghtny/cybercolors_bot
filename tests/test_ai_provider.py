@@ -17,6 +17,7 @@ class FakeResponses:
             usage=SimpleNamespace(
                 total_tokens=7,
                 input_tokens=4,
+                input_tokens_details=SimpleNamespace(cached_tokens=3),
                 output_tokens=3,
                 output_tokens_details=SimpleNamespace(reasoning_tokens=2),
             ),
@@ -56,6 +57,7 @@ def test_openai_provider_formats_multimodal_message_content():
     assert response.content == "ok"
     assert response.total_tokens == 7
     assert response.input_tokens == 4
+    assert response.cached_input_tokens == 3
     assert response.output_tokens == 3
     assert response.reasoning_tokens == 2
     assert response.status == "completed"

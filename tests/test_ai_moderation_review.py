@@ -674,7 +674,17 @@ def test_screen_message_with_ai_persists_unflagged_decision_when_cap_is_configur
                 flagged=False,
                 severity="none",
                 reason="No issue",
-                raw_response=AIResponse(content="{}", model="test-model", provider="fake", total_tokens=42),
+                raw_response=AIResponse(
+                    content="{}",
+                    model="test-model",
+                    provider="fake",
+                    id="resp-moderation-1",
+                    total_tokens=42,
+                    input_tokens=35,
+                    cached_input_tokens=30,
+                    output_tokens=7,
+                    reasoning_tokens=2,
+                ),
             )
 
     import src.modules.ai.moderation_review as moderation_review
@@ -692,7 +702,12 @@ def test_screen_message_with_ai_persists_unflagged_decision_when_cap_is_configur
     assert session.added is not None
     assert session.added.flagged is False
     assert session.added.status == "no_action_needed"
+    assert session.added.response_id == "resp-moderation-1"
     assert session.added.total_tokens == 42
+    assert session.added.input_tokens == 35
+    assert session.added.cached_input_tokens == 30
+    assert session.added.output_tokens == 7
+    assert session.added.reasoning_tokens == 2
 
 
 def test_screen_message_with_ai_continues_with_media_unavailable_metadata(monkeypatch):
