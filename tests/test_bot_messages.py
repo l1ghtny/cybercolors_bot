@@ -44,6 +44,7 @@ async def _send_scenario(
     mention_user_ids: list[str] | None = None,
     mention_role_ids: list[str] | None = None,
     suppress_mentions: bool = False,
+    mention_everyone: bool = False,
     channel_type: int = 0,
 ):
     session = session or FakeSession(paused=paused)
@@ -71,6 +72,7 @@ async def _send_scenario(
             reply_to_message_id="654",
             notify_replied_user=notify_replied_user,
             suppress_mentions=suppress_mentions,
+            mention_everyone=mention_everyone,
             mention_user_ids=mention_user_ids or [],
             mention_role_ids=mention_role_ids or [],
         ),
@@ -92,6 +94,7 @@ def test_send_bot_message_replies_and_records_successful_audit():
             "content": "Hello from Modral",
             "reply_to_message_id": 654,
             "notify_replied_user": False,
+            "allow_everyone": False,
             "allowed_user_ids": (),
             "allowed_role_ids": (),
         }
@@ -139,20 +142,34 @@ def test_send_bot_message_keeps_raw_mentions_silent_by_default():
 
     assert sender_calls[0]["allowed_user_ids"] == ()
     assert sender_calls[0]["allowed_role_ids"] == ()
+    assert sender_calls[0]["allow_everyone"] is False
+
+
+def test_send_bot_message_can_notify_everyone_and_here():
+    _, sender_calls, _ = asyncio.run(
+        _send_scenario(
+            content="Hello @everyone and @here.",
+            mention_everyone=True,
+        )
+    )
+
+    assert sender_calls[0]["allow_everyone"] is True
 
 
 def test_send_bot_message_can_suppress_every_explicit_mention():
     _, sender_calls, _ = asyncio.run(
         _send_scenario(
-            content="Hello <@42> and <@&84>.",
+            content="Hello <@42>, <@&84>, and @everyone.",
             mention_user_ids=["42"],
             mention_role_ids=["84"],
             suppress_mentions=True,
+            mention_everyone=True,
         )
     )
 
     assert sender_calls[0]["allowed_user_ids"] == ()
     assert sender_calls[0]["allowed_role_ids"] == ()
+    assert sender_calls[0]["allow_everyone"] is False
 
 
 def test_send_bot_message_can_send_image_without_text():
@@ -193,6 +210,7 @@ def test_send_bot_message_honors_public_response_pause():
 def test_bot_message_payload_rejects_blank_or_overlong_content():
     assert BotMessageCreateModel(channel_id="123", content="Safe default").notify_replied_user is False
     assert BotMessageCreateModel(channel_id="123", content="Safe default").suppress_mentions is False
+    assert BotMessageCreateModel(channel_id="123", content="Safe default").mention_everyone is False
     blank_body = BotMessageCreateModel(channel_id="123", content="   ")
     with pytest.raises(HTTPException) as raised:
         asyncio.run(

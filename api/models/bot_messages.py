@@ -11,6 +11,7 @@ class BotMessageCreateModel(BaseModel):
     reply_to_message_id: str | None = Field(default=None, pattern=r"^\d+$")
     notify_replied_user: bool = False
     suppress_mentions: bool = False
+    mention_everyone: bool = False
     mention_user_ids: list[str] = Field(default_factory=list, max_length=100)
     mention_role_ids: list[str] = Field(default_factory=list, max_length=100)
 

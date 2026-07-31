@@ -147,6 +147,33 @@ def test_create_channel_message_whitelists_only_selected_user_and_role_mentions(
     }
 
 
+def test_create_channel_message_can_allow_everyone_and_here_mentions():
+    captured: list[dict] = []
+
+    async def scenario():
+        async def fake_discord_post(path: str, payload: dict) -> dict:
+            captured.append({"path": path, "payload": payload})
+            return {"id": "456"}
+
+        original = discord_guilds._discord_post
+        discord_guilds._discord_post = fake_discord_post
+        try:
+            await discord_guilds.create_channel_message(
+                channel_id=123,
+                content="Hello @everyone and @here",
+                allow_everyone=True,
+            )
+        finally:
+            discord_guilds._discord_post = original
+
+    asyncio.run(scenario())
+
+    assert captured[0]["payload"]["allowed_mentions"] == {
+        "parse": ["everyone"],
+        "replied_user": False,
+    }
+
+
 def test_create_channel_message_uses_multipart_for_media(monkeypatch):
     captured: list[dict] = []
 

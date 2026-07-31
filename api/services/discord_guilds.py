@@ -395,12 +395,13 @@ async def create_channel_message(
     components: list[dict] | None = None,
     reply_to_message_id: int | None = None,
     notify_replied_user: bool = False,
+    allow_everyone: bool = False,
     allowed_user_ids: list[int] | tuple[int, ...] | None = None,
     allowed_role_ids: list[int] | tuple[int, ...] | None = None,
     files: list[tuple[str, bytes, str]] | None = None,
 ) -> dict:
     allowed_mentions: dict = {
-        "parse": [],
+        "parse": ["everyone"] if allow_everyone else [],
         "replied_user": notify_replied_user,
     }
     if allowed_user_ids:

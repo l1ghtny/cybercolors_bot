@@ -133,6 +133,7 @@ async def send_bot_message(
             "notify_replied_user": (
                 body.notify_replied_user if reply_to_message_id is not None else False
             ),
+            "allow_everyone": body.mention_everyone and not body.suppress_mentions,
             "allowed_user_ids": allowed_user_ids,
             "allowed_role_ids": allowed_role_ids,
         }
