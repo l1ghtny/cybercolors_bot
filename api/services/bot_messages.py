@@ -118,11 +118,14 @@ async def send_bot_message(
     await session.commit()
 
     try:
-        allowed_user_ids, allowed_role_ids = allowed_explicit_mentions(
-            body.content,
-            allowed_user_ids=body.mention_user_ids,
-            allowed_role_ids=body.mention_role_ids,
-        )
+        if body.suppress_mentions:
+            allowed_user_ids, allowed_role_ids = (), ()
+        else:
+            allowed_user_ids, allowed_role_ids = allowed_explicit_mentions(
+                body.content,
+                allowed_user_ids=body.mention_user_ids,
+                allowed_role_ids=body.mention_role_ids,
+            )
         sender_kwargs = {
             "channel_id": channel_id,
             "content": body.content or None,

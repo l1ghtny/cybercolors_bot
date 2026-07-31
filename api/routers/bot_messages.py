@@ -103,6 +103,7 @@ async def create_bot_message_with_media(
     server_id: int,
     channel_id: str = Form(..., pattern=r"^\d+$"),
     content: str = Form(default="", max_length=2000),
+    suppress_mentions: bool = Form(default=False),
     mention_user_ids: list[str] = Form(default=[]),
     mention_role_ids: list[str] = Form(default=[]),
     files: list[UploadFile] = File(default=[]),
@@ -117,6 +118,7 @@ async def create_bot_message_with_media(
         body=BotMessageCreateModel(
             channel_id=channel_id,
             content=content,
+            suppress_mentions=suppress_mentions,
             mention_user_ids=mention_user_ids,
             mention_role_ids=mention_role_ids,
         ),
