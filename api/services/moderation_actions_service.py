@@ -78,6 +78,7 @@ from src.modules.moderation.moderation_helpers import (
     migrate_message_action_links_to_deleted,
 )
 from src.modules.moderation.mute_management import deactivate_user_mutes
+from src.modules.moderation.rule_labels import format_rule_label
 
 logger = logging.getLogger("api.moderation")
 
@@ -124,32 +125,11 @@ def _markdown_link(label: object, url: str) -> str:
 
 
 def _rule_label_from_parts(code: str | None, title: str | None, locale: str | None = None) -> str:
-    code = (code or "").strip()
-    title = (title or "").strip()
-    if code:
-        normalized_title = _normalize_rule_label_part(title)
-        normalized_code = _normalize_rule_label_part(code)
-        if _rule_title_starts_with_label(normalized_title, normalized_code):
-            return title
-        if code.isdigit():
-            keycap_code = "".join(f"{digit}\ufe0f\u20e3" for digit in code)
-            localized_code = _normalize_rule_label_part(f"{tr(locale, 'modlog.rule_label')} {keycap_code}")
-            if _rule_title_starts_with_label(normalized_title, localized_code):
-                return title
-            return f"{tr(locale, 'modlog.rule_label')} {keycap_code}: {title}".strip(": ")
-        return f"{code} {title}".strip()
-    return title or "Rule"
-
-
-def _normalize_rule_label_part(value: str) -> str:
-    return " ".join(value.casefold().replace("\ufe0f", "").replace("\u20e3", "").split()).strip(" :.-")
-
-
-def _rule_title_starts_with_label(normalized_title: str, normalized_label: str) -> bool:
-    if not normalized_title or not normalized_label:
-        return False
-    return normalized_title == normalized_label or normalized_title.startswith(
-        (f"{normalized_label} ", f"{normalized_label}:", f"{normalized_label}.", f"{normalized_label}-")
+    return format_rule_label(
+        code,
+        title,
+        locale=locale,
+        localize_numeric_code=True,
     )
 
 
@@ -905,7 +885,7 @@ async def create_action(
 
     if resolved_rules:
         primary_rule = resolved_rules[0]
-        base_reason = f"{primary_rule.code} {primary_rule.title}".strip() if primary_rule.code else primary_rule.title
+        base_reason = format_rule_label(primary_rule.code, primary_rule.title)
         resolved_reason = base_reason
 
     if not resolved_reason:

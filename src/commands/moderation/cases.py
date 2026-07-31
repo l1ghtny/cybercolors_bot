@@ -108,7 +108,7 @@ async def case_create(
                     await interaction.followup.send(tr(locale, "case.invalid_rule"), ephemeral=True)
                     return
                 rule_ids.append(str(selected_rule.id))
-                selected_rule_label = rule_label(selected_rule)
+                selected_rule_label = rule_label(selected_rule, locale)
 
             created_case = await create_case(
                 session=session,
@@ -525,7 +525,10 @@ async def case_add_rule(interaction: discord.Interaction, case: str, rule: str):
     except Exception as error:
         await interaction.followup.send(tr(locale, "case.details_failed", error=error), ephemeral=True)
         return
-    await interaction.followup.send(tr(locale, "case.rule_added", rule=rule_label(selected_rule), case_id=updated.id[:8]), ephemeral=True)
+    await interaction.followup.send(
+        tr(locale, "case.rule_added", rule=rule_label(selected_rule, locale), case_id=updated.id[:8]),
+        ephemeral=True,
+    )
 
 
 @app_commands.checks.has_permissions(moderate_members=True)
@@ -672,5 +675,4 @@ async def _case_action_autocomplete(interaction: discord.Interaction, current: s
 
 for _command in (case_link_action, case_unlink_action):
     _command.autocomplete("action_id")(_case_action_autocomplete)
-
 

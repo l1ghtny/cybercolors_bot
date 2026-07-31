@@ -38,6 +38,7 @@ from src.modules.moderation.bot_services import (
     validate_target_for_moderation,
 )
 from src.modules.moderation.moderation_helpers import check_if_server_exists, check_if_user_exists
+from src.modules.moderation.rule_labels import format_rule_label
 
 logger = logger.logging.getLogger("bot")
 
@@ -431,14 +432,12 @@ def _rule_matches_query(rule, query: str) -> bool:
 
 
 def _localized_rule_label(rule: ModerationRule, locale: str | None) -> str:
-    code = (rule.code or "").strip()
-    title = (rule.title or "").strip()
-    if code.isdigit():
-        keycap_code = "".join(f"{digit}\ufe0f\u20e3" for digit in code)
-        return f"{tr(locale, 'modlog.rule_label')} {keycap_code}: {title}".strip(": ")
-    if code:
-        return f"{code} {title}".strip()
-    return title or tr(locale, "common.rule_fallback")
+    return format_rule_label(
+        rule.code,
+        rule.title,
+        locale=locale,
+        localize_numeric_code=True,
+    )
 
 
 async def _server_locale(session, server_id: int) -> str:

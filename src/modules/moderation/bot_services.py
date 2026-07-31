@@ -18,6 +18,7 @@ from api.services.moderation_rules_service import list_rules, to_rule_read_model
 from src.db.models import ActionType, CaseStatus, ModerationAction, ModerationCase
 from src.modules.localization.service import tr
 from src.modules.moderation.moderation_helpers import check_if_server_exists, check_if_user_exists
+from src.modules.moderation.rule_labels import format_rule_label
 
 
 CASE_NEW_VALUE = "__new_case__"
@@ -115,12 +116,8 @@ def find_rule(rules: list[ModerationRuleReadModel], rule_id: str) -> ModerationR
     return None
 
 
-def rule_label(rule: ModerationRuleReadModel) -> str:
-    code = (rule.code or "").strip()
-    title = (rule.title or "").strip()
-    if code:
-        return f"{code} {title}".strip()
-    return title or tr(None, "common.rule_fallback")
+def rule_label(rule: ModerationRuleReadModel, locale: str | None = None) -> str:
+    return format_rule_label(rule.code, rule.title, locale=locale)
 
 
 def rule_choices(

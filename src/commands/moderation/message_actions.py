@@ -424,7 +424,7 @@ class StartActionCommentaryModal(discord.ui.Modal):
             )
             return
 
-        selected_rule_label = rule_label(selected_rule)
+        selected_rule_label = rule_label(selected_rule, self.locale)
         public_message = tr(
             self.locale,
             "action.message_start_success",
@@ -484,7 +484,7 @@ class StartActionFromMessageView(discord.ui.View):
         rule_select = discord.ui.Select(
             placeholder=tr(locale, "action.message_start_rule_placeholder"),
             options=[
-                discord.SelectOption(label=rule_label(rule)[:100], value=str(rule.id))
+                discord.SelectOption(label=rule_label(rule, locale)[:100], value=str(rule.id))
                 for rule in rules[:25]
             ],
             min_values=1,

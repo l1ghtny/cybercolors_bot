@@ -88,6 +88,14 @@ def test_rule_helpers_build_labels_and_autocomplete_choices():
     assert choices[0].value == second.id
 
 
+def test_rule_label_does_not_duplicate_imported_numbered_titles():
+    russian = _rule_model(rule_id=str(uuid4()), code="8", title="Правило 8\ufe0f\u20e3")
+    english = _rule_model(rule_id=str(uuid4()), code="2", title="Rule 2\ufe0f\u20e3: No slurs")
+
+    assert rule_label(russian, "ru") == "Правило 8\ufe0f\u20e3"
+    assert rule_label(english, "en") == "Rule 2\ufe0f\u20e3: No slurs"
+
+
 def test_build_action_payload_uses_rule_id_without_bot_api_url(monkeypatch):
     monkeypatch.delenv("BOT_API_URL", raising=False)
     rule_id = uuid4()

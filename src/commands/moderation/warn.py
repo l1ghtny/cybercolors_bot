@@ -72,7 +72,7 @@ async def warn(
         )
         return
 
-    selected_rule_label = rule_label(selected_rule)
+    selected_rule_label = rule_label(selected_rule, locale)
     commentary_text = commentary.strip() if commentary else None
     message_cleanup = build_message_cleanup_request(
         delete_messages=delete_messages,

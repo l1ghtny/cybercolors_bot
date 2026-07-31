@@ -374,7 +374,7 @@ async def _create_member_action(
         return None
 
     commentary_text = commentary.strip() if commentary else None
-    selected_rule_label = rule_label(selected_rule)
+    selected_rule_label = rule_label(selected_rule, locale)
     logger.info(
         "Moderation action request type=%s target=%s add_warn=%s case_selection=%s",
         action_type.value,

@@ -11,12 +11,19 @@ from src.modules.ai.moderation_review import (
     AIModerationReviewView,
     _bot_can_read_message_channel,
     _bot_can_send_ai_mod_log,
+    _localized_rule_label,
     build_ai_moderation_embed,
     build_ai_review_resolution_embed,
     create_ai_moderation_decision,
     screen_message_with_ai,
 )
 from api.models.moderation_rules import ModerationRuleReadModel
+
+
+def test_ai_rule_label_does_not_duplicate_imported_title():
+    rule = SimpleNamespace(code="8", title="Правило 8\ufe0f\u20e3")
+
+    assert _localized_rule_label(rule, "ru") == "Правило 8\ufe0f\u20e3"
 
 
 class FakeSession:

@@ -217,7 +217,7 @@ async def rule_add(
                 sort_order=sort_order,
                 created_by_user_id=interaction.user.id,
             )
-            label = f"{rule.code or ''} {rule.title or ''}".strip()
+            label = rule_label(rule, locale)
             await session.commit()
 
         await _refresh_rules_cache(interaction)
@@ -248,7 +248,7 @@ async def rules_list(interaction: discord.Interaction):
             await interaction.followup.send(tr(locale, "rules.none_configured"), ephemeral=True)
             return
 
-        body = "\n".join(f"- {rule_label(item)}" for item in rules)
+        body = "\n".join(f"- {rule_label(item, locale)}" for item in rules)
         if len(body) > 1900:
             body = body[:1890] + "\n..."
         await interaction.followup.send(tr(locale, "rules.active_header", body=body), ephemeral=True)

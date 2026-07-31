@@ -351,7 +351,7 @@ async def mute(
     if not selected_rule:
         await interaction.followup.send(tr(locale, "mute.invalid_rule"), ephemeral=True)
         return
-    selected_rule_label = rule_label(selected_rule)
+    selected_rule_label = rule_label(selected_rule, locale)
 
     async with get_async_session() as session:
         settings = await get_or_create_server_moderation_settings(
