@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 class ScheduledPostWriteModel(BaseModel):
     channel_id: str = Field(pattern=r"^\d+$")
-    content: str = Field(min_length=1, max_length=2000)
+    content: str = Field(default="", max_length=2000)
     mention_everyone: bool = False
     mention_user_ids: list[str] = Field(default_factory=list, max_length=100)
     mention_role_ids: list[str] = Field(default_factory=list, max_length=100)
@@ -43,13 +43,19 @@ class ScheduledPostWriteModel(BaseModel):
 
     @model_validator(mode="after")
     def validate_schedule(self):
-        if not self.content.strip():
-            raise ValueError("Message content cannot be blank")
         if self.schedule_type == "interval" and self.interval_seconds is None:
             raise ValueError("interval_seconds is required for recurring posts")
         if self.schedule_type == "once":
             self.interval_seconds = None
         return self
+
+
+class ScheduledPostAttachmentReadModel(BaseModel):
+    id: UUID
+    filename: str
+    content_type: str
+    size_bytes: int
+    position: int
 
 
 class ScheduledPostReadModel(BaseModel):
@@ -60,6 +66,7 @@ class ScheduledPostReadModel(BaseModel):
     mention_everyone: bool
     mention_user_ids: list[str]
     mention_role_ids: list[str]
+    attachments: list[ScheduledPostAttachmentReadModel] = Field(default_factory=list)
     schedule_type: Literal["once", "interval"]
     timezone: str
     interval_seconds: int | None

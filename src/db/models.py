@@ -1277,6 +1277,34 @@ class ScheduledBotPost(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
 
 
+class ScheduledBotPostAttachment(SQLModel, table=True):
+    __tablename__ = "scheduled_bot_post_attachments"
+    __table_args__ = (
+        sa.CheckConstraint("size_bytes > 0", name="ck_scheduled_post_attachment_size"),
+        sa.CheckConstraint("position >= 0", name="ck_scheduled_post_attachment_position"),
+        UniqueConstraint("object_key", name="uq_scheduled_post_attachment_object_key"),
+        UniqueConstraint(
+            "scheduled_post_id", "position", name="uq_scheduled_post_attachment_position"
+        ),
+    )
+
+    id: Optional[UUID] = uuid7_primary_key_field()
+    scheduled_post_id: UUID = Field(
+        sa_column=Column(
+            sa.Uuid(),
+            ForeignKey("scheduled_bot_posts.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        )
+    )
+    object_key: str = Field(nullable=False, max_length=1024)
+    filename: str = Field(nullable=False, max_length=255)
+    content_type: str = Field(nullable=False, max_length=128)
+    size_bytes: int = Field(nullable=False)
+    position: int = Field(nullable=False)
+    created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+
+
 class ScheduledBotPostRun(SQLModel, table=True):
     __tablename__ = "scheduled_bot_post_runs"
     __table_args__ = (

@@ -55,6 +55,9 @@ spec:
                 optional: true
             - secretRef:
                 name: cybercolors-evidence-storage
+            - secretRef:
+                name: cybercolors-scheduled-storage
+                optional: true
           env:
             - name: PYTHONPATH
               value: /home/discord-bot
