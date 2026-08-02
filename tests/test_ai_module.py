@@ -1214,10 +1214,12 @@ def test_default_tool_registry_exposes_initial_database_tools():
     assert "get_member_profile" in specs
     assert "get_server_activity" in specs
     assert specs["get_member_profile"]["requires_admin_context"] is False
-    assert "public-safe member context" in specs["get_member_profile"]["description"]
+    assert specs["get_member_profile"]["requires_requester_context"] is True
+    assert "requester-aware member context" in specs["get_member_profile"]["description"]
     assert specs["get_server_activity"]["requires_admin_context"] is False
+    assert specs["get_server_activity"]["requires_requester_context"] is True
     assert specs["get_available_commands"]["requires_requester_context"] is True
-    assert "same date, user, role" in specs["get_server_activity"]["description"]
+    assert "aggregate member message counts" in specs["get_server_activity"]["description"]
 
 
 def test_tool_registry_specs_can_be_filtered_per_server():
@@ -1226,6 +1228,50 @@ def test_tool_registry_specs_can_be_filtered_per_server():
     specs = registry.specs(enabled_names={"get_member_profile", "get_server_activity"})
 
     assert [tool.name for tool in specs] == ["get_member_profile", "get_server_activity"]
+
+
+def test_member_profile_activity_is_self_or_activity_view_only(monkeypatch):
+    import src.modules.ai.tools as tools_module
+
+    async def fake_profile(**kwargs):
+        return {
+            "user_id": str(kwargs["user_id"]),
+            "activity": {"message_count": 42, "last_message_at": "2026-07-28T20:00:00Z"},
+        }
+
+    async def no_staff_permissions(**_kwargs):
+        return SimpleNamespace(permission_keys=[])
+
+    monkeypatch.setattr(tools_module, "get_member_profile_context", fake_profile)
+    monkeypatch.setattr(
+        tools_module,
+        "resolve_effective_permissions_for_member_context",
+        no_staff_permissions,
+    )
+
+    async def run(user_id, *, administrator=False):
+        return await tools_module._member_profile_tool(
+            session="session",
+            server_id=123,
+            user_id=user_id,
+            requester_user_id=456,
+            requester_role_ids=[202],
+            requester_permission_names=["administrator"] if administrator else [],
+            requester_is_owner=False,
+            requester_is_administrator=administrator,
+            requester_locale="en",
+            guidance_mode="personalized",
+            requester_visible_channel_ids=[789],
+        )
+
+    self_profile = asyncio.run(run(456))
+    other_profile = asyncio.run(run(777))
+    staff_profile = asyncio.run(run(777, administrator=True))
+
+    assert self_profile["activity"]["message_count"] == 42
+    assert other_profile["activity"] is None
+    assert other_profile["activity_visibility"] == "restricted_to_self_or_activity_view"
+    assert staff_profile["activity"]["message_count"] == 42
 
 
 def test_available_commands_tool_filters_public_newcomer_and_staff_access(monkeypatch):
@@ -1346,6 +1392,10 @@ def test_server_activity_tool_reuses_dashboard_filters_and_omits_moderation_data
 
     captured = {}
 
+    class FakeSession:
+        async def get(self, _model, _server_id):
+            return None
+
     async def fake_leaderboard(**kwargs):
         captured.update(kwargs)
         kwargs["response"].headers["X-Activity-Server-Excludes-Applied"] = "true"
@@ -1367,13 +1417,29 @@ def test_server_activity_tool_reuses_dashboard_filters_and_omits_moderation_data
         assert server_id == 123
         return [{"id": "789", "name": "general"}]
 
+    async def fake_effective_permissions(**_kwargs):
+        return SimpleNamespace(permission_keys=["activity.view"])
+
     monkeypatch.setattr(tools_module, "get_server_activity_leaderboard", fake_leaderboard)
     monkeypatch.setattr(tools_module, "fetch_guild_channels", fake_fetch_channels)
+    monkeypatch.setattr(
+        tools_module,
+        "resolve_effective_permissions_for_member_context",
+        fake_effective_permissions,
+    )
 
     result = asyncio.run(
         tools_module._server_activity_tool(
-            session="session",
+            session=FakeSession(),
             server_id=123,
+            requester_user_id=456,
+            requester_role_ids=[303],
+            requester_permission_names=[],
+            requester_is_owner=False,
+            requester_is_administrator=False,
+            requester_locale="en",
+            guidance_mode="personalized",
+            requester_visible_channel_ids=[789],
             date_from="2026-07-01",
             date_to="2026-07-28",
             include_user_ids=[777],
@@ -1384,7 +1450,7 @@ def test_server_activity_tool_reuses_dashboard_filters_and_omits_moderation_data
         )
     )
 
-    assert captured["session"] == "session"
+    assert isinstance(captured["session"], FakeSession)
     assert captured["date_from"].isoformat() == "2026-07-01"
     assert captured["date_to"].isoformat() == "2026-07-28"
     assert captured["include_user_ids"] == ["777"]
@@ -1411,6 +1477,169 @@ def test_server_activity_tool_reuses_dashboard_filters_and_omits_moderation_data
     ]
     assert "warnings" not in result["members"][0]
     assert "warn_count" not in result["members"][0]
+
+
+def test_server_activity_tool_rejects_targeted_other_member_for_public_requester(monkeypatch):
+    import src.modules.ai.tools as tools_module
+
+    async def fake_effective_permissions(**_kwargs):
+        return SimpleNamespace(permission_keys=[])
+
+    async def fail_leaderboard(**_kwargs):
+        raise AssertionError("private targeted lookup must be rejected before querying activity")
+
+    monkeypatch.setattr(
+        tools_module,
+        "resolve_effective_permissions_for_member_context",
+        fake_effective_permissions,
+    )
+    monkeypatch.setattr(tools_module, "get_server_activity_leaderboard", fail_leaderboard)
+
+    result = asyncio.run(
+        tools_module._server_activity_tool(
+            session="session",
+            server_id=123,
+            requester_user_id=456,
+            requester_role_ids=[202],
+            requester_permission_names=[],
+            requester_is_owner=False,
+            requester_is_administrator=False,
+            requester_locale="en",
+            guidance_mode="personalized",
+            requester_visible_channel_ids=[789],
+            include_user_ids=[777],
+        )
+    )
+
+    assert result["privacy_restricted"] is True
+    assert result["activity_detail_access"] == "aggregate_leaderboards_or_self_only"
+    assert result["members"] == []
+
+
+def test_server_activity_public_leaderboard_omits_member_detail(monkeypatch):
+    import src.modules.ai.tools as tools_module
+
+    captured = {}
+
+    async def fake_effective_permissions(**_kwargs):
+        return SimpleNamespace(permission_keys=[])
+
+    async def fake_leaderboard(**kwargs):
+        captured.update(kwargs)
+        return [
+            SimpleNamespace(
+                user_id="777",
+                username="member",
+                server_nickname=None,
+                display_name="Member",
+                message_count=42,
+                last_message_at=datetime(2026, 7, 28, 20, 0, tzinfo=timezone.utc),
+                channels=[SimpleNamespace(channel_id="789", message_count=30)],
+            )
+        ]
+
+    monkeypatch.setattr(
+        tools_module,
+        "resolve_effective_permissions_for_member_context",
+        fake_effective_permissions,
+    )
+    monkeypatch.setattr(tools_module, "get_server_activity_leaderboard", fake_leaderboard)
+    monkeypatch.setattr(tools_module, "fetch_guild_channels", lambda _server_id: None)
+
+    result = asyncio.run(
+        tools_module._server_activity_tool(
+            session="session",
+            server_id=123,
+            requester_user_id=456,
+            requester_role_ids=[202],
+            requester_permission_names=[],
+            requester_is_owner=False,
+            requester_is_administrator=False,
+            requester_locale="en",
+            guidance_mode="personalized",
+            requester_visible_channel_ids=[789],
+        )
+    )
+
+    assert captured["include_channel_ids"] is None
+    assert result["activity_detail_access"] == "aggregate_only"
+    assert result["members"] == [
+        {
+            "user_id": "777",
+            "username": "member",
+            "server_nickname": None,
+            "display_name": "Member",
+            "message_count": 42,
+        }
+    ]
+
+
+def test_server_activity_tool_rejects_invisible_channel_scope(monkeypatch):
+    import src.modules.ai.tools as tools_module
+
+    class FakeSession:
+        async def get(self, _model, _server_id):
+            return None
+
+    async def fail_leaderboard(**_kwargs):
+        raise AssertionError("invisible channels must be rejected before querying activity")
+
+    monkeypatch.setattr(tools_module, "get_server_activity_leaderboard", fail_leaderboard)
+
+    result = asyncio.run(
+        tools_module._server_activity_tool(
+            session=FakeSession(),
+            server_id=123,
+            requester_user_id=456,
+            requester_role_ids=[],
+            requester_permission_names=["administrator"],
+            requester_is_owner=False,
+            requester_is_administrator=True,
+            requester_locale="en",
+            guidance_mode="personalized",
+            requester_visible_channel_ids=[789],
+            include_user_ids=[777],
+            include_channel_ids=[999],
+        )
+    )
+
+    assert result["privacy_restricted"] is True
+    assert result["requester_channel_scope_applied"] is True
+    assert result["members"] == []
+
+
+def test_server_activity_tool_honors_configured_channel_exclusions(monkeypatch):
+    import src.modules.ai.tools as tools_module
+    from src.db.models import ServerModerationSettings
+
+    class FakeSession:
+        async def get(self, model, server_id):
+            assert model is ServerModerationSettings
+            return ServerModerationSettings(server_id=server_id, activity_excluded_channel_ids=["789"])
+
+    async def fail_leaderboard(**_kwargs):
+        raise AssertionError("configured activity exclusions must be applied before querying")
+
+    monkeypatch.setattr(tools_module, "get_server_activity_leaderboard", fail_leaderboard)
+
+    result = asyncio.run(
+        tools_module._server_activity_tool(
+            session=FakeSession(),
+            server_id=123,
+            requester_user_id=456,
+            requester_role_ids=[],
+            requester_permission_names=[],
+            requester_is_owner=False,
+            requester_is_administrator=False,
+            requester_locale="en",
+            guidance_mode="personalized",
+            requester_visible_channel_ids=[789],
+            include_user_ids=[456],
+        )
+    )
+
+    assert result["server_channel_exclusions_applied"] is True
+    assert result["members"] == []
 
 
 def test_moderation_strictness_is_sent_to_prompt_and_metadata():
@@ -1559,22 +1788,74 @@ def test_answer_rejects_tool_call_disabled_for_server():
     }
 
 
-def test_command_guidance_tool_requires_trusted_requester_context():
+def test_requester_aware_tools_require_trusted_requester_context():
     ai = AIMain(provider=FakeProvider("unused"), model="test-model")
+
+    for tool_name, arguments in (
+        ("get_available_commands", {"server_id": 123}),
+        ("get_member_profile", {"server_id": 123, "user_id": 777}),
+        ("get_server_activity", {"server_id": 123}),
+    ):
+        result = asyncio.run(
+            ai._execute_assistant_tool_call(
+                AIToolCall(id="call-1", name=tool_name, arguments=arguments),
+                session="session",
+                server_id=123,
+                enabled_tool_names={tool_name},
+            )
+        )
+
+        assert result.output == {
+            "ok": False,
+            "error": "Tool call rejected because requester context is unavailable.",
+        }
+
+
+def test_requester_channel_visibility_cannot_be_supplied_by_model():
+    captured = {}
+
+    async def handler(*, session, server_id, **kwargs):
+        captured.update(kwargs)
+        return {"server_id": server_id, "session": session}
+
+    registry = AIToolRegistry()
+    registry.register(
+        AITool(
+            name="requester_aware",
+            description="Test trusted requester context.",
+            parameters={"type": "object", "properties": {"server_id": {"type": "integer"}}},
+            handler=handler,
+            requires_requester_context=True,
+        )
+    )
+    ai = AIMain(provider=FakeProvider("unused"), model="test-model", tool_registry=registry)
 
     result = asyncio.run(
         ai._execute_assistant_tool_call(
-            AIToolCall(id="call-1", name="get_available_commands", arguments={"server_id": 123}),
+            AIToolCall(
+                id="call-1",
+                name="requester_aware",
+                arguments={
+                    "server_id": 123,
+                    "requester_user_id": 999,
+                    "requester_visible_channel_ids": [999],
+                },
+            ),
             session="session",
             server_id=123,
-            enabled_tool_names={"get_available_commands"},
+            enabled_tool_names={"requester_aware"},
+            assistant_input=AssistantInput(
+                content="hello",
+                server_id=123,
+                author_user_id=456,
+                author_visible_channel_ids=[789],
+            ),
         )
     )
 
-    assert result.output == {
-        "ok": False,
-        "error": "Tool call rejected because requester context is unavailable.",
-    }
+    assert result.output["ok"] is True
+    assert captured["requester_user_id"] == 456
+    assert captured["requester_visible_channel_ids"] == [789]
 
 
 def test_answer_rejects_tool_call_outside_current_server_scope():

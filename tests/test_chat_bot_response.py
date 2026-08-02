@@ -38,6 +38,13 @@ class FakeAuthor:
 class FakeChannel:
     id = 789
 
+    class Permissions:
+        view_channel = True
+
+    @staticmethod
+    def permissions_for(_author):
+        return FakeChannel.Permissions()
+
 
 class FakeMessage:
     guild = FakeGuild()
@@ -185,8 +192,60 @@ def test_create_ai_response_passes_server_tool_settings(monkeypatch):
     assert ai.enabled_tool_names == {"get_server_activity"}
     assert ai.command_guidance_mode == "personalized"
     assert ai.assistant_input.author_permission_names == ["manage_guild"]
+    assert ai.assistant_input.author_visible_channel_ids == [789]
     assert ai.assistant_input.author_is_owner is False
     assert ai.assistant_input.author_is_administrator is False
+
+
+def test_create_ai_response_passes_only_discord_visible_channels(monkeypatch):
+    import src.modules.chat_bot.create_response as create_response
+    from src.db.models import ServerAISettings
+    from src.modules.ai.models import AIResponse
+
+    class ScopedChannel:
+        def __init__(self, channel_id, visible):
+            self.id = channel_id
+            self.visible = visible
+
+        def permissions_for(self, _author):
+            return type("Permissions", (), {"view_channel": self.visible})()
+
+    class ScopedGuild(FakeGuild):
+        channels = [ScopedChannel(100, True), ScopedChannel(200, False)]
+        threads = [ScopedChannel(300, True)]
+
+    class ScopedMessage(FakeMessage):
+        guild = ScopedGuild()
+        channel = ScopedGuild.channels[0]
+
+    class FakeSettingsSession:
+        async def get(self, model, server_id):
+            assert model is ServerAISettings
+            return ServerAISettings(server_id=server_id, answer_enabled_tools=["get_server_activity"])
+
+        def add(self, _item):
+            return None
+
+        async def flush(self):
+            return None
+
+        async def commit(self):
+            return None
+
+    class CapturingAI:
+        assistant_input = None
+
+        async def answer(self, assistant_input, *_args, **_kwargs):
+            self.assistant_input = assistant_input
+            return AIResponse(content="done", model="test-model", provider="fake")
+
+    ai = CapturingAI()
+    monkeypatch.setattr(create_response, "get_async_session", lambda: FakeSessionContext(FakeSettingsSession()))
+    monkeypatch.setattr(create_response, "ai_main_class", ai)
+
+    asyncio.run(_create_ai_response(content="hello", message=ScopedMessage(), conversation=[]))
+
+    assert ai.assistant_input.author_visible_channel_ids == [100, 300]
 
 
 def test_create_ai_response_passes_current_message_images(monkeypatch):

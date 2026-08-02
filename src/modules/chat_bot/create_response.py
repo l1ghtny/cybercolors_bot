@@ -83,12 +83,14 @@ async def _create_ai_response(
     author = getattr(message, "author", None)
     channel = getattr(message, "channel", None)
     role_ids, permission_names, is_owner, is_administrator = _requester_access_context(message)
+    visible_channel_ids = _requester_visible_channel_ids(message)
     assistant_input = AssistantInput(
         content=content,
         server_id=getattr(guild, "id", None),
         author_user_id=getattr(author, "id", None),
         author_role_ids=role_ids,
         author_permission_names=permission_names,
+        author_visible_channel_ids=visible_channel_ids,
         author_is_owner=is_owner,
         author_is_administrator=is_administrator,
         locale=locale,
@@ -187,6 +189,35 @@ def _requester_access_context(message) -> tuple[list[int], list[str], bool, bool
     is_owner = author_id is not None and owner_id is not None and int(author_id) == int(owner_id)
     is_administrator = "administrator" in permission_names
     return role_ids, permission_names, is_owner, is_administrator
+
+
+def _requester_visible_channel_ids(message) -> list[int]:
+    author = getattr(message, "author", None)
+    guild = getattr(message, "guild", None)
+    current_channel = getattr(message, "channel", None)
+    if author is None or guild is None:
+        return []
+
+    channels = [
+        *(getattr(guild, "channels", None) or []),
+        *(getattr(guild, "threads", None) or []),
+    ]
+    if current_channel is not None and current_channel not in channels:
+        channels.append(current_channel)
+
+    visible_channel_ids: set[int] = set()
+    for channel in channels:
+        permissions_for = getattr(channel, "permissions_for", None)
+        if not callable(permissions_for):
+            continue
+        try:
+            permissions = permissions_for(author)
+        except Exception:
+            continue
+        channel_id = getattr(channel, "id", None)
+        if channel_id is not None and bool(getattr(permissions, "view_channel", False)):
+            visible_channel_ids.add(int(channel_id))
+    return sorted(visible_channel_ids)
 
 
 def _expand_message_mentions(content: str, *, message, client) -> str:

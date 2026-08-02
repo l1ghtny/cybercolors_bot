@@ -144,7 +144,9 @@ Do not reveal internal moderation cases, notes, monitoring status, or private mo
 
 ACTIVITY_TOOL_GUIDANCE = (
     "Use get_server_activity for questions about message activity, activity rankings, active members, or activity "
-    "within a date, user, role, or channel filter. Do not guess activity from member profiles or conversation context."
+    "within a date, user, role, or channel filter. Public aggregate statistics and leaderboards are allowed. "
+    "Do not infer or reveal another member's per-channel activity or exact last-message time when the tool omits it; "
+    "explain briefly that detailed activity is private. Do not guess activity from member profiles or conversation context."
 )
 YOUTUBE_TOOL_GUIDANCE = """
 When a user asks about a followed YouTube channel, its latest or historical videos, publication dates, video links, or video contents, use search_youtube_channel_catalog before answering. Pass the user's name or abbreviation as channel_query; the tool resolves aliases and grammatical variants. Use search_transcripts mode for questions about what was said or discussed in the channel's indexed videos.
@@ -545,6 +547,9 @@ class AIMain:
                 "requester_user_id": int(assistant_input.author_user_id),
                 "requester_role_ids": [int(role_id) for role_id in assistant_input.author_role_ids],
                 "requester_permission_names": list(assistant_input.author_permission_names),
+                "requester_visible_channel_ids": [
+                    int(channel_id) for channel_id in assistant_input.author_visible_channel_ids
+                ],
                 "requester_is_owner": bool(assistant_input.author_is_owner),
                 "requester_is_administrator": bool(assistant_input.author_is_administrator),
                 "requester_locale": assistant_input.locale,

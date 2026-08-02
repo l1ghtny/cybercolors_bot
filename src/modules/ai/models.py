@@ -189,6 +189,7 @@ class AssistantInput:
     author_user_id: int | None = None
     author_role_ids: list[int] = field(default_factory=list)
     author_permission_names: list[str] = field(default_factory=list)
+    author_visible_channel_ids: list[int] = field(default_factory=list)
     author_is_owner: bool = False
     author_is_administrator: bool = False
     locale: str | None = None

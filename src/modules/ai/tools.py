@@ -18,7 +18,7 @@ from src.modules.ai.context import get_active_rules_context, get_member_profile_
 from src.modules.ai.knowledge import search_server_knowledge
 from src.modules.ai.models import AIToolSpec
 from src.modules.ai.youtube_channel_catalog import search_youtube_channel_catalog
-from src.db.models import ServerSecuritySettings
+from src.db.models import ServerModerationSettings, ServerSecuritySettings
 
 AIToolHandler = Callable[..., Awaitable[dict[str, Any] | list[dict[str, Any]]]]
 
@@ -88,10 +88,12 @@ async def _available_commands_tool(
     requester_is_administrator: bool,
     requester_locale: str | None,
     guidance_mode: str,
+    requester_visible_channel_ids: list[int] | None = None,
     query: str | None = None,
     category: str | None = None,
     details: bool = False,
 ) -> dict[str, Any]:
+    del requester_visible_channel_ids
     role_ids = {int(role_id) for role_id in requester_role_ids}
     permission_names = {str(name) for name in requester_permission_names}
     privileged = requester_is_owner or requester_is_administrator or "administrator" in permission_names
@@ -182,13 +184,37 @@ async def _member_profile_tool(
     session: AsyncSession,
     server_id: int,
     user_id: int,
+    requester_user_id: int,
+    requester_role_ids: list[int],
+    requester_permission_names: list[str],
+    requester_is_owner: bool,
+    requester_is_administrator: bool,
+    requester_locale: str | None,
+    guidance_mode: str,
+    requester_visible_channel_ids: list[int] | None = None,
 ) -> dict[str, Any]:
-    return await get_member_profile_context(
+    del requester_locale, guidance_mode, requester_visible_channel_ids
+    profile = await get_member_profile_context(
         session=session,
         server_id=server_id,
         user_id=user_id,
         visibility="public_answer",
     )
+    if int(user_id) != int(requester_user_id):
+        can_view_other_member_activity = await _requester_can_view_other_member_activity(
+            session=session,
+            server_id=server_id,
+            requester_user_id=requester_user_id,
+            requester_role_ids=requester_role_ids,
+            requester_permission_names=requester_permission_names,
+            requester_is_owner=requester_is_owner,
+            requester_is_administrator=requester_is_administrator,
+        )
+        if not can_view_other_member_activity:
+            profile = dict(profile)
+            profile["activity"] = None
+            profile["activity_visibility"] = "restricted_to_self_or_activity_view"
+    return profile
 
 
 async def _server_knowledge_tool(
@@ -225,10 +251,42 @@ def _activity_ids(values: list[int] | None) -> list[str] | None:
     return [str(int(value)) for value in values]
 
 
+async def _requester_can_view_other_member_activity(
+    *,
+    session: AsyncSession,
+    server_id: int,
+    requester_user_id: int,
+    requester_role_ids: list[int],
+    requester_permission_names: list[str],
+    requester_is_owner: bool,
+    requester_is_administrator: bool,
+) -> bool:
+    permission_names = {str(name) for name in requester_permission_names}
+    if requester_is_owner or requester_is_administrator or "administrator" in permission_names:
+        return True
+    effective = await resolve_effective_permissions_for_member_context(
+        session=session,
+        server_id=server_id,
+        user_id=requester_user_id,
+        role_ids={int(role_id) for role_id in requester_role_ids},
+        owner_fallback=requester_is_owner,
+        admin_fallback=requester_is_administrator,
+    )
+    return "activity.view" in set(effective.permission_keys)
+
+
 async def _server_activity_tool(
     *,
     session: AsyncSession,
     server_id: int,
+    requester_user_id: int,
+    requester_role_ids: list[int],
+    requester_permission_names: list[str],
+    requester_is_owner: bool,
+    requester_is_administrator: bool,
+    requester_locale: str | None,
+    guidance_mode: str,
+    requester_visible_channel_ids: list[int] | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
     include_user_ids: list[int] | None = None,
@@ -240,8 +298,85 @@ async def _server_activity_tool(
     limit: int = 10,
     channels_limit: int = 5,
 ) -> dict[str, Any]:
+    del requester_locale, guidance_mode
     parsed_date_from = _activity_date(date_from, "date_from")
     parsed_date_to = _activity_date(date_to, "date_to")
+    requested_user_ids = {int(user_id) for user_id in include_user_ids or []}
+    targets_other_members = bool(requested_user_ids - {int(requester_user_id)})
+    can_view_other_member_activity = False
+    if targets_other_members:
+        can_view_other_member_activity = await _requester_can_view_other_member_activity(
+            session=session,
+            server_id=server_id,
+            requester_user_id=requester_user_id,
+            requester_role_ids=requester_role_ids,
+            requester_permission_names=requester_permission_names,
+            requester_is_owner=requester_is_owner,
+            requester_is_administrator=requester_is_administrator,
+        )
+    if targets_other_members and not can_view_other_member_activity:
+        return {
+            "date_from": parsed_date_from.isoformat() if parsed_date_from else None,
+            "date_to": parsed_date_to.isoformat() if parsed_date_to else None,
+            "privacy_restricted": True,
+            "activity_detail_access": "aggregate_leaderboards_or_self_only",
+            "requester_channel_scope_applied": False,
+            "server_channel_exclusions_applied": False,
+            "returned_member_count": 0,
+            "members": [],
+            "error": (
+                "Targeted activity lookups for other members are private. "
+                "Offer an aggregate leaderboard, or let the requester inspect their own activity."
+            ),
+        }
+    targeted_detail_allowed = bool(requested_user_ids) and (
+        can_view_other_member_activity or not targets_other_members
+    )
+
+    visible_channel_ids = {int(channel_id) for channel_id in requester_visible_channel_ids or []}
+    requested_channel_ids = (
+        {int(channel_id) for channel_id in include_channel_ids}
+        if include_channel_ids is not None
+        else None
+    )
+    channel_scope_requested = requested_channel_ids is not None
+    effective_channel_ids: set[int] | None = None
+    if targeted_detail_allowed or channel_scope_requested:
+        effective_channel_ids = visible_channel_ids
+        if requested_channel_ids is not None:
+            effective_channel_ids = effective_channel_ids.intersection(requested_channel_ids)
+
+    configured_channel_exclusions_applied = False
+    if effective_channel_ids is not None:
+        moderation_settings = await session.get(ServerModerationSettings, server_id)
+        configured_excluded_channel_ids = {
+            int(channel_id)
+            for channel_id in (
+                (moderation_settings.activity_excluded_channel_ids if moderation_settings else None) or []
+            )
+            if str(channel_id).isdigit()
+        }
+        configured_channel_exclusions_applied = bool(
+            effective_channel_ids.intersection(configured_excluded_channel_ids)
+        )
+        effective_channel_ids.difference_update(configured_excluded_channel_ids)
+
+    if effective_channel_ids is not None and not effective_channel_ids:
+        return {
+            "date_from": parsed_date_from.isoformat() if parsed_date_from else None,
+            "date_to": parsed_date_to.isoformat() if parsed_date_to else None,
+            "privacy_restricted": channel_scope_requested,
+            "activity_detail_access": (
+                "activity_view" if targeted_detail_allowed and can_view_other_member_activity
+                else "self" if targeted_detail_allowed
+                else "aggregate_only"
+            ),
+            "requester_channel_scope_applied": True,
+            "server_channel_exclusions_applied": configured_channel_exclusions_applied,
+            "returned_member_count": 0,
+            "members": [],
+        }
+
     response = Response()
     rows = await get_server_activity_leaderboard(
         server_id=server_id,
@@ -255,7 +390,7 @@ async def _server_activity_tool(
         exclude_user_ids=_activity_ids(exclude_user_ids),
         include_role_ids=_activity_ids(include_role_ids),
         exclude_role_ids=_activity_ids(exclude_role_ids),
-        include_channel_ids=_activity_ids(include_channel_ids),
+        include_channel_ids=_activity_ids(sorted(effective_channel_ids)) if effective_channel_ids is not None else None,
         exclude_channel_ids=_activity_ids(exclude_channel_ids),
         ignore_server_excludes=False,
         refresh_member_roles=False,
@@ -264,42 +399,51 @@ async def _server_activity_tool(
     )
 
     channel_names: dict[str, str] = {}
-    try:
-        channel_names = {
-            str(channel["id"]): str(channel.get("name") or channel["id"])
-            for channel in await fetch_guild_channels(server_id)
-            if channel.get("id") is not None
-        }
-    except Exception:
-        channel_names = {}
+    if targeted_detail_allowed:
+        try:
+            channel_names = {
+                str(channel["id"]): str(channel.get("name") or channel["id"])
+                for channel in await fetch_guild_channels(server_id)
+                if channel.get("id") is not None
+            }
+        except Exception:
+            channel_names = {}
 
     members = []
     for row in rows:
-        members.append(
-            {
-                "user_id": row.user_id,
-                "username": row.username,
-                "server_nickname": row.server_nickname,
-                "display_name": row.display_name,
-                "message_count": row.message_count,
-                "last_message_at": row.last_message_at.isoformat(),
-                "channels": [
-                    {
-                        "channel_id": channel.channel_id,
-                        "channel_name": channel_names.get(channel.channel_id),
-                        "message_count": channel.message_count,
-                    }
-                    for channel in row.channels
-                ],
-            }
-        )
+        member = {
+            "user_id": row.user_id,
+            "username": row.username,
+            "server_nickname": row.server_nickname,
+            "display_name": row.display_name,
+            "message_count": row.message_count,
+        }
+        if targeted_detail_allowed:
+            member["last_message_at"] = row.last_message_at.isoformat()
+            member["channels"] = [
+                {
+                    "channel_id": channel.channel_id,
+                    "channel_name": channel_names.get(channel.channel_id),
+                    "message_count": channel.message_count,
+                }
+                for channel in row.channels
+                if effective_channel_ids is not None and int(channel.channel_id) in effective_channel_ids
+            ]
+        members.append(member)
 
     return {
         "date_from": parsed_date_from.isoformat() if parsed_date_from else None,
         "date_to": parsed_date_to.isoformat() if parsed_date_to else None,
         "server_channel_exclusions_applied": (
-            response.headers.get("X-Activity-Server-Excludes-Applied") == "true"
+            configured_channel_exclusions_applied
+            or response.headers.get("X-Activity-Server-Excludes-Applied") == "true"
         ),
+        "activity_detail_access": (
+            "activity_view" if targeted_detail_allowed and can_view_other_member_activity
+            else "self" if targeted_detail_allowed
+            else "aggregate_only"
+        ),
+        "requester_channel_scope_applied": effective_channel_ids is not None,
         "returned_member_count": len(members),
         "members": members,
     }
@@ -372,10 +516,11 @@ def build_default_tool_registry() -> AIToolRegistry:
         AITool(
             name="get_member_profile",
             description=(
-                "Fetch public-safe member context for user-facing answers, including profile basics, "
-                "nickname history, activity summary, avatar hash, Discord account creation time, server join time, "
+                "Fetch requester-aware member context for user-facing answers, including profile basics, "
+                "nickname history, avatar hash, Discord account creation time, server join time, "
                 "public moderation actions taken against the member, and rule violation summaries. Does not return cases, "
-                "notes, monitoring status, or internal moderation workspace data."
+                "notes, monitoring status, or internal moderation workspace data. Activity is returned for the requester "
+                "and for staff with activity.view; it is omitted for other public member lookups."
             ),
             parameters={
                 "type": "object",
@@ -388,17 +533,19 @@ def build_default_tool_registry() -> AIToolRegistry:
             },
             handler=_member_profile_tool,
             requires_admin_context=False,
+            requires_requester_context=True,
         )
     )
     registry.register(
         AITool(
             name="get_server_activity",
             description=(
-                "Fetch public-safe Discord server message activity on demand using the same date, user, role, "
-                "and channel include/exclude filters as the dashboard leaderboard. Returns member message counts, "
-                "last-message timestamps, and per-channel counts without moderation warnings or private monitoring data. "
-                "Exclusions win; user and role include filters are combined with OR; configured server channel exclusions "
-                "apply unless explicit include_channel_ids are supplied."
+                "Fetch requester-aware Discord server message activity using date, user, role, and channel filters. "
+                "Public results expose aggregate member message counts. Exact last-message timestamps and per-channel "
+                "counts are returned only for a targeted self lookup or to staff with activity.view, and are always "
+                "limited to channels the requester can currently view in Discord. "
+                "Exclusions win; user and role include filters are combined with OR; configured server channel "
+                "exclusions always apply."
             ),
             parameters={
                 "type": "object",
@@ -450,6 +597,7 @@ def build_default_tool_registry() -> AIToolRegistry:
             },
             handler=_server_activity_tool,
             requires_admin_context=False,
+            requires_requester_context=True,
         )
     )
     registry.register(
