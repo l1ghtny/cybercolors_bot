@@ -77,7 +77,7 @@ async def send_bot_message(
     message_fetcher: MessageFetcher = fetch_channel_message,
     attachments: list[tuple[str, bytes, str]] | None = None,
 ) -> BotMessageAuditReadModel:
-    if source not in {"dashboard", "discord_context"}:
+    if source not in {"dashboard", "discord_context", "scheduled"}:
         raise ValueError(f"Unsupported bot message source: {source}")
 
     await _assert_public_responses_enabled(session, server_id)

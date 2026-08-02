@@ -31,7 +31,7 @@ class BotMessageAuditReadModel(BaseModel):
     discord_message_id: str | None = None
     reply_to_message_id: str | None = None
     actor_user_id: str
-    source: Literal["dashboard", "discord_context"]
+    source: Literal["dashboard", "discord_context", "scheduled"]
     status: Literal["pending", "sent", "failed"]
     content: str
     error_text: str | None = None

@@ -47,6 +47,13 @@ PERMISSIONS: tuple[PermissionDefinition, ...] = (
         "Send audited text messages and replies from the bot account.",
         "change",
     ),
+    PermissionDefinition(
+        "communications.scheduled_posts.manage",
+        "moderation",
+        "Manage scheduled posts",
+        "Create, edit, pause, and send scheduled bot messages.",
+        "change",
+    ),
     PermissionDefinition("moderation.actions.apply.warn", "moderation", "Warn members", "Warn members from the dashboard or bot.", "change"),
     PermissionDefinition("moderation.actions.apply.mute", "moderation", "Mute and unmute members", "Mute and unmute members.", "change"),
     PermissionDefinition("moderation.actions.apply.kick", "moderation", "Kick members", "Kick members from the server.", "high_impact"),
@@ -114,6 +121,7 @@ PRESETS: tuple[PresetDefinition, ...] = (
         VIEWER_PERMISSION_KEYS
         + (
             "communications.send_as_bot",
+            "communications.scheduled_posts.manage",
             "moderation.actions.apply.warn",
             "moderation.actions.link_messages",
             "moderation.cases.manage",
@@ -127,6 +135,7 @@ PRESETS: tuple[PresetDefinition, ...] = (
         VIEWER_PERMISSION_KEYS
         + (
             "communications.send_as_bot",
+            "communications.scheduled_posts.manage",
             "moderation.actions.apply.warn",
             "moderation.actions.apply.mute",
             "moderation.actions.link_messages",
@@ -142,6 +151,7 @@ PRESETS: tuple[PresetDefinition, ...] = (
         VIEWER_PERMISSION_KEYS
         + (
             "communications.send_as_bot",
+            "communications.scheduled_posts.manage",
             "moderation.actions.apply.warn",
             "moderation.actions.apply.mute",
             "moderation.actions.apply.kick",

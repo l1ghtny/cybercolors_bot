@@ -1239,6 +1239,70 @@ class BotMessageAuditEvent(SQLModel, table=True):
     sent_at: Optional[datetime] = Field(default=None, nullable=True)
 
 
+class ScheduledBotPost(SQLModel, table=True):
+    __tablename__ = "scheduled_bot_posts"
+    __table_args__ = (
+        sa.CheckConstraint("schedule_type IN ('once', 'interval')", name="ck_scheduled_bot_posts_type"),
+        sa.CheckConstraint("status IN ('active', 'paused', 'completed')", name="ck_scheduled_bot_posts_status"),
+        sa.CheckConstraint(
+            "interval_seconds IS NULL OR interval_seconds BETWEEN 60 AND 31536000",
+            name="ck_scheduled_bot_posts_interval",
+        ),
+        Index("ix_scheduled_bot_posts_due", "status", "next_run_at"),
+    )
+
+    id: Optional[UUID] = uuid7_primary_key_field()
+    server_id: int = Field(
+        sa_column=Column(BigInteger, ForeignKey("servers.server_id", ondelete="CASCADE"), nullable=False, index=True)
+    )
+    channel_id: int = Field(sa_column=Column(BigInteger, nullable=False, index=True))
+    created_by_user_id: int = Field(
+        sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False, index=True)
+    )
+    updated_by_user_id: int = Field(
+        sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False)
+    )
+    content: str = Field(sa_column=Column(Text, nullable=False))
+    mention_everyone: bool = Field(default=False, nullable=False)
+    mention_user_ids: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    mention_role_ids: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    schedule_type: str = Field(nullable=False, max_length=20)
+    timezone: str = Field(default="UTC", nullable=False, max_length=64)
+    interval_seconds: Optional[int] = Field(default=None, nullable=True)
+    status: str = Field(default="active", nullable=False, max_length=20, index=True)
+    next_run_at: datetime = Field(nullable=False, index=True)
+    last_run_at: Optional[datetime] = Field(default=None, nullable=True)
+    lease_until: Optional[datetime] = Field(default=None, nullable=True, index=True)
+    created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+    updated_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+
+
+class ScheduledBotPostRun(SQLModel, table=True):
+    __tablename__ = "scheduled_bot_post_runs"
+    __table_args__ = (
+        UniqueConstraint("scheduled_post_id", "scheduled_for", name="uq_scheduled_bot_post_run_occurrence"),
+    )
+
+    id: Optional[UUID] = uuid7_primary_key_field()
+    scheduled_post_id: UUID = Field(
+        sa_column=Column(
+            sa.Uuid(),
+            ForeignKey("scheduled_bot_posts.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        )
+    )
+    scheduled_for: datetime = Field(nullable=False, index=True)
+    status: str = Field(default="claimed", nullable=False, max_length=20, index=True)
+    bot_message_audit_id: Optional[UUID] = Field(
+        default=None,
+        sa_column=Column(sa.Uuid(), ForeignKey("bot_message_audit_events.id", ondelete="SET NULL"), nullable=True),
+    )
+    error_text: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    created_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False)
+    finished_at: Optional[datetime] = Field(default=None, nullable=True)
+
+
 class ModerationCase(SQLModel, table=True):
     __tablename__ = "moderation_cases"
 

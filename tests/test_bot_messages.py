@@ -207,6 +207,29 @@ def test_send_bot_message_honors_public_response_pause():
     assert raised.value.status_code == status.HTTP_423_LOCKED
 
 
+def test_send_bot_message_accepts_scheduled_source():
+    session = FakeSession()
+
+    async def channel_fetcher(server_id: int, channel_id: int):
+        return {"id": str(channel_id), "guild_id": str(server_id), "type": 0}
+
+    async def sender(**kwargs):
+        return {"id": "777"}
+
+    result = asyncio.run(
+        send_bot_message(
+            session,
+            server_id=123,
+            actor_user_id=456,
+            body=BotMessageCreateModel(channel_id="789", content="Scheduled"),
+            source="scheduled",
+            sender=sender,
+            channel_fetcher=channel_fetcher,
+        )
+    )
+    assert result.source == "scheduled"
+
+
 def test_bot_message_payload_rejects_blank_or_overlong_content():
     assert BotMessageCreateModel(channel_id="123", content="Safe default").notify_replied_user is False
     assert BotMessageCreateModel(channel_id="123", content="Safe default").suppress_mentions is False

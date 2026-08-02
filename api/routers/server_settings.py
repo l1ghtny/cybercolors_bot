@@ -11,10 +11,12 @@ from api.routers.server_overview_settings import server_overview_settings_router
 from api.routers.server_moderation_settings import server_moderation_settings_router
 from api.routers.server_temp_voice import server_temp_voice_router
 from api.routers.server_security import server_security_router
+from api.routers.scheduled_posts import scheduled_posts_router
 
 server_settings = APIRouter()
 
 server_settings.include_router(bot_messages_router, tags=["servers:bot-messages"])
+server_settings.include_router(scheduled_posts_router, tags=["servers:scheduled-posts"])
 server_settings.include_router(rbac_router, tags=["servers:rbac"])
 server_settings.include_router(discord_command_visibility_router, tags=["servers:discord-command-visibility"])
 server_settings.include_router(server_security_router, tags=["servers:security"])
