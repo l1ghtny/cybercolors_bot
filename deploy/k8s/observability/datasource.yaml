@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-loki-persistent-datasource
+  namespace: observability
+  labels:
+    grafana_datasource: "1"
+data:
+  loki-persistent.yaml: |-
+    apiVersion: 1
+    datasources:
+      - name: Loki Persistent
+        uid: loki-persistent
+        type: loki
+        access: proxy
+        url: http://loki-v2-gateway.observability.svc.cluster.local
+        editable: false
+        jsonData:
+          maxLines: 2000

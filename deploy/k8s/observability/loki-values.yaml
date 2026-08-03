@@ -1,0 +1,127 @@
+# Pinned with grafana-community/loki chart 18.7.1 (Loki 3.7.4).
+deploymentMode: Monolithic
+
+loki:
+  auth_enabled: false
+  commonConfig:
+    path_prefix: /var/loki
+    replication_factor: 1
+  storage:
+    type: filesystem
+    filesystem:
+      chunks_directory: /var/loki/chunks
+      rules_directory: /var/loki/rules
+  schemaConfig:
+    configs:
+      - from: "2024-04-01"
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: loki_index_
+          period: 24h
+  limits_config:
+    allow_structured_metadata: true
+    max_cache_freshness_per_query: 10m
+    query_timeout: 300s
+    reject_old_samples: true
+    reject_old_samples_max_age: 168h
+    retention_period: 720h
+    split_queries_by_interval: 15m
+    volume_enabled: true
+  compactor:
+    working_directory: /var/loki/compactor
+    retention_enabled: true
+    retention_delete_delay: 2h
+    retention_delete_worker_count: 50
+    delete_request_store: filesystem
+  analytics:
+    reporting_enabled: false
+
+singleBinary:
+  replicas: 1
+  # PrometheusRule resources are chart-managed; no Loki ruler ConfigMaps are used.
+  # The cluster CA lacks a modern key-usage extension required by k8s-sidecar.
+  sidecar: false
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+  persistence:
+    enabled: true
+    accessModes:
+      - ReadWriteOnce
+    size: 100Gi
+    storageClass: longhorn-r2
+    whenScaled: Retain
+    whenDeleted: Retain
+
+gateway:
+  enabled: true
+  replicas: 1
+  verboseLogging: false
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+resultsCache:
+  enabled: false
+chunksCache:
+  enabled: false
+
+lokiCanary:
+  enabled: true
+
+monitoring:
+  dashboards:
+    enabled: true
+    labels:
+      grafana_dashboard: "1"
+    defaultDashboardsTimezone: browser
+  rules:
+    enabled: true
+    labels:
+      release: kube-prom-stack
+  alerts:
+    enabled: true
+    labels:
+      release: kube-prom-stack
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: kube-prom-stack
+
+# Explicitly keep every distributed-mode workload disabled.
+backend:
+  replicas: 0
+read:
+  replicas: 0
+write:
+  replicas: 0
+ingester:
+  replicas: 0
+querier:
+  replicas: 0
+queryFrontend:
+  replicas: 0
+queryScheduler:
+  replicas: 0
+distributor:
+  replicas: 0
+compactor:
+  replicas: 0
+indexGateway:
+  replicas: 0
+bloomPlanner:
+  replicas: 0
+bloomBuilder:
+  replicas: 0
+bloomGateway:
+  replicas: 0

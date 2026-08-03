@@ -1,0 +1,71 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {"type": "loki", "uid": "loki-persistent"},
+      "description": "Log lines received from the selected CyberColors workloads.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "fillOpacity": 12, "lineWidth": 1, "showPoints": "never", "spanNulls": true}, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"legend": {"calcs": ["sum"], "displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"expr": "sum by (app) (count_over_time({namespace=\"cybercolors\", app=~\"$app\", container=~\"$container\"}[$__interval]))", "legendFormat": "{{app}}", "queryType": "range", "refId": "A"}],
+      "title": "Log volume by application",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki-persistent"},
+      "description": "Case-insensitive error, exception, traceback, or critical markers.",
+      "fieldConfig": {"defaults": {"color": {"fixedColor": "red", "mode": "fixed"}, "custom": {"drawStyle": "bars", "fillOpacity": 40, "lineWidth": 1, "showPoints": "never"}, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 0},
+      "id": 2,
+      "options": {"legend": {"calcs": ["sum"], "displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"expr": "sum by (app, container) (count_over_time({namespace=\"cybercolors\", app=~\"$app\", container=~\"$container\"} |~ \"(?i)(error|exception|traceback|critical)\" [$__interval]))", "legendFormat": "{{app}} / {{container}}", "queryType": "range", "refId": "A"}],
+      "title": "Error-like lines",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki-persistent"},
+      "description": "Newest errors first. Expand a row to see labels and the complete message.",
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 7},
+      "id": 3,
+      "options": {"dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": false, "showCommonLabels": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true},
+      "targets": [{"expr": "{namespace=\"cybercolors\", app=~\"$app\", container=~\"$container\"} |~ \"(?i)(error|exception|traceback|critical)\"", "queryType": "range", "refId": "A"}],
+      "title": "Errors and exceptions",
+      "type": "logs"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki-persistent"},
+      "description": "Use the search box for a user, guild, job, or request ID. Plain text matching is case-sensitive.",
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 16},
+      "id": 4,
+      "options": {"dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": false, "showCommonLabels": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true},
+      "targets": [{"expr": "{namespace=\"cybercolors\", app=~\"$app\", container=~\"$container\"} |= \"$search\"", "queryType": "range", "refId": "A"}],
+      "title": "Live log search",
+      "type": "logs"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 37,
+  "style": "dark",
+  "tags": ["CyberColors", "logs", "Loki"],
+  "templating": {
+    "list": [
+      {"allValue": ".*", "current": {"selected": true, "text": "All", "value": "$__all"}, "datasource": {"type": "loki", "uid": "loki-persistent"}, "definition": "label_values({namespace=\"cybercolors\"}, app)", "hide": 0, "includeAll": true, "label": "Application", "multi": true, "name": "app", "options": [], "query": "label_values({namespace=\"cybercolors\"}, app)", "refresh": 1, "regex": "", "skipUrlSync": false, "sort": 1, "type": "query"},
+      {"allValue": ".*", "current": {"selected": true, "text": "All", "value": "$__all"}, "datasource": {"type": "loki", "uid": "loki-persistent"}, "definition": "label_values({namespace=\"cybercolors\", app=~\"$app\"}, container)", "hide": 0, "includeAll": true, "label": "Container", "multi": true, "name": "container", "options": [], "query": "label_values({namespace=\"cybercolors\", app=~\"$app\"}, container)", "refresh": 1, "regex": "", "skipUrlSync": false, "sort": 1, "type": "query"},
+      {"current": {"selected": true, "text": "", "value": ""}, "hide": 0, "label": "Search text", "name": "search", "options": [{"selected": true, "text": "", "value": ""}], "query": "", "skipUrlSync": false, "type": "textbox"}
+    ]
+  },
+  "time": {"from": "now-6h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "CyberColors Logs",
+  "uid": "cybercolors-logs",
+  "version": 1,
+  "weekStart": ""
+}

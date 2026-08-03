@@ -1,0 +1,99 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {"type": "loki", "uid": "loki-persistent"},
+      "description": "Total log lines accepted by the persistent Loki during the selected time range.",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["sum"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
+      "targets": [{"expr": "sum(count_over_time({namespace=~\"$namespace\"}[$__interval]))", "queryType": "range", "refId": "A"}],
+      "title": "Log lines",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki-persistent"},
+      "description": "Error-like lines across the selected namespaces.",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 1}, {"color": "red", "value": 20}]}, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 0},
+      "id": 2,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["sum"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
+      "targets": [{"expr": "sum(count_over_time({namespace=~\"$namespace\"} |~ \"(?i)(error|exception|traceback|critical)\" [$__interval]))", "queryType": "range", "refId": "A"}],
+      "title": "Error-like lines",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Alloy instances expected to run one per Kubernetes node.",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 4}]}, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 12, "y": 0},
+      "id": 3,
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
+      "targets": [{"expr": "sum(up{namespace=\"observability\", service=~\"alloy-logs.*\"})", "instant": true, "refId": "A"}],
+      "title": "Alloy collectors up",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Current utilization of the Loki Longhorn volume.",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "decimals": 1, "mappings": [], "max": 100, "min": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 70}, {"color": "red", "value": 85}]}, "unit": "percent"}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 18, "y": 0},
+      "id": 4,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
+      "targets": [{"expr": "100 * (1 - kubelet_volume_stats_available_bytes{namespace=\"observability\", persistentvolumeclaim=~\"storage-loki-v2.*\"} / kubelet_volume_stats_capacity_bytes{namespace=\"observability\", persistentvolumeclaim=~\"storage-loki-v2.*\"})", "instant": false, "refId": "A"}],
+      "title": "Loki PVC used",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki-persistent"},
+      "description": "Use this to see which namespace is generating the most log traffic.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "fillOpacity": 15, "lineWidth": 1, "showPoints": "never"}, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 5},
+      "id": 5,
+      "options": {"legend": {"calcs": ["sum"], "displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"expr": "sum by (namespace) (count_over_time({namespace=~\"$namespace\"}[$__interval]))", "legendFormat": "{{namespace}}", "queryType": "range", "refId": "A"}],
+      "title": "Volume by namespace",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki-persistent"},
+      "description": "The highest-volume applications in the current interval.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "fillOpacity": 15, "lineWidth": 1, "showPoints": "never"}, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 5},
+      "id": 6,
+      "options": {"legend": {"calcs": ["sum"], "displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"expr": "topk(10, sum by (namespace, app) (count_over_time({namespace=~\"$namespace\"}[$__interval])))", "legendFormat": "{{namespace}} / {{app}}", "queryType": "range", "refId": "A"}],
+      "title": "Top applications by volume",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki-persistent"},
+      "description": "Newest error-like entries across the cluster.",
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 13},
+      "id": 7,
+      "options": {"dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": false, "showCommonLabels": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true},
+      "targets": [{"expr": "{namespace=~\"$namespace\"} |~ \"(?i)(error|exception|traceback|critical)\"", "queryType": "range", "refId": "A"}],
+      "title": "Recent errors",
+      "type": "logs"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 37,
+  "style": "dark",
+  "tags": ["cluster", "logs", "Loki"],
+  "templating": {"list": [{"allValue": ".*", "current": {"selected": true, "text": "All", "value": "$__all"}, "datasource": {"type": "loki", "uid": "loki-persistent"}, "definition": "label_values(namespace)", "hide": 0, "includeAll": true, "label": "Namespace", "multi": true, "name": "namespace", "options": [], "query": "label_values(namespace)", "refresh": 1, "regex": "", "skipUrlSync": false, "sort": 1, "type": "query"}]},
+  "time": {"from": "now-6h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Cluster Log Overview",
+  "uid": "cluster-log-overview",
+  "version": 1,
+  "weekStart": ""
+}
