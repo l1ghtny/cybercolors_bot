@@ -5,6 +5,7 @@ import os
 from src.db.database import get_async_session
 from src.modules.ai.embeddings import KnowledgeEmbedder, build_knowledge_embedder
 from src.modules.ai.knowledge import run_knowledge_index_job_once
+from src.modules.observability.sentry import configure_sentry
 
 
 def _env_int(name: str, default: int) -> int:
@@ -44,6 +45,7 @@ async def _run_worker(*, once: bool, poll_seconds: int, batch_size: int) -> None
 
 
 def main() -> None:
+    configure_sentry("knowledge-indexer-worker")
     parser = argparse.ArgumentParser(description="Process queued AI knowledge indexing jobs.")
     parser.add_argument("--once", action="store_true", help="Process one batch and exit.")
     parser.add_argument(

@@ -4,6 +4,7 @@ import os
 from src.db.database import get_async_session
 from src.modules.logs_setup import logger
 from src.modules.moderation.newcomer_release_worker import process_due_newcomer_releases
+from src.modules.observability.sentry import configure_sentry
 
 log = logger.logging.getLogger("bot")
 
@@ -45,4 +46,5 @@ async def run_forever() -> None:
 
 
 if __name__ == "__main__":
+    configure_sentry("newcomer-release-worker")
     asyncio.run(run_forever())

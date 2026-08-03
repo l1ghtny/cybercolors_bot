@@ -120,6 +120,7 @@ from src.modules.monitoring.activity import (
     record_thread_create_activity,
     record_voice_join_activity,
 )
+from src.modules.observability.sentry import birthday_hourly_monitor, configure_sentry
 from api.services.moderation_rules_service import sync_rules_from_source_message_edit
 from api.services.newcomer_probation import can_use_public_member_commands
 from src.views.replies.delete_multiple_replies import DeleteReplyMultiple, DeleteReplyMultipleSelect
@@ -128,6 +129,7 @@ from src.views.pagination.pagination import PaginationView
 from src.views.birthday.settings import BirthdaysButtonsSelect, GuildAlreadyExists
 
 load_dotenv()
+configure_sentry("discord-bot")
 # Grab the API token from the .env file.
 DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN") or os.getenv("DISCORD_TOKEN_TEST") or os.getenv("DISCORD_TOKEN")
 TEST_GUILD_ID = os.getenv('TEST_GUILD_ID')
@@ -817,8 +819,9 @@ async def on_raw_message_edit(payload: discord.RawMessageUpdateEvent):
 # BD MODULE with checking task
 @tasks.loop(time=check_time)
 async def birthday():
-    await check_birthday_new(client)
-    await check_roles(client)
+    with birthday_hourly_monitor():
+        await check_birthday_new(client)
+        await check_roles(client)
 
 
 @tasks.loop(time=users_time)

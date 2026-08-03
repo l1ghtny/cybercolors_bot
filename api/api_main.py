@@ -4,6 +4,8 @@ from fastapi import FastAPI, APIRouter
 import fastapi_swagger_dark as fsd
 from starlette.middleware.cors import CORSMiddleware
 
+from src.modules.observability.sentry import configure_sentry
+
 from api.routers.auth import auth
 from api.routers.activity import activity
 from api.routers.birthdays import birthdays
@@ -12,6 +14,8 @@ from api.routers.moderation import moderation
 from api.routers.replies import replies
 from api.routers.servers import servers
 from api.routers.server_settings import server_settings
+
+configure_sentry("api")
 
 app = FastAPI(title="CyberColors API", version="0.1.0", docs_url=None, redoc_url=None)
 

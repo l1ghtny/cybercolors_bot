@@ -5,6 +5,7 @@ import os
 
 from src.db.database import get_async_session
 from src.modules.logs_setup import logger
+from src.modules.observability.sentry import configure_sentry
 from src.modules.privacy.retention import RetentionSettings, run_retention_batch
 
 log = logger.logging.getLogger("bot")
@@ -61,4 +62,5 @@ async def run_forever() -> None:
 
 
 if __name__ == "__main__":
+    configure_sentry("privacy-retention-worker")
     asyncio.run(run_forever())

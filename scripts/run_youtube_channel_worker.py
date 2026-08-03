@@ -5,6 +5,7 @@ import os
 from src.db.database import get_async_session
 from src.modules.ai.youtube_channel_profiles import ensure_youtube_channel_profile_once
 from src.modules.ai.youtube_channel_sync import sync_due_youtube_channel_once
+from src.modules.observability.sentry import configure_sentry
 
 
 def _env_int(name: str, default: int) -> int:
@@ -39,6 +40,7 @@ async def _run_worker(*, once: bool, poll_seconds: int, batch_size: int) -> None
 
 
 def main() -> None:
+    configure_sentry("youtube-channel-worker")
     parser = argparse.ArgumentParser(description="Synchronize subscribed YouTube channels.")
     parser.add_argument("--once", action="store_true", help="Process one batch and exit.")
     parser.add_argument(

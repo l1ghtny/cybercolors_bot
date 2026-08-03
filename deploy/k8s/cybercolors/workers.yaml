@@ -304,6 +304,9 @@ spec:
           envFrom:
             - configMapRef:
                 name: cybercolors-config
+            - secretRef:
+                name: cybercolors-app-secrets
+                optional: true
           env:
             - name: PYTHONPATH
               value: /home/discord-bot

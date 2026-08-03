@@ -3,6 +3,7 @@ import os
 
 from src.db.database import get_async_session
 from src.modules.logs_setup import logger
+from src.modules.observability.sentry import configure_sentry
 from api.services.scheduled_posts import (
     claim_due_scheduled_post,
     deliver_claimed_scheduled_post,
@@ -54,4 +55,5 @@ async def run_forever() -> None:
 
 
 if __name__ == "__main__":
+    configure_sentry("scheduled-posts-worker")
     asyncio.run(run_forever())
