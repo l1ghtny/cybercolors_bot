@@ -1,9 +1,9 @@
 # Persistent logging operations
 
-The cluster runs two logging paths during migration:
-
-- `loki-v2` + `alloy-logs` is the persistent path. Loki stores 30 days of logs on a 100 Gi Longhorn R2 PVC. Alloy runs on every node and sends Kubernetes pod logs to it.
-- `loki` + `loki-promtail` is the legacy path. Keep it until the persistent path has completed a longer validation window, then remove it in a separate change.
+The cluster runs one logging path: `loki-v2` + `alloy-logs`. Loki stores 30
+days of logs on a retained 100 Gi Longhorn R2 PVC. Alloy runs on every node and
+sends Kubernetes pod logs to it. The ephemeral Loki/Promtail release was retired
+on 2026-08-03 after ingestion and restart-durability checks passed.
 
 The persistent pipeline deliberately drops the `replication-cert-copy` container. It continuously emits full Postgres pod status and previously accounted for almost half of cluster log volume. Application and Postgres server logs remain available.
 
@@ -21,14 +21,10 @@ Then open `http://localhost:3000`. Under **Dashboards**, use:
 - **Cluster Log Overview** for cross-namespace volume, errors, and the noisiest workloads.
 - The chart-provided **Loki** dashboards for storage and query-engine internals.
 
-The administrator username and password are stored in Kubernetes. Print them locally with:
-
-```bash
-kubectl -n observability get secret kube-prom-stack-grafana \
-  -o jsonpath='{.data.admin-user}' | base64 -d; echo
-kubectl -n observability get secret kube-prom-stack-grafana \
-  -o jsonpath='{.data.admin-password}' | base64 -d; echo
-```
+The persistent Grafana database preserves the login that was in use before the
+upgrade. The Kubernetes admin secret is bootstrap configuration and may not
+match a password that was changed in Grafana. Do not reset the administrator
+password merely to make it match the secret.
 
 ## Reading the dashboards
 
@@ -82,6 +78,14 @@ Use exact IDs where possible. Usernames may change and are not present on every 
 Chart versions are pinned so changes are reproducible:
 
 ```bash
+kubectl apply -k deploy/k8s/observability
+
+helm upgrade --install kube-prom-stack \
+  prometheus-community/kube-prometheus-stack \
+  --namespace observability --version 88.1.3 \
+  --values deploy/k8s/observability/kube-prometheus-stack-values.yaml \
+  --wait --timeout 15m
+
 helm upgrade --install loki-v2 grafana-community/loki \
   --namespace observability --version 18.7.1 \
   --values deploy/k8s/observability/loki-values.yaml \
@@ -91,14 +95,31 @@ helm upgrade --install alloy-logs grafana/alloy \
   --namespace observability --version 1.11.0 \
   --values deploy/k8s/observability/alloy-values.yaml \
   --wait --timeout 10m
-
-kubectl apply -k deploy/k8s/observability
 ```
+
+The monitoring-stack upgrade job applies the Prometheus Operator CRDs before
+the operator starts. Prometheus retains up to 30 days or 40 GB on a retained
+50 Gi Longhorn R2 volume. Grafana uses the separately managed `grafana-storage`
+claim, and Alertmanager uses a retained 2 Gi claim.
+
+Grafana 13 uses the current chart, while its Kubernetes sidecars remain pinned
+to `1.22.0`. The newer sidecar runtime rejects the older MicroK8s
+service-account CA. This pin keeps certificate verification enabled; remove it
+after rotating that CA with modern key-usage extensions. Sidecars write watched
+ConfigMaps to disk without admin reload requests so the existing Grafana login
+remains untouched. Dashboard files are polled automatically. After changing a
+datasource ConfigMap, restart the Grafana deployment to load it.
+
+The 2026-08-03 migration retained an untouched v9 database at
+`/var/lib/grafana/preupgrade-v9/grafana.db`. The old empty `playlist` table also
+required `created_at` and `updated_at` integer columns before Grafana 13's
+unified-storage migration could start.
 
 ## Health and capacity checks
 
 ```bash
 kubectl -n observability get pods,pvc -l app.kubernetes.io/instance=loki-v2
+kubectl -n observability get pvc
 kubectl -n observability get daemonset alloy-logs
 kubectl -n observability logs daemonset/alloy-logs --container alloy --tail=100
 kubectl -n observability port-forward service/loki-v2-gateway 3101:80
@@ -115,4 +136,15 @@ Open **Alerting → Alert rules** in Grafana and filter for `loki`. A healthy ru
 
 ## Rollback
 
-The legacy path remains untouched during validation. To stop new collection without deleting data, scale the Alloy DaemonSet to zero by uninstalling only `alloy-logs`; continue querying the legacy `Loki` datasource. Do not delete the `loki-v2` PVC. Reinstall Alloy after correcting its configuration.
+The retired `loki` and `tempo` Helm histories were retained, but their workloads
+must not be restored unless an incident proves a current dependency. The old
+Loki data lived on `emptyDir` and is not a durable rollback target.
+
+To stop new log collection without deleting stored data, uninstall only
+`alloy-logs`. Do not delete `storage-loki-v2-0`; reinstall Alloy after correcting
+its configuration.
+
+Do not roll Grafana back from 13 to 9 against the migrated database. A Grafana 9
+rollback requires stopping Grafana and restoring the retained
+`preupgrade-v9/grafana.db` first. Back up the current database before attempting
+that recovery.

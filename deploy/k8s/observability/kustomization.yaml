@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: observability
 resources:
   - datasource.yaml
+  - grafana-pvc.yaml
 configMapGenerator:
   - name: grafana-observability-dashboards
     files:

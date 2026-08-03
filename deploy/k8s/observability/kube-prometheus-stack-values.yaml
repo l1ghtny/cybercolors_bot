@@ -1,0 +1,153 @@
+# Pinned with prometheus-community/kube-prometheus-stack chart 88.1.3.
+# Kubernetes 1.35 is supported by this chart. CRDs are upgraded before the
+# operator so the large jump from chart 45.x remains schema-safe.
+crds:
+  enabled: true
+  upgradeJob:
+    enabled: true
+    forceConflicts: true
+
+# MicroK8s binds these control-plane metric endpoints locally. Keeping their
+# monitors enabled only produces permanent TargetDown/component-down alerts.
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false
+kubeEtcd:
+  enabled: false
+
+grafana:
+  enabled: true
+  defaultDashboardsTimezone: browser
+  admin:
+    existingSecret: grafana-admin-credentials
+    userKey: admin-user
+    passwordKey: admin-password
+  persistence:
+    enabled: true
+    type: pvc
+    existingClaim: grafana-storage
+  deploymentStrategy:
+    type: Recreate
+  sidecar:
+    # 2.10.0's Python runtime rejects this cluster's older service-account CA.
+    # Keep TLS verification and pin the previously proven sidecar until the
+    # MicroK8s CA is rotated with modern key-usage extensions.
+    image:
+      tag: 1.22.0
+    dashboards:
+      # Preserve the user-managed Grafana admin password stored in the migrated
+      # database instead of forcing it back to the Helm bootstrap secret.
+      skipReload: true
+      env:
+        HEALTH_PORT: "8084"
+    datasources:
+      # Datasource ConfigMap changes take effect on the next Grafana rollout.
+      skipReload: true
+      env:
+        HEALTH_PORT: "8082"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  # Loki Persistent is provisioned by datasource.yaml. The removed legacy Loki
+  # and Tempo releases must not leave dangling datasources behind.
+  additionalDataSources: []
+  deleteDatasources:
+    - name: loki
+      orgId: 1
+    - name: tempo
+      orgId: 1
+
+prometheus:
+  prometheusSpec:
+    replicas: 1
+    retention: 30d
+    retentionSize: 40GB
+    walCompression: true
+    persistentVolumeClaimRetentionPolicy:
+      whenDeleted: Retain
+      whenScaled: Retain
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: longhorn-r2
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 50Gi
+    resources:
+      requests:
+        cpu: 500m
+        memory: 3Gi
+      limits:
+        cpu: "4"
+        memory: 6Gi
+
+alertmanager:
+  enabled: true
+  config:
+    global:
+      resolve_timeout: 5m
+    inhibit_rules:
+      - source_matchers:
+          - severity = critical
+        target_matchers:
+          - severity =~ warning|info
+        equal:
+          - namespace
+          - alertname
+      - source_matchers:
+          - severity = warning
+        target_matchers:
+          - severity = info
+        equal:
+          - namespace
+          - alertname
+      - source_matchers:
+          - alertname = InfoInhibitor
+        target_matchers:
+          - severity = info
+        equal:
+          - namespace
+    route:
+      group_by:
+        - namespace
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 12h
+      receiver: "null"
+      routes:
+        - matchers:
+            - alertname =~ "InfoInhibitor|Watchdog"
+          receiver: "null"
+    receivers:
+      - name: "null"
+    templates:
+      - /etc/alertmanager/config/*.tmpl
+  alertmanagerSpec:
+    persistentVolumeClaimRetentionPolicy:
+      whenDeleted: Retain
+      whenScaled: Retain
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: longhorn-r2
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 2Gi
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi

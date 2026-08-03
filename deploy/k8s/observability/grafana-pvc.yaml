@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana-storage
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/instance: kube-prom-stack
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: longhorn-r2
+  resources:
+    requests:
+      storage: 10Gi
