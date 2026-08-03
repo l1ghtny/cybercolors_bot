@@ -99,6 +99,7 @@ jobs:
               src/db \
               src/modules/__init__.py \
               src/modules/ai \
+              src/modules/observability \
             | sort \
             | xargs sha256sum \
             | sha256sum \
@@ -449,6 +450,7 @@ jobs:
               src/db \
               src/modules/__init__.py \
               src/modules/ai \
+              src/modules/observability \
             | sort \
             | xargs sha256sum \
             | sha256sum \
