@@ -9,7 +9,13 @@ The persistent pipeline deliberately drops the `replication-cert-copy` container
 
 ## Open Grafana
 
-Grafana has no public ingress. Open a local tunnel:
+The primary browser entry point is `https://observability.lightny.pro`. It is
+published through the `inside_main_kuber_node` Cloudflare Tunnel and protected
+by an owners-only Cloudflare Access policy. The legacy `graphana.lightny.pro`
+and `prometheus.lightny.pro` aliases are covered by the same Access application
+so they cannot bypass authentication.
+
+For emergency access that does not depend on Cloudflare, open a local tunnel:
 
 ```bash
 kubectl -n observability port-forward service/kube-prom-stack-grafana 3000:80
@@ -19,6 +25,9 @@ Then open `http://localhost:3000`. Under **Dashboards**, use:
 
 - **CyberColors Logs** for the bot, backend, workers, and database logs in the `cybercolors` namespace.
 - **Cluster Log Overview** for cross-namespace volume, errors, and the noisiest workloads.
+- **Platform Overview** for node health, cluster CPU and memory, filesystem and PVC capacity, scrape health, alerts, and restart offenders.
+- **CyberColors Runtime** for pod readiness, PostgreSQL availability, per-pod CPU, memory, throttling, network throughput, and storage.
+- **Observability Health** for Prometheus ingestion and rules, Loki ingestion and canary latency, Alloy configuration health, targets, alerts, and observability PVCs.
 - The chart-provided **Loki** dashboards for storage and query-engine internals.
 
 The persistent Grafana database preserves the login that was in use before the
@@ -36,6 +45,12 @@ password merely to make it match the secret.
 6. For an ad-hoc query, choose **Explore** in the left menu, select **Loki Persistent**, build a label selector, and add text filters last.
 
 The dashboards are source-controlled and intentionally read-only. Make lasting changes in the JSON files under `deploy/k8s/observability/dashboards` and apply the Kustomization. Use **Save as** for temporary personal experiments.
+
+The CyberColors dashboard currently measures workload-level performance. HTTP
+request latency, Discord event latency, queue depth, and business-operation
+rates require application metrics that the services do not expose yet. Sentry
+continues to provide application error tracing; add OpenTelemetry or native
+Prometheus instrumentation before treating Grafana as an application APM.
 
 In **Explore**, select the **Loki Persistent** datasource. Start with the label browser, then narrow results before searching text.
 

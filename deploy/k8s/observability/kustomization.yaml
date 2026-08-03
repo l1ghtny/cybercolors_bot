@@ -9,6 +9,9 @@ configMapGenerator:
     files:
       - dashboards/cybercolors-logs.json
       - dashboards/cluster-log-overview.json
+      - dashboards/platform-overview.json
+      - dashboards/cybercolors-runtime.json
+      - dashboards/observability-health.json
     options:
       disableNameSuffixHash: true
       labels:
