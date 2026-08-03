@@ -90,8 +90,8 @@ def configure_sentry(service_name: str) -> bool:
         max_request_body_size="never",
         enable_logs=False,
         before_send=_before_send,
-        initial_scope={"tags": {"service": service_name}},
     )
+    sentry_sdk.set_tag("service", service_name)
     return True
 
 
