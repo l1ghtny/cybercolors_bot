@@ -47,6 +47,18 @@ LOGGING_CONFIG = {
             "level": "INFO",
             "propagate": False,
         },
+        # httpx logs every request at INFO, including routine Discord and
+        # OpenAI calls. Keep failures visible without flooding bot logs.
+        "httpx": {
+            "handlers": ["console2", "file"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+        "httpcore": {
+            "handlers": ["console2", "file"],
+            "level": "WARNING",
+            "propagate": False,
+        },
     },
 }
 dictConfig(LOGGING_CONFIG)
