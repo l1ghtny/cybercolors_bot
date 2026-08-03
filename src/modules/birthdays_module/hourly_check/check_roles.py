@@ -12,6 +12,25 @@ from src.db.database import get_async_session
 logger = logger.logging.getLogger("bot")
 
 
+def birthday_role_age(
+    role_added_at: datetime.datetime,
+    *,
+    now: datetime.datetime | None = None,
+) -> datetime.timedelta:
+    """Return a birthday role's age using UTC-aware timestamps.
+
+    PostgreSQL returns ``TIMESTAMP WITH TIME ZONE`` values as aware datetimes,
+    while older databases and tests may still provide naive UTC values.
+    """
+    current_time = now or datetime.datetime.now(datetime.timezone.utc)
+    if current_time.tzinfo is None:
+        current_time = current_time.replace(tzinfo=datetime.timezone.utc)
+    if role_added_at.tzinfo is None:
+        role_added_at = role_added_at.replace(tzinfo=datetime.timezone.utc)
+
+    return current_time.astimezone(datetime.timezone.utc) - role_added_at.astimezone(datetime.timezone.utc)
+
+
 async def check_roles(client):
     async with get_async_session() as session:
         query = (
@@ -30,13 +49,21 @@ async def check_roles(client):
             server_role_id = user.server.birthday_role_id if user.server else None
 
             discord_user = client.get_user(role_user_id)
-            current_time_now = datetime.datetime.utcnow()
-            timedelta = current_time_now - role_time
+            try:
+                role_age = birthday_role_age(role_time)
+            except (AttributeError, TypeError, ValueError):
+                logger.exception(
+                    'Invalid birthday role timestamp for user ID %s in server ID %s: %r',
+                    role_user_id,
+                    role_guild_id,
+                    role_time,
+                )
+                continue
             current_guild = client.get_guild(role_guild_id)
             current_member = current_guild.get_member(role_user_id) if current_guild else None
             current_role = discord.utils.get(current_guild.roles, id=server_role_id) if current_guild and server_role_id else None
-            logger.info(f'timedelta in days: {timedelta.days}')
-            if timedelta.days >= 1 and current_member and current_role:
+            logger.info(f'timedelta in days: {role_age.days}')
+            if role_age >= datetime.timedelta(days=1) and current_member and current_role:
                 logger.info('checked role is older than 1 day')
                 try:
                     await current_member.remove_roles(current_role)

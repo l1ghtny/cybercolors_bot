@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 from api.models.birthdays import BirthdayWriteModel
 from api.services import birthday_permission_warnings
-from src.modules.birthdays_module.hourly_check import check_birthday_redone
+from src.modules.birthdays_module.hourly_check import check_birthday_redone, check_roles
 
 
 def test_birthday_timezone_accepts_iana_name_and_normalizes_blank():
@@ -113,6 +113,76 @@ def test_mark_birthday_processed_sets_timestamp_and_commits():
     assert session.merged is True
     assert session.committed is True
     assert session.refreshed is True
+
+
+def test_birthday_role_age_accepts_timezone_aware_database_timestamp():
+    role_added_at = datetime.datetime(2026, 7, 30, 16, 0, tzinfo=datetime.timezone.utc)
+    now = datetime.datetime(2026, 7, 31, 16, 0, tzinfo=datetime.timezone.utc)
+
+    assert check_roles.birthday_role_age(role_added_at, now=now) == datetime.timedelta(days=1)
+
+
+def test_birthday_role_age_treats_legacy_naive_timestamp_as_utc():
+    role_added_at = datetime.datetime(2026, 7, 30, 16, 0)
+    now = datetime.datetime(2026, 7, 31, 16, 0, tzinfo=datetime.timezone.utc)
+
+    assert check_roles.birthday_role_age(role_added_at, now=now) == datetime.timedelta(days=1)
+
+
+def test_birthday_role_check_skips_invalid_timestamp_and_processes_next_record(monkeypatch):
+    class FakeResult:
+        def all(self):
+            return [(invalid_user, invalid_birthday), (valid_user, valid_birthday)]
+
+    class FakeSession:
+        def __init__(self):
+            self.commits = 0
+
+        async def exec(self, statement):
+            return FakeResult()
+
+        async def merge(self, birthday):
+            return birthday
+
+        async def commit(self):
+            self.commits += 1
+
+    class FakeSessionContext:
+        async def __aenter__(self):
+            return session
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+    class FakeMember:
+        def __init__(self):
+            self.removed_roles = []
+
+        async def remove_roles(self, role):
+            self.removed_roles.append(role)
+
+    role = SimpleNamespace(id=456, name="birthday")
+    member = FakeMember()
+    guild = SimpleNamespace(roles=[role], get_member=lambda user_id: member)
+    server = SimpleNamespace(birthday_role_id=role.id)
+    invalid_user = SimpleNamespace(user_id=1, server_id=123, server=server)
+    valid_user = SimpleNamespace(user_id=2, server_id=123, server=server)
+    invalid_birthday = SimpleNamespace(role_added_at="not-a-timestamp")
+    valid_birthday = SimpleNamespace(
+        role_added_at=datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=2)
+    )
+    session = FakeSession()
+    client = SimpleNamespace(
+        get_user=lambda user_id: SimpleNamespace(name=f"user-{user_id}"),
+        get_guild=lambda guild_id: guild,
+    )
+    monkeypatch.setattr(check_roles, "get_async_session", lambda: FakeSessionContext())
+
+    asyncio.run(check_roles.check_roles(client))
+
+    assert member.removed_roles == [role]
+    assert valid_birthday.role_added_at is None
+    assert session.commits == 1
 
 
 def test_birthday_settings_warning_detects_role_hierarchy_and_permissions(monkeypatch):
