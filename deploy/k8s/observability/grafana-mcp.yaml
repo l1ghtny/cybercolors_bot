@@ -75,6 +75,9 @@ data:
                           port_value: 8000
         - name: cloudflare_access_jwks
           type: STRICT_DNS
+          # The cluster is IPv4-only while Cloudflare publishes both A and AAAA
+          # records. Avoid failed JWKS fetches over an unreachable IPv6 route.
+          dns_lookup_family: V4_ONLY
           connect_timeout: 3s
           load_assignment:
             cluster_name: cloudflare_access_jwks
