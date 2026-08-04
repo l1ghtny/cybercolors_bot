@@ -67,10 +67,15 @@ to `mcp-grafana`. The MCP server then authenticates to Grafana through the
 `chatgpt-grafana-mcp` service account token stored in the
 `grafana-mcp-credentials` Kubernetes Secret.
 
-The server exposes only observability-oriented read tools and also runs with
-`--disable-write`. To connect it in ChatGPT, enable Developer mode and create an
-app with the URL above and OAuth authentication. Never paste the Grafana service
-account token into ChatGPT.
+The server exposes observability query tools plus dashboard creation and editing.
+Other write-capable categories, including alert-rule management and folder
+creation, are excluded from `--enabled-tools`. To connect it in ChatGPT, enable
+Developer mode and create an app with the URL above and OAuth authentication.
+Never paste the Grafana service account token into ChatGPT.
+
+The Cloudflare Access application's Managed OAuth DCR allowlist must include
+`https://chatgpt.com/connector/oauth/*` so ChatGPT's per-app callback URL can be
+registered without allowing unrelated ChatGPT paths.
 
 The token Secret is deliberately not source-controlled. If it must be rotated,
 create a new token for the existing Grafana service account, update the Secret,

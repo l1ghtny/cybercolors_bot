@@ -139,9 +139,8 @@ spec:
             - streamable-http
             - --address
             - :8000
-            - --disable-write
             - --enabled-tools
-            - search,datasource,prometheus,loki,alerting,dashboard,folder,navigation,runpanelquery
+            - search,datasource,prometheus,loki,dashboard,navigation,runpanelquery
             - --max-loki-log-limit
             - "500"
             - --metrics
