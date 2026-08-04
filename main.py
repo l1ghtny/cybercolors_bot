@@ -49,7 +49,6 @@ from src.commands.moderation.actions import (
     register_moderation_action_components,
     unban,
 )
-from src.commands.moderation.profile import member_profile
 from src.commands.moderation.cases import (
     case_add_rule,
     case_add_user,
@@ -383,7 +382,6 @@ moderation_group.add_command(kick)
 moderation_group.add_command(ban)
 moderation_group.add_command(unban)
 moderation_group.add_command(security_lockdown)
-moderation_group.add_command(member_profile)
 
 moderation_rules_group.add_command(rule_add)
 moderation_rules_group.add_command(rules_import_message)
