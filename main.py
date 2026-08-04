@@ -49,6 +49,7 @@ from src.commands.moderation.actions import (
     register_moderation_action_components,
     unban,
 )
+from src.commands.moderation.profile import member_profile
 from src.commands.moderation.cases import (
     case_add_rule,
     case_add_user,
@@ -121,6 +122,7 @@ from src.modules.monitoring.activity import (
     record_voice_join_activity,
 )
 from src.modules.observability.sentry import birthday_hourly_monitor, configure_sentry
+from src.modules.observability.prometheus import DISCORD_GATEWAY_CONNECTED, start_bot_metrics_server
 from api.services.moderation_rules_service import sync_rules_from_source_message_edit
 from api.services.newcomer_probation import can_use_public_member_commands
 from src.views.replies.delete_multiple_replies import DeleteReplyMultiple, DeleteReplyMultipleSelect
@@ -238,6 +240,7 @@ class Aclient(discord.AutoShardedClient):
     # commands local sync
     async def on_ready(self):
         await self.wait_until_ready()
+        DISCORD_GATEWAY_CONNECTED.set(1)
         if not self.synced:  # check if slash commands have been synced
             await tree.set_translator(StaticCommandTranslator())
             synced = await sync_application_commands(
@@ -266,6 +269,9 @@ class Aclient(discord.AutoShardedClient):
             await sync_active_guild_presence(self.guilds)
             self.guild_presence_synced = True
         logger.info(f"We have logged in as {self.user}.")
+
+    async def on_disconnect(self):
+        DISCORD_GATEWAY_CONNECTED.set(0)
 
 
 client = Aclient()
@@ -377,6 +383,7 @@ moderation_group.add_command(kick)
 moderation_group.add_command(ban)
 moderation_group.add_command(unban)
 moderation_group.add_command(security_lockdown)
+moderation_group.add_command(member_profile)
 
 moderation_rules_group.add_command(rule_add)
 moderation_rules_group.add_command(rules_import_message)
@@ -919,4 +926,5 @@ async def on_guild_remove(guild: discord.Guild):
 if not DISCORD_TOKEN:
     raise RuntimeError("DISCORD_BOT_TOKEN, DISCORD_TOKEN_TEST, or DISCORD_TOKEN must be set")
 
+start_bot_metrics_server()
 client.run(DISCORD_TOKEN, root_logger=True)

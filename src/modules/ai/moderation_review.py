@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+from time import perf_counter
 from uuid import UUID
 
 import discord
@@ -29,6 +30,7 @@ from src.modules.ai.discord_media import prepare_ai_images_from_discord_message
 from src.modules.ai.models import MessageModerationInput, ModerationVerdict
 from src.modules.localization.service import normalize_locale_code, tr
 from src.modules.logs_setup import logger
+from src.modules.observability.prometheus import AI_MODERATION_DECISIONS, AI_MODERATION_DURATION
 from src.modules.moderation.durations import parse_duration_text
 from src.modules.moderation.bot_services import (
     create_bot_moderation_action,
@@ -1677,6 +1679,7 @@ async def screen_message_with_ai(message: discord.Message) -> None:
             )
             reply_context = await _reply_context_payload(message)
             recent_context = await _recent_message_context_payload(session, message)
+            provider_started_at = perf_counter()
             try:
                 verdict = await asyncio.wait_for(
                     ai_main_class.check_message(
@@ -1709,16 +1712,23 @@ async def screen_message_with_ai(message: discord.Message) -> None:
                     timeout=settings.moderation_provider_timeout_seconds or AI_MODERATION_DEFAULT_TIMEOUT_SECONDS,
                 )
             except asyncio.TimeoutError:
+                AI_MODERATION_DECISIONS.labels(outcome="timeout").inc()
+                AI_MODERATION_DURATION.observe(perf_counter() - provider_started_at)
                 logger.warning("AI moderation timed out in guild %s for message %s", message.guild.id, message.id)
                 return
             except asyncio.CancelledError:
                 logger.info("AI moderation task cancelled in guild %s for message %s", message.guild.id, message.id)
                 raise
             except Exception:
+                AI_MODERATION_DECISIONS.labels(outcome="error").inc()
+                AI_MODERATION_DURATION.observe(perf_counter() - provider_started_at)
                 logger.exception("AI moderation provider failed in guild %s for message %s", message.guild.id, message.id)
                 return
             finally:
                 prepared_media.images.clear()
+
+            AI_MODERATION_DURATION.observe(perf_counter() - provider_started_at)
+            AI_MODERATION_DECISIONS.labels(outcome="flagged" if verdict.flagged else "clear").inc()
 
             if verdict.flagged or settings.log_ai_decisions or settings.moderation_daily_token_limit is not None:
                 try:

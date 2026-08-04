@@ -9,6 +9,10 @@ from src.db.database import get_async_session, log_pool_status
 from src.db.models import DeletedMessage
 from src.modules.moderation.moderation_helpers import ensure_message_foreign_keys, log_message
 from src.modules.monitoring.activity import record_message_activity
+from src.modules.observability.prometheus import (
+    MESSAGE_INGESTION_MESSAGES,
+    MESSAGE_INGESTION_QUEUE_DEPTH,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +36,7 @@ def _queue_or_create() -> asyncio.Queue[discord.Message]:
 
 def start_message_ingestion_workers() -> None:
     queue = _queue_or_create()
+    MESSAGE_INGESTION_QUEUE_DEPTH.set(queue.qsize())
     live_workers = [worker for worker in _workers if not worker.done()]
     _workers[:] = live_workers
     missing = max(0, _WORKER_COUNT - len(_workers))
@@ -52,9 +57,13 @@ def enqueue_message_ingestion(message: discord.Message) -> bool:
     queue = _queue_or_create()
     try:
         queue.put_nowait(message)
+        MESSAGE_INGESTION_MESSAGES.labels(outcome="enqueued").inc()
+        MESSAGE_INGESTION_QUEUE_DEPTH.set(queue.qsize())
         return True
     except asyncio.QueueFull:
         _dropped_count += 1
+        MESSAGE_INGESTION_MESSAGES.labels(outcome="dropped").inc()
+        MESSAGE_INGESTION_QUEUE_DEPTH.set(queue.qsize())
         if _dropped_count == 1 or _dropped_count % max(1, _WARN_EVERY_DROPS) == 0:
             logger.warning(
                 "Message ingestion queue full; dropped non-critical archival work. dropped=%s queue_size=%s queue_max_size=%s",
@@ -75,6 +84,7 @@ async def _message_ingestion_worker(worker_id: int, queue: asyncio.Queue[discord
             await _archive_message(message)
             await record_message_activity(message)
             _processed_count += 1
+            MESSAGE_INGESTION_MESSAGES.labels(outcome="processed").inc()
             if _processed_count % max(1, _METRICS_EVERY_MESSAGES) == 0:
                 logger.info(
                     "Message ingestion metrics processed=%s dropped=%s queue_size=%s",
@@ -84,6 +94,7 @@ async def _message_ingestion_worker(worker_id: int, queue: asyncio.Queue[discord
                 )
                 log_pool_status(logger, "message_ingestion_periodic")
         except Exception:
+            MESSAGE_INGESTION_MESSAGES.labels(outcome="failed").inc()
             logger.exception(
                 "Message ingestion failed for message_id=%s server_id=%s channel_id=%s",
                 getattr(message, "id", None),
@@ -93,6 +104,7 @@ async def _message_ingestion_worker(worker_id: int, queue: asyncio.Queue[discord
             log_pool_status(logger, "message_ingestion_error")
         finally:
             queue.task_done()
+            MESSAGE_INGESTION_QUEUE_DEPTH.set(queue.qsize())
 
 
 async def _archive_message(message: discord.Message) -> None:
