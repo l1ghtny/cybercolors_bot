@@ -77,6 +77,11 @@ The Cloudflare Access application's Managed OAuth DCR allowlist must include
 `https://chatgpt.com/connector/oauth/*` so ChatGPT's per-app callback URL can be
 registered without allowing unrelated ChatGPT paths.
 
+Keep **Binding Cookie** disabled on this Access application. Cloudflare does not
+support that browser-cookie control for non-browser clients; enabling it breaks
+ChatGPT after OAuth approval. The owner-only Access policy and Envoy's Access
+JWT issuer/audience validation remain the authorization boundary.
+
 The token Secret is deliberately not source-controlled. If it must be rotated,
 create a new token for the existing Grafana service account, update the Secret,
 restart `deployment/grafana-mcp`, verify a real MCP query, and then revoke the
