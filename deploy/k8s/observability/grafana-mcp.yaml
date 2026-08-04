@@ -20,6 +20,13 @@ data:
                     stat_prefix: grafana_mcp
                     use_remote_address: true
                     normalize_path: true
+                    access_log:
+                      - name: envoy.access_loggers.stdout
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+                          log_format:
+                            text_format_source:
+                              inline_string: "%START_TIME% %REQ(:METHOD)% %REQ(:PATH)% %RESPONSE_CODE% %RESPONSE_CODE_DETAILS%\n"
                     route_config:
                       name: grafana_mcp
                       virtual_hosts:
@@ -28,6 +35,15 @@ data:
                             - grafana-mcp.lightny.pro
                             - grafana-mcp.lightny.pro:*
                           routes:
+                            # Cloudflare's protected-resource metadata identifies
+                            # the resource by origin, so ChatGPT probes `/` after
+                            # OAuth even when the configured URL ends in `/mcp`.
+                            - match:
+                                path: /
+                              route:
+                                cluster: grafana_mcp
+                                prefix_rewrite: /mcp
+                                timeout: 0s
                             - match:
                                 prefix: /
                               route:
