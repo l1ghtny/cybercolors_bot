@@ -52,6 +52,31 @@ rates require application metrics that the services do not expose yet. Sentry
 continues to provide application error tracing; add OpenTelemetry or native
 Prometheus instrumentation before treating Grafana as an application APM.
 
+## Grafana MCP for ChatGPT
+
+The read-only remote MCP endpoint is:
+
+```text
+https://grafana-mcp.lightny.pro/mcp
+```
+
+It is intentionally separate from the Grafana UI hostname. Cloudflare Access
+Managed OAuth authenticates the MCP client, and an Envoy sidecar validates the
+resulting Access JWT against the application audience before forwarding traffic
+to `mcp-grafana`. The MCP server then authenticates to Grafana through the
+`chatgpt-grafana-mcp` service account token stored in the
+`grafana-mcp-credentials` Kubernetes Secret.
+
+The server exposes only observability-oriented read tools and also runs with
+`--disable-write`. To connect it in ChatGPT, enable Developer mode and create an
+app with the URL above and OAuth authentication. Never paste the Grafana service
+account token into ChatGPT.
+
+The token Secret is deliberately not source-controlled. If it must be rotated,
+create a new token for the existing Grafana service account, update the Secret,
+restart `deployment/grafana-mcp`, verify a real MCP query, and then revoke the
+old token.
+
 In **Explore**, select the **Loki Persistent** datasource. Start with the label browser, then narrow results before searching text.
 
 ## Useful LogQL queries

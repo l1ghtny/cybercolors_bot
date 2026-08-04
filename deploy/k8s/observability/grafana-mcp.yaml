@@ -1,0 +1,311 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-mcp-envoy
+data:
+  envoy.yaml: |
+    static_resources:
+      listeners:
+        - name: public_mcp
+          address:
+            socket_address:
+              address: 0.0.0.0
+              port_value: 8001
+          per_connection_buffer_limit_bytes: 32768
+          filter_chains:
+            - filters:
+                - name: envoy.filters.network.http_connection_manager
+                  typed_config:
+                    "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                    stat_prefix: grafana_mcp
+                    use_remote_address: true
+                    normalize_path: true
+                    route_config:
+                      name: grafana_mcp
+                      virtual_hosts:
+                        - name: grafana_mcp
+                          domains:
+                            - grafana-mcp.lightny.pro
+                            - grafana-mcp.lightny.pro:*
+                          routes:
+                            - match:
+                                prefix: /
+                              route:
+                                cluster: grafana_mcp
+                                timeout: 0s
+                    http_filters:
+                      - name: envoy.filters.http.jwt_authn
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.JwtAuthentication
+                          strip_failure_response: true
+                          providers:
+                            cloudflare_access:
+                              issuer: https://lightny.cloudflareaccess.com
+                              audiences:
+                                - 481cf17a639d12154ba713c72074d1e2395851dad6fdc572ab5bc5280b6db5ec
+                              remote_jwks:
+                                http_uri:
+                                  uri: https://lightny.cloudflareaccess.com/cdn-cgi/access/certs
+                                  cluster: cloudflare_access_jwks
+                                  timeout: 3s
+                                cache_duration: 300s
+                              from_headers:
+                                - name: cf-access-jwt-assertion
+                              forward: false
+                          rules:
+                            - match:
+                                prefix: /
+                              requires:
+                                provider_name: cloudflare_access
+                      - name: envoy.filters.http.router
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+      clusters:
+        - name: grafana_mcp
+          type: STATIC
+          connect_timeout: 2s
+          load_assignment:
+            cluster_name: grafana_mcp
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address:
+                        socket_address:
+                          address: 127.0.0.1
+                          port_value: 8000
+        - name: cloudflare_access_jwks
+          type: STRICT_DNS
+          connect_timeout: 3s
+          load_assignment:
+            cluster_name: cloudflare_access_jwks
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address:
+                        socket_address:
+                          address: lightny.cloudflareaccess.com
+                          port_value: 443
+          transport_socket:
+            name: envoy.transport_sockets.tls
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+              sni: lightny.cloudflareaccess.com
+              common_tls_context:
+                validation_context:
+                  trusted_ca:
+                    filename: /etc/ssl/certs/ca-certificates.crt
+                  match_typed_subject_alt_names:
+                    - san_type: DNS
+                      matcher:
+                        exact: lightny.cloudflareaccess.com
+    overload_manager:
+      resource_monitors:
+        - name: envoy.resource_monitors.global_downstream_max_connections
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.resource_monitors.downstream_connections.v3.DownstreamConnectionsConfig
+            max_active_downstream_connections: 100
+    admin:
+      allow_paths:
+        - exact: /ready
+        - prefix: /stats
+      address:
+        socket_address:
+          address: 0.0.0.0
+          port_value: 9901
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana-mcp
+  labels:
+    app.kubernetes.io/name: grafana-mcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: grafana-mcp
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: grafana-mcp
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: mcp-grafana
+          image: grafana/mcp-grafana:0.14.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - -t
+            - streamable-http
+            - --address
+            - :8000
+            - --disable-write
+            - --enabled-tools
+            - search,datasource,prometheus,loki,alerting,dashboard,folder,navigation,runpanelquery
+            - --max-loki-log-limit
+            - "500"
+            - --metrics
+            - --metrics-address
+            - :9090
+            - --log-level
+            - info
+          env:
+            - name: GRAFANA_URL
+              value: http://kube-prom-stack-grafana.observability.svc.cluster.local
+            - name: GRAFANA_ORG_ID
+              value: "1"
+            - name: GRAFANA_SERVICE_ACCOUNT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-mcp-credentials
+                  key: token
+          ports:
+            - name: mcp
+              containerPort: 8000
+            - name: metrics
+              containerPort: 9090
+          readinessProbe:
+            tcpSocket:
+              port: mcp
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: mcp
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+        - name: access-jwt-proxy
+          image: envoyproxy/envoy:distroless-v1.39.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - -c
+            - /etc/envoy/envoy.yaml
+            - --service-cluster
+            - grafana-mcp-jwt-proxy
+            - --log-level
+            - warning
+          ports:
+            - name: proxy
+              containerPort: 8001
+            - name: envoy-admin
+              containerPort: 9901
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: envoy-admin
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: envoy-admin
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 20m
+              memory: 48Mi
+            limits:
+              cpu: 200m
+              memory: 192Mi
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: envoy-config
+              mountPath: /etc/envoy
+              readOnly: true
+      volumes:
+        - name: envoy-config
+          configMap:
+            name: grafana-mcp-envoy
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana-mcp
+  labels:
+    app.kubernetes.io/name: grafana-mcp
+spec:
+  selector:
+    app.kubernetes.io/name: grafana-mcp
+  ports:
+    - name: http
+      port: 80
+      targetPort: proxy
+    - name: metrics
+      port: 9090
+      targetPort: metrics
+    - name: envoy-admin
+      port: 9901
+      targetPort: envoy-admin
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: grafana-mcp
+  labels:
+    release: kube-prom-stack
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: grafana-mcp
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+    - port: envoy-admin
+      path: /stats/prometheus
+      interval: 30s
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: grafana-mcp
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: grafana-mcp
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: lertex
+          podSelector:
+            matchLabels:
+              app: cloudflared
+      ports:
+        - protocol: TCP
+          port: 8001
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9090
+        - protocol: TCP
+          port: 9901

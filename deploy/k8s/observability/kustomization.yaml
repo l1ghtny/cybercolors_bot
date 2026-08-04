@@ -4,6 +4,7 @@ namespace: observability
 resources:
   - datasource.yaml
   - grafana-pvc.yaml
+  - grafana-mcp.yaml
 configMapGenerator:
   - name: grafana-observability-dashboards
     files:
