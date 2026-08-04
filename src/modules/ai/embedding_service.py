@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from src.modules.ai.embeddings import KnowledgeEmbedder, get_knowledge_embedder
+from src.modules.observability.prometheus import instrument_fastapi_app
 
 
 def _env_int(name: str, default: int) -> int:
@@ -49,6 +50,7 @@ def create_embedding_app(
         redoc_url=None,
         lifespan=lifespan,
     )
+    instrument_fastapi_app(app, service_name="embeddings")
 
     @app.get("/healthz", include_in_schema=False)
     async def healthz():

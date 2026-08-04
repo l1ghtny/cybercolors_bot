@@ -5,6 +5,7 @@ import fastapi_swagger_dark as fsd
 from starlette.middleware.cors import CORSMiddleware
 
 from src.modules.logs_setup.access import configure_api_access_logging
+from src.modules.observability.prometheus import instrument_fastapi_app
 from src.modules.observability.sentry import configure_sentry
 
 from api.routers.auth import auth
@@ -20,6 +21,7 @@ configure_api_access_logging()
 configure_sentry("api")
 
 app = FastAPI(title="CyberColors API", version="0.1.0", docs_url=None, redoc_url=None)
+instrument_fastapi_app(app, service_name="api")
 
 
 def _csv_env(name: str) -> list[str]:

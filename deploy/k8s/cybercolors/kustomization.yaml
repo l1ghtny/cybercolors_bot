@@ -8,4 +8,5 @@ resources:
   - frontend.yaml
   - workers.yaml
   - embeddings.yaml
+  - servicemonitor.yaml
   - ingress.yaml

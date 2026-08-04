@@ -1,0 +1,18 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cybercolors-application-metrics
+  namespace: cybercolors
+  labels:
+    release: kube-prom-stack
+spec:
+  namespaceSelector:
+    matchNames:
+      - cybercolors
+  selector:
+    matchLabels:
+      monitoring.cybercolors.io/scrape: "true"
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s

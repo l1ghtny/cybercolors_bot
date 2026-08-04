@@ -1,0 +1,60 @@
+from __future__ import annotations
+
+from time import perf_counter
+
+from fastapi import FastAPI, Request
+from prometheus_client import Counter, Histogram, make_asgi_app
+from starlette.middleware.base import BaseHTTPMiddleware
+
+
+HTTP_REQUESTS = Counter(
+    "cybercolors_http_requests_total",
+    "Completed HTTP requests handled by CyberColors services.",
+    ("service", "method", "route", "status"),
+)
+HTTP_REQUEST_DURATION = Histogram(
+    "cybercolors_http_request_duration_seconds",
+    "HTTP request duration handled by CyberColors services.",
+    ("service", "method", "route", "status"),
+)
+
+_EXCLUDED_PATHS = {"/healthz", "/metrics"}
+
+
+def _route_label(request: Request) -> str:
+    route = request.scope.get("route")
+    route_path = getattr(route, "path", None)
+    return route_path if isinstance(route_path, str) else "unmatched"
+
+
+class PrometheusMetricsMiddleware(BaseHTTPMiddleware):
+    def __init__(self, app, *, service_name: str) -> None:
+        super().__init__(app)
+        self.service_name = service_name
+
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path in _EXCLUDED_PATHS:
+            return await call_next(request)
+
+        started_at = perf_counter()
+        status_code = 500
+        try:
+            response = await call_next(request)
+            status_code = response.status_code
+            return response
+        finally:
+            labels = {
+                "service": self.service_name,
+                "method": request.method,
+                "route": _route_label(request),
+                "status": str(status_code),
+            }
+            elapsed = perf_counter() - started_at
+            HTTP_REQUESTS.labels(**labels).inc()
+            HTTP_REQUEST_DURATION.labels(**labels).observe(elapsed)
+
+
+def instrument_fastapi_app(app: FastAPI, *, service_name: str) -> None:
+    """Expose standard Prometheus metrics without high-cardinality URL labels."""
+    app.add_middleware(PrometheusMetricsMiddleware, service_name=service_name)
+    app.mount("/metrics", make_asgi_app())
