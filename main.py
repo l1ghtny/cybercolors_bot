@@ -121,7 +121,8 @@ from src.modules.monitoring.activity import (
     record_voice_join_activity,
 )
 from src.modules.observability.sentry import birthday_hourly_monitor, configure_sentry
-from src.modules.observability.prometheus import DISCORD_GATEWAY_CONNECTED, start_bot_metrics_server
+from src.modules.observability.bot_metrics import DISCORD_GATEWAY_CONNECTED
+from src.modules.observability.prometheus import start_bot_metrics_server
 from api.services.moderation_rules_service import sync_rules_from_source_message_edit
 from api.services.newcomer_probation import can_use_public_member_commands
 from src.views.replies.delete_multiple_replies import DeleteReplyMultiple, DeleteReplyMultipleSelect
@@ -271,6 +272,9 @@ class Aclient(discord.AutoShardedClient):
 
     async def on_disconnect(self):
         DISCORD_GATEWAY_CONNECTED.set(0)
+
+    async def on_resumed(self):
+        DISCORD_GATEWAY_CONNECTED.set(1)
 
 
 client = Aclient()

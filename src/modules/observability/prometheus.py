@@ -17,10 +17,6 @@ HTTP_REQUEST_DURATION = Histogram(
     "HTTP request duration handled by CyberColors services.",
     ("service", "method", "route", "status"),
 )
-DISCORD_GATEWAY_CONNECTED = Gauge(
-    "cybercolors_discord_gateway_connected",
-    "Whether the CyberColors Discord gateway is ready (1) or disconnected (0).",
-)
 MESSAGE_INGESTION_QUEUE_DEPTH = Gauge(
     "cybercolors_message_ingestion_queue_depth",
     "Current number of messages waiting for archival processing.",
