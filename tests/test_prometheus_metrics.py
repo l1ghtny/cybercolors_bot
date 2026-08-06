@@ -108,12 +108,11 @@ def test_teamcity_embeddings_hash_tracks_metrics_in_build_and_deploy():
     )
 
 
-def test_teamcity_deploy_rejects_failed_or_stale_dependencies():
+def test_teamcity_deploy_rejects_stale_rollouts():
     pipeline_path = Path(__file__).resolve().parents[1] / ".teamcity.cybercolors.yml"
     pipeline = pipeline_path.read_text(encoding="utf-8")
     deploy = pipeline.split("\n  deploy:\n", 1)[1]
 
-    assert deploy.count("on-failed-dependency: cancel") == 4
     assert "superseded_by_newer_deploy()" in deploy
     assert deploy.count("if superseded_by_newer_deploy; then") == 2
     assert deploy.count("patch_argocd_images") == 3

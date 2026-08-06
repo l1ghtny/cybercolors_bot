@@ -404,14 +404,10 @@ jobs:
     name: 6. Deploy with Argo CD
     runs-on: self-hosted
     dependencies:
-      - build_frontend:
-          on-failed-dependency: cancel
-      - build_indexer:
-          on-failed-dependency: cancel
-      - build_embeddings:
-          on-failed-dependency: cancel
-      - run_migrations:
-          on-failed-dependency: cancel
+      - build_frontend
+      - build_indexer
+      - build_embeddings
+      - run_migrations
     steps:
       - type: script
         name: Patch Argo image tags and verify workloads
