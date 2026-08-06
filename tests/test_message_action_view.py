@@ -46,6 +46,9 @@ def test_warning_selection_disables_and_clears_duration() -> None:
         assert view.duration == "default"
         assert not any(option.default for option in view.duration_select.options)
         assert view.duration_select.placeholder == "Duration is not used for warnings"
+        assert [option.value for option in view.action_select.options if option.default] == [
+            ActionType.WARN.value
+        ]
 
         await view._select_duration(
             SimpleNamespace(data={"values": ["30d"]}, response=response)
@@ -63,7 +66,43 @@ def test_warning_selection_disables_and_clears_duration() -> None:
 
         assert view.duration_select.disabled is False
         assert view.duration_select.placeholder == "Duration for mute or ban"
+        assert [option.value for option in view.action_select.options if option.default] == [
+            ActionType.MUTE.value
+        ]
         assert response.edited_views == [view, view]
+
+    asyncio.run(run())
+
+
+def test_context_menu_selections_survive_message_edits() -> None:
+    async def run() -> None:
+        view = StartActionFromMessageView(
+            source_message=SimpleNamespace(),
+            rules=[SimpleNamespace(id=1, code="R1", title="Test rule")],
+            locale="en",
+            requesting_user_id=123,
+        )
+        response = FakeResponse()
+
+        await view._select_action_type(
+            SimpleNamespace(
+                data={"values": [ActionType.MUTE.value]},
+                response=response,
+            )
+        )
+        await view._select_duration(
+            SimpleNamespace(data={"values": ["1d"]}, response=response)
+        )
+        await view._select_rule(
+            SimpleNamespace(data={"values": ["1"]}, response=response)
+        )
+
+        assert [option.value for option in view.action_select.options if option.default] == [
+            ActionType.MUTE.value
+        ]
+        assert [option.value for option in view.rule_select.options if option.default] == ["1"]
+        assert [option.value for option in view.duration_select.options if option.default] == ["1d"]
+        assert view.continue_button.disabled is False
 
     asyncio.run(run())
 

@@ -469,7 +469,7 @@ class StartActionFromMessageView(discord.ui.View):
         self.rule_id: str | None = None
         self.duration = "default"
 
-        action_select = discord.ui.Select(
+        self.action_select = discord.ui.Select(
             placeholder=tr(locale, "action.message_start_type_placeholder"),
             options=[
                 discord.SelectOption(label=kind.value.title(), value=kind.value)
@@ -478,10 +478,10 @@ class StartActionFromMessageView(discord.ui.View):
             min_values=1,
             max_values=1,
         )
-        action_select.callback = self._select_action_type
-        self.add_item(action_select)
+        self.action_select.callback = self._select_action_type
+        self.add_item(self.action_select)
 
-        rule_select = discord.ui.Select(
+        self.rule_select = discord.ui.Select(
             placeholder=tr(locale, "action.message_start_rule_placeholder"),
             options=[
                 discord.SelectOption(label=rule_label(rule, locale)[:100], value=str(rule.id))
@@ -490,8 +490,8 @@ class StartActionFromMessageView(discord.ui.View):
             min_values=1,
             max_values=1,
         )
-        rule_select.callback = self._select_rule
-        self.add_item(rule_select)
+        self.rule_select.callback = self._select_rule
+        self.add_item(self.rule_select)
 
         self.duration_select = discord.ui.Select(
             placeholder=tr(locale, "action.message_start_duration_placeholder"),
@@ -520,6 +520,11 @@ class StartActionFromMessageView(discord.ui.View):
         self.continue_button.callback = self._continue
         self.add_item(self.continue_button)
 
+    @staticmethod
+    def _select_default(select: discord.ui.Select, value: str | None) -> None:
+        for option in select.options:
+            option.default = option.value == value
+
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id == self.requesting_user_id:
             return True
@@ -531,6 +536,7 @@ class StartActionFromMessageView(discord.ui.View):
 
     async def _select_action_type(self, interaction: discord.Interaction) -> None:
         self.action_type = ActionType(interaction.data["values"][0])
+        self._select_default(self.action_select, self.action_type.value)
         warning_selected = self.action_type == ActionType.WARN
         self.duration_select.disabled = warning_selected
         self.duration_select.placeholder = tr(
@@ -541,13 +547,16 @@ class StartActionFromMessageView(discord.ui.View):
         )
         if warning_selected:
             self.duration = "default"
-            for option in self.duration_select.options:
-                option.default = False
+        self._select_default(
+            self.duration_select,
+            None if warning_selected else self.duration,
+        )
         self.continue_button.disabled = self.rule_id is None
         await interaction.response.edit_message(view=self)
 
     async def _select_rule(self, interaction: discord.Interaction) -> None:
         self.rule_id = interaction.data["values"][0]
+        self._select_default(self.rule_select, self.rule_id)
         self.continue_button.disabled = self.action_type is None
         await interaction.response.edit_message(view=self)
 
@@ -557,6 +566,7 @@ class StartActionFromMessageView(discord.ui.View):
             await interaction.response.defer()
             return
         self.duration = interaction.data["values"][0]
+        self._select_default(self.duration_select, self.duration)
         await interaction.response.defer()
 
     async def _continue(self, interaction: discord.Interaction) -> None:
