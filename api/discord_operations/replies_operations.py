@@ -1,9 +1,11 @@
 import aiohttp
 
-from api.routers.auth import bot_token
+from api.services.discord_profiles import get_profile, profile_key_for_server_id, runtime_bot_profile_key
 
 
-async def get_user_by_id(user_id: int):
+async def get_user_by_id(user_id: int, *, server_id: int | None = None):
+    profile_key = profile_key_for_server_id(server_id) if server_id is not None else runtime_bot_profile_key()
+    bot_token = get_profile(profile_key).bot_token
     if not bot_token:
         raise RuntimeError("DISCORD_TOKEN is not set")
 

@@ -2,7 +2,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -21,6 +20,7 @@ from api.models.discord_command_visibility import (
 )
 from api.services.bot_command_catalog import list_bot_commands
 from api.services.discord_guilds import DISCORD_API_BASE_URL, _get_bot_token
+from api.services.discord_profiles import get_profile, profile_key_for_server_id
 
 
 COMMAND_PERMISSION_SCOPE = "applications.commands.permissions.update"
@@ -37,15 +37,12 @@ class DiscordVisibilityError(Exception):
     status_code: int
 
 
-def _application_id() -> str:
-    application_id = os.getenv("DISCORD_CLIENT_ID")
+def _application_id(server_id: int | None = None) -> str:
+    profile_key = profile_key_for_server_id(server_id) if server_id is not None else "cybercolors"
+    application_id = get_profile(profile_key).application_id
     if not application_id or not application_id.isdigit():
         raise DiscordVisibilityError("discord_api_unavailable", "Discord application ID is not configured", 503)
     return application_id
-
-
-def _is_test_guild(server_id: int) -> bool:
-    return os.getenv("TEST_GUILD_ID", "").strip() == str(server_id)
 
 
 def _overwrites(payload: Any) -> list[DiscordCommandPermissionOverwriteModel]:
@@ -169,12 +166,17 @@ async def _discord_get(
     return response.json()
 
 
-async def _assert_bot_matches_application(client: httpx.AsyncClient, application_id: str) -> None:
+async def _assert_bot_matches_application(
+    client: httpx.AsyncClient,
+    application_id: str,
+    server_id: int | None = None,
+) -> None:
     """Fail clearly when the bot and OAuth client are configured for different apps."""
+    token = _get_bot_token() if server_id is None else _get_bot_token(server_id)
     payload = await _discord_get(
         client,
         "/oauth2/applications/@me",
-        {"Authorization": f"Bot {_get_bot_token()}"},
+        {"Authorization": f"Bot {token}"},
     )
     bot_application_id = str(payload.get("id", "")) if isinstance(payload, dict) else ""
     if not bot_application_id.isdigit():
@@ -218,25 +220,28 @@ async def _capabilities(client: httpx.AsyncClient, access_token: str, server_id:
 
 
 async def _effective_commands(client: httpx.AsyncClient, application_id: str, server_id: int) -> list[tuple[dict[str, Any], str]]:
-    headers = {"Authorization": f"Bot {_get_bot_token()}"}
+    headers = {"Authorization": f"Bot {_get_bot_token(server_id)}"}
     global_commands = await _discord_get(client, f"/applications/{application_id}/commands", headers)
     global_commands = global_commands if isinstance(global_commands, list) else []
     commands: dict[tuple[str, str], tuple[dict[str, Any], str]] = {
         (str(item.get("type", 1)), str(item.get("name", ""))): (item, "global")
         for item in global_commands if isinstance(item, dict)
     }
-    if _is_test_guild(server_id):
-        guild_commands = await _discord_get(client, f"/applications/{application_id}/guilds/{server_id}/commands", headers)
-        for item in guild_commands if isinstance(guild_commands, list) else []:
-            if isinstance(item, dict):
-                commands[(str(item.get("type", 1)), str(item.get("name", "")))] = (item, "guild")
+    guild_commands = await _discord_get(
+        client,
+        f"/applications/{application_id}/guilds/{server_id}/commands",
+        headers,
+    )
+    for item in guild_commands if isinstance(guild_commands, list) else []:
+        if isinstance(item, dict):
+            commands[(str(item.get("type", 1)), str(item.get("name", "")))] = (item, "guild")
     return list(commands.values())
 
 
 async def read_visibility(server_id: int, access_token: str) -> DiscordCommandVisibilityReadModel:
-    application_id = _application_id()
+    application_id = _application_id(server_id)
     async with httpx.AsyncClient() as client:
-        await _assert_bot_matches_application(client, application_id)
+        await _assert_bot_matches_application(client, application_id, server_id)
         scope_granted, native_permissions_sufficient = await _capabilities(client, access_token, server_id)
         commands = await _effective_commands(client, application_id, server_id)
         permissions_payload: Any = []

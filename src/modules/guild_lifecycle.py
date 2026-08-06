@@ -16,7 +16,12 @@ def _guild_icon_url(guild: discord.Guild) -> str | None:
     return str(icon.url) if icon else None
 
 
-async def mark_guild_presence(guild: discord.Guild, is_active: bool) -> None:
+async def mark_guild_presence(
+    guild: discord.Guild,
+    is_active: bool,
+    *,
+    bot_profile: str = "cybercolors",
+) -> None:
     now = _utc_now()
     async with get_async_session() as session:
         server = await session.get(Server, guild.id)
@@ -25,6 +30,7 @@ async def mark_guild_presence(guild: discord.Guild, is_active: bool) -> None:
                 server_id=guild.id,
                 server_name=guild.name,
                 icon=_guild_icon_url(guild),
+                bot_profile=bot_profile,
                 bot_active=is_active,
                 bot_joined_at=now if is_active else None,
                 bot_left_at=None if is_active else now,
@@ -33,6 +39,7 @@ async def mark_guild_presence(guild: discord.Guild, is_active: bool) -> None:
         else:
             server.server_name = guild.name
             server.icon = _guild_icon_url(guild)
+            server.bot_profile = bot_profile
             server.bot_active = is_active
             server.bot_presence_updated_at = now
             if is_active:
@@ -46,7 +53,11 @@ async def mark_guild_presence(guild: discord.Guild, is_active: bool) -> None:
         await session.commit()
 
 
-async def sync_active_guild_presence(guilds: list[discord.Guild]) -> None:
+async def sync_active_guild_presence(
+    guilds: list[discord.Guild],
+    *,
+    bot_profile: str = "cybercolors",
+) -> None:
     now = _utc_now()
     active_ids = {guild.id for guild in guilds}
 
@@ -61,6 +72,7 @@ async def sync_active_guild_presence(guilds: list[discord.Guild]) -> None:
                     server_id=guild.id,
                     server_name=guild.name,
                     icon=_guild_icon_url(guild),
+                    bot_profile=bot_profile,
                     bot_active=True,
                     bot_joined_at=now,
                     bot_presence_updated_at=now,
@@ -68,6 +80,7 @@ async def sync_active_guild_presence(guilds: list[discord.Guild]) -> None:
             else:
                 server.server_name = guild.name
                 server.icon = _guild_icon_url(guild)
+                server.bot_profile = bot_profile
                 server.bot_active = True
                 server.bot_left_at = None
                 server.bot_presence_updated_at = now
@@ -75,7 +88,14 @@ async def sync_active_guild_presence(guilds: list[discord.Guild]) -> None:
                     server.bot_joined_at = now
             session.add(server)
 
-        currently_active_rows = (await session.exec(select(Server).where(Server.bot_active == True))).all()
+        currently_active_rows = (
+            await session.exec(
+                select(Server).where(
+                    Server.bot_profile == bot_profile,
+                    Server.bot_active == True,  # noqa: E712
+                )
+            )
+        ).all()
         for server in currently_active_rows:
             if server.server_id in active_ids:
                 continue

@@ -130,7 +130,7 @@ async def get_replies_by_server_id(server_id: int, session: AsyncSession = Depen
     grouped: dict[UUID, ReplyModel] = {}
     for reply, trigger in server_replies:
         if reply.id not in grouped:
-            user_data = await enrich_user_data(reply.created_by_id)
+            user_data = await enrich_user_data(reply.created_by_id, server_id=server_id)
             grouped[reply.id] = ReplyModel(
                 id=str(reply.id),
                 user_messages=[],

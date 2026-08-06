@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-import os
 
 import discord
 from discord import app_commands
 
 from api.models.user_profiles import UserProfileCardModel
-from api.services.moderation_actions_service import DEFAULT_DASHBOARD_BASE_URL
+from api.services.discord_profiles import dashboard_base_url_for_server
 from api.services.moderation_users_service import build_user_profile_card
 from src.db.database import get_async_session
 from src.modules.localization.service import get_server_locale, tr
@@ -19,7 +18,7 @@ MODRAL_EMBED_COLOR = discord.Color.from_rgb(88, 101, 242)
 
 
 def _dashboard_profile_url(server_id: int, user_id: int) -> str:
-    base_url = os.getenv("DASHBOARD_BASE_URL", DEFAULT_DASHBOARD_BASE_URL).rstrip("/")
+    base_url = dashboard_base_url_for_server(server_id).rstrip("/")
     return f"{base_url}/dashboard/{server_id}/users?id={user_id}"
 
 
@@ -46,7 +45,7 @@ def _recent_actions(profile: UserProfileCardModel, *, server_id: int) -> str | N
     lines: list[str] = []
     for action in profile.recent_actions[:3]:
         action_url = (
-            f"{os.getenv('DASHBOARD_BASE_URL', DEFAULT_DASHBOARD_BASE_URL).rstrip('/')}"
+            f"{dashboard_base_url_for_server(server_id).rstrip('/')}"
             f"/dashboard/{server_id}/moderation/actions/{action.id}"
         )
         created_at = ""

@@ -37,7 +37,7 @@ async def sync_application_commands(
         app_commands.Command | app_commands.Group | app_commands.ContextMenu
     ] = (),
 ) -> CommandSyncResult:
-    """Sync globals and replace each guild registry with its branded commands."""
+    """Sync globals and replace each guild registry with the supplied commands."""
     global_commands = await tree.sync()
     pilot_guild_id = int(test_guild_id) if test_guild_id else None
     target_guild_ids = {int(guild_id) for guild_id in guild_ids}

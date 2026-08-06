@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.services.discord_guilds import fetch_channel
+from api.services.discord_profiles import get_profile, profile_key_for_server_id
 from src.modules.ai.context import (
     ChannelFetcher,
     MemberProfileVisibility,
@@ -110,10 +111,20 @@ MODERATION_STRICTNESS_GUIDANCE = {
 }
 
 
-def moderation_system_prompt(strictness: str = "standard") -> str:
+def _product_name_for_server(server_id: int | None) -> str:
+    if server_id is None:
+        return "CyberColors"
+    return get_profile(profile_key_for_server_id(server_id)).display_name
+
+
+def moderation_system_prompt(
+    strictness: str = "standard",
+    *,
+    product_name: str = "CyberColors",
+) -> str:
     normalized = strictness if strictness in MODERATION_STRICTNESS_GUIDANCE else "standard"
     return (
-        f"{MODERATION_SYSTEM_PROMPT}\n\n"
+        f"{MODERATION_SYSTEM_PROMPT.replace('CyberColors', product_name)}\n\n"
         f"Strictness: {normalized}. {MODERATION_STRICTNESS_GUIDANCE[normalized]}"
     )
 
@@ -165,7 +176,11 @@ COMMAND_GUIDANCE = (
 )
 
 
-def assistant_system_prompt(enabled_tool_names: set[str] | None = None) -> str:
+def assistant_system_prompt(
+    enabled_tool_names: set[str] | None = None,
+    *,
+    product_name: str = "CyberColors",
+) -> str:
     enabled = AI_COMPANION_TOOL_NAME_SET if enabled_tool_names is None else enabled_tool_names
     guidance = []
     if "get_available_commands" in enabled:
@@ -176,7 +191,9 @@ def assistant_system_prompt(enabled_tool_names: set[str] | None = None) -> str:
         guidance.append(YOUTUBE_TOOL_GUIDANCE)
     if "web_search" in enabled:
         guidance.append(WEB_SEARCH_GUIDANCE)
-    return "\n\n".join([ASSISTANT_SYSTEM_PROMPT, *guidance])
+    return "\n\n".join(
+        [ASSISTANT_SYSTEM_PROMPT.replace("CyberColors", product_name), *guidance]
+    )
 
 
 USER_ID_PATTERN = re.compile(r"\(user_id:\s*(\d+)\)")
@@ -236,7 +253,10 @@ class AIMain:
         request = AIRequest(
             task="moderation",
             model=self.ai_model,
-            system_prompt=moderation_system_prompt(moderation_strictness),
+            system_prompt=moderation_system_prompt(
+                moderation_strictness,
+                product_name=_product_name_for_server(moderation_input.server_id),
+            ),
             messages=[
                 AIMessage(
                     role="user",
@@ -339,7 +359,10 @@ class AIMain:
             if enable_tools and session is not None and normalized.server_id is not None
             else []
         )
-        system_prompt = assistant_system_prompt(effective_enabled_tool_names)
+        system_prompt = assistant_system_prompt(
+            effective_enabled_tool_names,
+            product_name=_product_name_for_server(normalized.server_id),
+        )
         context_block = await self._build_context_block(
             session=session,
             server_id=normalized.server_id,

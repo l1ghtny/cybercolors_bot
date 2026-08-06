@@ -34,6 +34,7 @@ class Server(SQLModel, table=True):
     birthday_channel_name: Optional[str] = None
     birthday_role_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
     icon : Optional[str] = None
+    bot_profile: str = Field(default="modral", sa_column=Column(String(length=32), nullable=False, index=True))
     bot_active: bool = Field(default=False, nullable=False)
     bot_joined_at: Optional[datetime] = None
     bot_left_at: Optional[datetime] = None
@@ -204,6 +205,10 @@ class DashboardSession(SQLModel, table=True):
             nullable=False,
             index=True,
         )
+    )
+    application_profile: str = Field(
+        default="cybercolors",
+        sa_column=Column(String(length=32), nullable=False, index=True),
     )
     discord_access_token: str = Field(sa_column=Column(Text, nullable=False))
     discord_refresh_token: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))

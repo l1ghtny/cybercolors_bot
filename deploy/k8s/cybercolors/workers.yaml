@@ -169,6 +169,9 @@ spec:
             - secretRef:
                 name: cybercolors-app-secrets
                 optional: true
+            - secretRef:
+                name: modral-discord-credentials
+                optional: true
           env:
             - name: PYTHONPATH
               value: /home/discord-bot
@@ -225,6 +228,80 @@ spec:
           env:
             - name: PYTHONPATH
               value: /home/discord-bot
+            - name: BOT_PROFILE
+              value: cybercolors
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: cybercolors-db-pguser-backend
+                  key: user
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cybercolors-db-pguser-backend
+                  key: password
+          resources:
+            requests:
+              cpu: 100m
+              memory: 384Mi
+            limits:
+              cpu: 750m
+              memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: modral-bot-metrics
+  namespace: cybercolors
+  labels:
+    monitoring.cybercolors.io/scrape: "true"
+spec:
+  selector:
+    app: modral-bot
+  ports:
+    - name: metrics
+      port: 9100
+      targetPort: metrics
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: modral-bot
+  namespace: cybercolors
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: modral-bot
+  template:
+    metadata:
+      labels:
+        app: modral-bot
+    spec:
+      containers:
+        - name: bot
+          image: localhost:32000/cybercolors-backend:latest
+          imagePullPolicy: Always
+          command: ["python", "main.py"]
+          ports:
+            - name: metrics
+              containerPort: 9100
+          envFrom:
+            - configMapRef:
+                name: cybercolors-config
+            - secretRef:
+                name: cybercolors-app-secrets
+                optional: true
+            - secretRef:
+                name: modral-discord-credentials
+          env:
+            - name: PYTHONPATH
+              value: /home/discord-bot
+            - name: BOT_PROFILE
+              value: modral
             - name: DB_USER
               valueFrom:
                 secretKeyRef:
@@ -271,6 +348,9 @@ spec:
                 name: cybercolors-config
             - secretRef:
                 name: cybercolors-app-secrets
+                optional: true
+            - secretRef:
+                name: modral-discord-credentials
                 optional: true
             - secretRef:
                 name: cybercolors-scheduled-storage

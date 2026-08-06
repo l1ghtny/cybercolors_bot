@@ -97,7 +97,10 @@ async def send_bot_message(
 
     reply_to_message_id = int(body.reply_to_message_id) if body.reply_to_message_id else None
     if reply_to_message_id is not None:
-        await message_fetcher(channel_id, reply_to_message_id)
+        if message_fetcher is fetch_channel_message:
+            await message_fetcher(channel_id, reply_to_message_id, server_id=server_id)
+        else:
+            await message_fetcher(channel_id, reply_to_message_id)
 
     await _ensure_actor_exists(session, actor_user_id)
     audit_content = body.content
@@ -139,6 +142,8 @@ async def send_bot_message(
         }
         if attachments:
             sender_kwargs["files"] = attachments
+        if sender is create_channel_message:
+            sender_kwargs["server_id"] = server_id
         discord_message = await sender(
             **sender_kwargs,
         )

@@ -39,8 +39,7 @@ from src.commands.moderation.message_actions import (
 )
 from src.commands.moderation.bot_messages import (
     StaticCommandTranslator,
-    reply_as_bot_ctx,
-    reply_as_cybercolors_ctx,
+    reply_context_command_for_profile,
 )
 from src.commands.sync import sync_application_commands, sync_guild_application_commands
 from src.commands.moderation.actions import (
@@ -127,6 +126,7 @@ from src.modules.observability.sentry import birthday_hourly_monitor, configure_
 from src.modules.observability.bot_metrics import DISCORD_GATEWAY_CONNECTED
 from src.modules.observability.prometheus import start_bot_metrics_server
 from api.services.moderation_rules_service import sync_rules_from_source_message_edit
+from api.services.discord_profiles import get_profile, profile_key_for_server_id, runtime_bot_profile_key
 from api.services.newcomer_probation import can_use_public_member_commands
 from src.views.replies.delete_multiple_replies import DeleteReplyMultiple, DeleteReplyMultipleSelect
 from src.views.replies.delete_one_reply import DeleteOneReply
@@ -135,9 +135,13 @@ from src.views.birthday.settings import BirthdaysButtonsSelect, GuildAlreadyExis
 
 load_dotenv()
 configure_sentry("discord-bot")
-# Grab the API token from the .env file.
-DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN") or os.getenv("DISCORD_TOKEN_TEST") or os.getenv("DISCORD_TOKEN")
-TEST_GUILD_ID = os.getenv('TEST_GUILD_ID')
+# Each gateway Deployment selects exactly one Discord application profile.
+BOT_PROFILE = runtime_bot_profile_key()
+DISCORD_TOKEN = get_profile(BOT_PROFILE).bot_token
+
+
+def runtime_owns_guild(guild_id: int) -> bool:
+    return profile_key_for_server_id(guild_id) == BOT_PROFILE
 
 intents = discord.Intents.all()
 intents.message_content = True
@@ -249,9 +253,7 @@ class Aclient(discord.AutoShardedClient):
             synced = await sync_application_commands(
                 tree,
                 guild_ids=tuple(guild.id for guild in self.guilds),
-                test_guild_id=TEST_GUILD_ID,
-                standard_guild_commands=(reply_as_bot_ctx,),
-                test_guild_commands=(reply_as_cybercolors_ctx,),
+                test_guild_id=None,
             )
             print(f"Commands synced globally ({synced.global_count}).")
             for guild_id, guild_count in synced.guild_counts.items():
@@ -269,7 +271,10 @@ class Aclient(discord.AutoShardedClient):
         if not auto_unmute_worker.is_running():
             auto_unmute_worker.start()
         if not self.guild_presence_synced:
-            await sync_active_guild_presence(self.guilds)
+            await sync_active_guild_presence(
+                [guild for guild in self.guilds if runtime_owns_guild(guild.id)],
+                bot_profile=BOT_PROFILE,
+            )
             self.guild_presence_synced = True
         logger.info(f"We have logged in as {self.user}.")
 
@@ -290,6 +295,13 @@ class CyberColorsCommandTree(app_commands.CommandTree):
         await handle_app_command_error(interaction, error, logger=logger)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.guild_id is not None and not runtime_owns_guild(interaction.guild_id):
+            message = "This server is assigned to the other Modral Discord application."
+            if interaction.response.is_done():
+                await interaction.followup.send(message, ephemeral=True)
+            else:
+                await interaction.response.send_message(message, ephemeral=True)
+            return False
         if interaction.guild_id is None or not isinstance(interaction.user, discord.Member):
             return True
         command_name = interaction.command.qualified_name if interaction.command else ""
@@ -338,6 +350,7 @@ class CyberColorsCommandTree(app_commands.CommandTree):
 
 
 tree = CyberColorsCommandTree(client)
+tree.add_command(reply_context_command_for_profile(BOT_PROFILE))
 
 moderation_group = app_commands.Group(
     name="mod",
@@ -771,6 +784,8 @@ async def on_message(message):
         return
     if user == client.user:
         return
+    if not runtime_owns_guild(server.id):
+        return
 
     try:
         claimed = await claim_message_for_processing(message)
@@ -847,8 +862,9 @@ async def check_users_with_birthdays():
 
 @tasks.loop(seconds=60)
 async def auto_unmute_worker():
-    processed, failed = await process_expired_mutes(client)
-    ban_processed, ban_failed = await process_expired_bans(client)
+    guild_ids = {guild.id for guild in client.guilds if runtime_owns_guild(guild.id)}
+    processed, failed = await process_expired_mutes(client, guild_ids=guild_ids)
+    ban_processed, ban_failed = await process_expired_bans(client, guild_ids=guild_ids)
     if processed or failed:
         logger.info("Auto-unmute run finished. processed=%s failed=%s", processed, failed)
     if ban_processed or ban_failed:
@@ -874,17 +890,20 @@ async def on_interaction(interaction: discord.Interaction):
 
 @client.event
 async def on_guild_join(guild: discord.Guild):
-    await mark_guild_presence(guild, is_active=True)
-    pilot_guild_id = int(TEST_GUILD_ID) if TEST_GUILD_ID else None
-    commands = (
-        (reply_as_cybercolors_ctx,)
-        if guild.id == pilot_guild_id
-        else (reply_as_bot_ctx,)
-    )
+    if not runtime_owns_guild(guild.id):
+        logger.error(
+            "Ignoring guild %s because BOT_PROFILE=%s does not own it.",
+            guild.id,
+            BOT_PROFILE,
+        )
+        return
+    await mark_guild_presence(guild, is_active=True, bot_profile=BOT_PROFILE)
+    # Branded context commands are global per Discord application. Clearing
+    # the guild registry removes the legacy per-guild branded override.
     guild_count = await sync_guild_application_commands(
         tree,
         guild_id=guild.id,
-        commands=commands,
+        commands=(),
     )
     logger.info(
         "Guild-specific commands synced after joining guild %s (%s total).",
@@ -920,7 +939,8 @@ async def on_member_remove(member: discord.Member):
 
 @client.event
 async def on_guild_remove(guild: discord.Guild):
-    await mark_guild_presence(guild, is_active=False)
+    if runtime_owns_guild(guild.id):
+        await mark_guild_presence(guild, is_active=False, bot_profile=BOT_PROFILE)
 
 
 # def handle_uncaught_exception(exc_type, exc_value, exc_traceback):
@@ -932,7 +952,7 @@ async def on_guild_remove(guild: discord.Guild):
 
 # EXECUTES THE BOT WITH THE SPECIFIED TOKEN.
 if not DISCORD_TOKEN:
-    raise RuntimeError("DISCORD_BOT_TOKEN, DISCORD_TOKEN_TEST, or DISCORD_TOKEN must be set")
+    raise RuntimeError(f"Discord bot token is not configured for BOT_PROFILE={BOT_PROFILE}")
 
 start_bot_metrics_server()
 client.run(DISCORD_TOKEN, root_logger=True)

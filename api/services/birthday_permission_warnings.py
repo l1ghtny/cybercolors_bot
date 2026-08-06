@@ -1,5 +1,6 @@
 from api.models.birthday_settings import BirthdaySettingsWarningModel
 from api.services.discord_guilds import fetch_channel, fetch_current_bot_user, fetch_guild_member, fetch_guild_roles
+from api.services.discord_profiles import call_with_server_profile
 from src.db.models import Server
 
 ADMINISTRATOR = 1 << 3
@@ -104,7 +105,10 @@ async def build_birthday_settings_warnings(server: Server) -> list[BirthdaySetti
         return []
 
     try:
-        bot_user = await fetch_current_bot_user()
+        bot_user = await call_with_server_profile(
+            fetch_current_bot_user,
+            server_id=server.server_id,
+        )
         bot_user_id = int(bot_user["id"])
         bot_member = await fetch_guild_member(server.server_id, bot_user_id)
         roles = await fetch_guild_roles(server.server_id)

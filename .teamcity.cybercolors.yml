@@ -483,6 +483,7 @@ jobs:
             if kubectl -n cybercolors get rollout cybercolors-backend >/dev/null 2>&1 && \
                kubectl -n cybercolors get rollout cybercolors-frontend >/dev/null 2>&1 && \
                kubectl -n cybercolors get deployment cybercolors-bot >/dev/null 2>&1 && \
+               kubectl -n cybercolors get deployment modral-bot >/dev/null 2>&1 && \
                kubectl -n cybercolors get deployment cybercolors-indexer-worker >/dev/null 2>&1 && \
                kubectl -n cybercolors get deployment cybercolors-embeddings >/dev/null 2>&1 && \
                kubectl -n cybercolors get deployment cybercolors-newcomer-release-worker >/dev/null 2>&1; then
@@ -495,9 +496,11 @@ jobs:
           kubectl -n cybercolors rollout status deployment/cybercolors-embeddings --timeout=1800s
 
           kubectl -n cybercolors set image deployment/cybercolors-bot bot="localhost:32000/cybercolors-backend:$BACKEND_TAG"
+          kubectl -n cybercolors set image deployment/modral-bot bot="localhost:32000/cybercolors-backend:$BACKEND_TAG"
           kubectl -n cybercolors set image deployment/cybercolors-newcomer-release-worker worker="localhost:32000/cybercolors-backend:$BACKEND_TAG"
           kubectl -n cybercolors set image deployment/cybercolors-indexer-worker worker="localhost:32000/cybercolors-indexer:$INDEXER_TAG"
           kubectl -n cybercolors rollout status deployment/cybercolors-bot --timeout=900s
+          kubectl -n cybercolors rollout status deployment/modral-bot --timeout=900s
           kubectl -n cybercolors rollout status deployment/cybercolors-newcomer-release-worker --timeout=900s
           kubectl -n cybercolors rollout status deployment/cybercolors-indexer-worker --timeout=1800s
 

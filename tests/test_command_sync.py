@@ -13,6 +13,7 @@ from src.commands.moderation.bot_messages import (
     bot_display_name,
     reply_as_bot_ctx,
     reply_as_cybercolors_ctx,
+    reply_context_command_for_profile,
 )
 from src.commands.sync import sync_application_commands, sync_guild_application_commands
 
@@ -136,6 +137,11 @@ def test_branded_context_commands_have_distinct_names_for_distinct_guilds():
     assert reply_as_cybercolors_ctx.name == "Reply as CyberColors"
     assert reply_as_bot_ctx.name == "Reply as Modral"
     assert reply_as_cybercolors_ctx.type == reply_as_bot_ctx.type
+
+
+def test_each_application_selects_its_own_global_reply_command():
+    assert reply_context_command_for_profile("modral") is reply_as_bot_ctx
+    assert reply_context_command_for_profile("cybercolors") is reply_as_cybercolors_ctx
 
 
 def test_cybercolors_context_command_payload_overrides_display_name_by_locale():

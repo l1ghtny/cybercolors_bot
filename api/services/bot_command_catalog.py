@@ -430,7 +430,7 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
             "Rechecks Discord and dashboard permissions, optionally notifies only the replied-to author, suppresses all other mention notifications, and records the moderator in the audit trail.",
         ],
         notes=[
-            "The command is named Reply as Modral on regular servers and Reply as CyberColors on the pilot guild. Each server receives only its own variant.",
+            "The Modral application registers Reply as Modral globally; the CyberColors application registers Reply as CyberColors globally.",
         ],
     ),
     BotCommandDocModel(
@@ -1452,7 +1452,7 @@ RU_COMMAND_TEXT: dict[str, dict[str, list[str] | str]] = {
             "Команда доступна в контекстном меню сообщения Discord.",
             "Повторно проверяет права Discord и панели управления, при необходимости уведомляет только автора исходного сообщения, блокирует остальные упоминания и записывает модератора в журнал.",
         ],
-        "notes": ["На обычных серверах команда называется Reply as Modral, а на пилотном — Reply as CyberColors. На каждом сервере доступен только свой вариант."],
+        "notes": ["Приложение Modral глобально регистрирует команду Reply as Modral, а приложение CyberColors — команду Reply as CyberColors."],
     },
     "context.start_moderation_action": {
         "summary": "Создать предупреждение, мут, исключение или бан из выбранного сообщения и сохранить сообщение как доказательство.",

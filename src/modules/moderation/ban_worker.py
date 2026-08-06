@@ -11,7 +11,11 @@ from src.modules.moderation.mute_management import get_expired_active_bans
 logger = logger.logging.getLogger("bot")
 
 
-async def process_expired_bans(client: discord.Client) -> tuple[int, int]:
+async def process_expired_bans(
+    client: discord.Client,
+    *,
+    guild_ids: set[int] | None = None,
+) -> tuple[int, int]:
     """Unbans users for expired native Discord ban actions."""
     processed = 0
     failed = 0
@@ -23,11 +27,15 @@ async def process_expired_bans(client: discord.Client) -> tuple[int, int]:
             return processed, failed
 
         for action in expired_actions:
+            if guild_ids is not None and action.server_id not in guild_ids:
+                continue
             guild = client.get_guild(action.server_id)
             if guild is None:
-                action.is_active = False
-                session.add(action)
-                processed += 1
+                logger.warning(
+                    "Skipping expired ban %s: guild %s is not available to this bot instance",
+                    action.id,
+                    action.server_id,
+                )
                 continue
 
             try:

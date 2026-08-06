@@ -1,7 +1,6 @@
 from datetime import datetime, timedelta, timezone
 import json
 import logging
-import os
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -36,6 +35,7 @@ from api.services.discord_guilds import (
     remove_guild_member_role,
     unban_guild_member,
 )
+from api.services.discord_profiles import call_with_server_profile, dashboard_base_url_for_server
 from api.services.moderation_core import (
     build_actor,
     deleted_message_deletion_type,
@@ -98,20 +98,22 @@ def _format_dt(value: datetime | None) -> str:
     return normalized.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _dashboard_base_url() -> str:
-    return (os.getenv("DASHBOARD_BASE_URL") or DEFAULT_DASHBOARD_BASE_URL).rstrip("/")
+def _dashboard_base_url(server_id: int | None = None) -> str:
+    if server_id is None:
+        return DEFAULT_DASHBOARD_BASE_URL
+    return dashboard_base_url_for_server(server_id).rstrip("/")
 
 
 def _dashboard_action_url(server_id: int, action_id: UUID | str) -> str:
-    return f"{_dashboard_base_url()}/dashboard/{server_id}/moderation/actions/{action_id}"
+    return f"{_dashboard_base_url(server_id)}/dashboard/{server_id}/moderation/actions/{action_id}"
 
 
 def _dashboard_case_url(server_id: int, case_id: UUID | str) -> str:
-    return f"{_dashboard_base_url()}/dashboard/{server_id}/moderation/cases/{case_id}"
+    return f"{_dashboard_base_url(server_id)}/dashboard/{server_id}/moderation/cases/{case_id}"
 
 
 def _dashboard_monitoring_url(server_id: int) -> str:
-    return f"{_dashboard_base_url()}/dashboard/{server_id}/monitoring"
+    return f"{_dashboard_base_url(server_id)}/dashboard/{server_id}/monitoring"
 
 
 def _inline_code(value: object, fallback: str = "unknown") -> str:
@@ -630,10 +632,12 @@ async def _send_action_to_mod_log(
     )
 
     try:
-        await create_channel_message(
+        await call_with_server_profile(
+            create_channel_message,
             channel_id=settings.mod_log_channel_id,
             embeds=[embed],
             components=build_action_log_components(action, locale),
+            server_id=action.server_id,
         )
     except Exception as error:
         logger.warning(
@@ -689,9 +693,11 @@ async def _send_action_dm_for_action(
                 "action.dm_expires",
                 expires_at=_format_dm_expiry(action.expires_at),
             )
-        await create_direct_message(
+        await call_with_server_profile(
+            create_direct_message,
             user_id=action.target_user_id,
             content=_truncate(message, limit=1900),
+            server_id=action.server_id,
         )
     except Exception as error:
         logger.warning(
@@ -722,9 +728,11 @@ async def send_action_revert_dm(
             server_name=server_name,
             reason=reason,
         )
-        await create_direct_message(
+        await call_with_server_profile(
+            create_direct_message,
             user_id=action.target_user_id,
             content=_truncate(message, limit=1900),
+            server_id=action.server_id,
         )
     except Exception as error:
         logger.warning(
@@ -748,7 +756,8 @@ async def send_manual_unban_dm(
         locale = await _get_server_locale(session=session, server_id=server_id)
         server = await session.get(Server, server_id)
         server_name = server.server_name if server is not None else str(server_id)
-        await create_direct_message(
+        await call_with_server_profile(
+            create_direct_message,
             user_id=target_user_id,
             content=_truncate(
                 tr(
@@ -759,6 +768,7 @@ async def send_manual_unban_dm(
                 ),
                 limit=1900,
             ),
+            server_id=server_id,
         )
         return True
     except Exception as error:
@@ -1174,7 +1184,12 @@ async def _send_action_revert_to_mod_log(
         locale=locale,
     )
     try:
-        await create_channel_message(channel_id=settings.mod_log_channel_id, embeds=[embed])
+        await call_with_server_profile(
+            create_channel_message,
+            channel_id=settings.mod_log_channel_id,
+            embeds=[embed],
+            server_id=action.server_id,
+        )
     except Exception as error:
         logger.warning(
             "Failed to send moderation action revert log to channel %s for server %s: %s",
@@ -1569,7 +1584,12 @@ async def _delete_and_link_cleanup_messages_for_action(
 
     for message in messages:
         try:
-            await delete_channel_message(channel_id=message.channel_id, message_id=message.message_id)
+            await call_with_server_profile(
+                delete_channel_message,
+                channel_id=message.channel_id,
+                message_id=message.message_id,
+                server_id=action.server_id,
+            )
         except HTTPException as exc:
             if exc.status_code != status.HTTP_404_NOT_FOUND:
                 raise

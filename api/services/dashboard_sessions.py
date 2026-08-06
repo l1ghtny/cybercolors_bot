@@ -9,6 +9,12 @@ from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 from fastapi import HTTPException, Request, Response, status
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from api.services.discord_profiles import (
+    CYBERCOLORS_PROFILE,
+    DiscordApplicationProfile,
+    get_profile,
+    profile_for_request,
+)
 from src.db.models import DashboardSession
 
 DISCORD_API_BASE_URL = "https://discord.com/api/v10"
@@ -111,8 +117,10 @@ def build_discord_authorize_url(
     *,
     redirect_uri: str,
     command_management: bool,
+    profile: DiscordApplicationProfile | None = None,
 ) -> tuple[str, str]:
-    client_id = os.getenv("DISCORD_CLIENT_ID")
+    selected_profile = profile or get_profile(CYBERCOLORS_PROFILE)
+    client_id = selected_profile.client_id
     if not client_id:
         raise HTTPException(status_code=500, detail="Discord client ID is not configured")
 
@@ -151,6 +159,7 @@ async def create_dashboard_session(
     *,
     discord_user_id: int,
     token_payload: dict,
+    application_profile: str = CYBERCOLORS_PROFILE,
 ) -> None:
     now = _utcnow()
     session_token = secrets.token_urlsafe(32)
@@ -160,6 +169,7 @@ async def create_dashboard_session(
         DashboardSession(
             session_token_hash=_token_hash(session_token),
             discord_user_id=discord_user_id,
+            application_profile=application_profile,
             discord_access_token=_encrypt_token(str(token_payload["access_token"])),
             discord_refresh_token=_encrypt_token(token_payload.get("refresh_token")),
             discord_token_expires_at=access_expires_at,
@@ -180,8 +190,9 @@ async def _refresh_discord_access_token(
     db_session: AsyncSession,
     dashboard_session: DashboardSession,
 ) -> str:
-    client_id = os.getenv("DISCORD_CLIENT_ID")
-    client_secret = os.getenv("DISCORD_CLIENT_SECRET")
+    profile = get_profile(dashboard_session.application_profile)
+    client_id = profile.client_id
+    client_secret = profile.client_secret
     refresh_token = _decrypt_token(dashboard_session.discord_refresh_token)
     if not client_id or not client_secret or not refresh_token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Dashboard session expired")
@@ -233,6 +244,15 @@ async def get_dashboard_session(
             await db_session.delete(dashboard_session)
         if required:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Dashboard session expired")
+        return None
+
+    request_profile = profile_for_request(request)
+    if dashboard_session.application_profile != request_profile.key:
+        if required:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Dashboard session belongs to a different application",
+            )
         return None
 
     if dashboard_session.discord_token_expires_at <= now + timedelta(seconds=30):

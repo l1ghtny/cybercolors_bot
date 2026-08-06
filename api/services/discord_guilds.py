@@ -1,18 +1,30 @@
 import asyncio
 import json
-import os
+import re
 from urllib.parse import quote
 
 import httpx
 from fastapi import HTTPException, status
+
+from api.services.discord_profiles import (
+    call_with_server_profile,
+    get_profile,
+    profile_key_for_server_id,
+    runtime_bot_profile_key,
+)
 
 DISCORD_API_BASE_URL = "https://discord.com/api/v10"
 TEXT_CHANNEL_TYPES = {0, 5, 10, 11, 12}
 VOICE_CHANNEL_TYPE = 2
 
 
-def _get_bot_token() -> str:
-    token = os.getenv("DISCORD_BOT_TOKEN") or os.getenv("DISCORD_TOKEN_TEST") or os.getenv("DISCORD_TOKEN")
+def _get_bot_token(server_id: int | None = None, profile_key: str | None = None) -> str:
+    resolved_profile = profile_key or (
+        profile_key_for_server_id(server_id)
+        if server_id is not None
+        else runtime_bot_profile_key()
+    )
+    token = get_profile(resolved_profile).bot_token
     if not token:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -21,8 +33,21 @@ def _get_bot_token() -> str:
     return token
 
 
-async def _discord_get(path: str, params: dict | None = None) -> list[dict] | dict:
-    headers = {"Authorization": f"Bot {_get_bot_token()}"}
+def _server_id_from_path(path: str) -> int | None:
+    match = re.match(r"^/guilds/(\d+)(?:/|$)", path)
+    return int(match.group(1)) if match else None
+
+
+async def _discord_get(
+    path: str,
+    params: dict | None = None,
+    *,
+    server_id: int | None = None,
+    profile_key: str | None = None,
+) -> list[dict] | dict:
+    headers = {
+        "Authorization": f"Bot {_get_bot_token(server_id or _server_id_from_path(path), profile_key)}"
+    }
     async with httpx.AsyncClient() as client:
         response = await client.get(f"{DISCORD_API_BASE_URL}{path}", headers=headers, params=params)
     if response.status_code >= 400:
@@ -33,8 +58,16 @@ async def _discord_get(path: str, params: dict | None = None) -> list[dict] | di
     return response.json()
 
 
-async def _discord_patch(path: str, payload: dict) -> list[dict] | dict:
-    headers = {"Authorization": f"Bot {_get_bot_token()}"}
+async def _discord_patch(
+    path: str,
+    payload: dict,
+    *,
+    server_id: int | None = None,
+    profile_key: str | None = None,
+) -> list[dict] | dict:
+    headers = {
+        "Authorization": f"Bot {_get_bot_token(server_id or _server_id_from_path(path), profile_key)}"
+    }
     async with httpx.AsyncClient() as client:
         response = await client.patch(f"{DISCORD_API_BASE_URL}{path}", headers=headers, json=payload)
     if response.status_code >= 400:
@@ -45,8 +78,16 @@ async def _discord_patch(path: str, payload: dict) -> list[dict] | dict:
     return response.json()
 
 
-async def _discord_post(path: str, payload: dict) -> list[dict] | dict:
-    headers = {"Authorization": f"Bot {_get_bot_token()}"}
+async def _discord_post(
+    path: str,
+    payload: dict,
+    *,
+    server_id: int | None = None,
+    profile_key: str | None = None,
+) -> list[dict] | dict:
+    headers = {
+        "Authorization": f"Bot {_get_bot_token(server_id or _server_id_from_path(path), profile_key)}"
+    }
     async with httpx.AsyncClient() as client:
         response = await client.post(f"{DISCORD_API_BASE_URL}{path}", headers=headers, json=payload)
     if response.status_code >= 400:
@@ -61,8 +102,13 @@ async def _discord_post_multipart(
     path: str,
     payload: dict,
     files: list[tuple[str, bytes, str]],
+    *,
+    server_id: int | None = None,
+    profile_key: str | None = None,
 ) -> list[dict] | dict:
-    headers = {"Authorization": f"Bot {_get_bot_token()}"}
+    headers = {
+        "Authorization": f"Bot {_get_bot_token(server_id or _server_id_from_path(path), profile_key)}"
+    }
     multipart_files = [
         (f"files[{index}]", (filename, data, content_type))
         for index, (filename, data, content_type) in enumerate(files)
@@ -83,8 +129,16 @@ async def _discord_post_multipart(
 
 
 
-async def _discord_put(path: str, payload: dict | None = None) -> list[dict] | dict:
-    headers = {"Authorization": f"Bot {_get_bot_token()}"}
+async def _discord_put(
+    path: str,
+    payload: dict | None = None,
+    *,
+    server_id: int | None = None,
+    profile_key: str | None = None,
+) -> list[dict] | dict:
+    headers = {
+        "Authorization": f"Bot {_get_bot_token(server_id or _server_id_from_path(path), profile_key)}"
+    }
     async with httpx.AsyncClient() as client:
         response = await client.put(f"{DISCORD_API_BASE_URL}{path}", headers=headers, json=payload)
     if response.status_code >= 400:
@@ -96,8 +150,17 @@ async def _discord_put(path: str, payload: dict | None = None) -> list[dict] | d
         return {}
     return response.json()
 
-async def _discord_delete(path: str, payload: dict | None = None, reason: str | None = None) -> list[dict] | dict:
-    headers = {"Authorization": f"Bot {_get_bot_token()}"}
+async def _discord_delete(
+    path: str,
+    payload: dict | None = None,
+    reason: str | None = None,
+    *,
+    server_id: int | None = None,
+    profile_key: str | None = None,
+) -> list[dict] | dict:
+    headers = {
+        "Authorization": f"Bot {_get_bot_token(server_id or _server_id_from_path(path), profile_key)}"
+    }
     if reason:
         headers["X-Audit-Log-Reason"] = quote(reason[:512])
     async with httpx.AsyncClient() as client:
@@ -175,8 +238,12 @@ async def fetch_guild_emojis(server_id: int) -> list[dict]:
     return []
 
 
-async def fetch_current_bot_user() -> dict:
-    payload = await _discord_get("/users/@me")
+async def fetch_current_bot_user(*, server_id: int | None = None) -> dict:
+    payload = (
+        await call_with_server_profile(_discord_get, "/users/@me", server_id=server_id)
+        if server_id is not None
+        else await _discord_get("/users/@me")
+    )
     if isinstance(payload, dict):
         return payload
     return {}
@@ -184,7 +251,11 @@ async def fetch_current_bot_user() -> dict:
 
 async def fetch_channel(server_id: int, channel_id: int) -> dict | None:
     try:
-        payload = await _discord_get(f"/channels/{channel_id}")
+        payload = await call_with_server_profile(
+            _discord_get,
+            f"/channels/{channel_id}",
+            server_id=server_id,
+        )
     except HTTPException as exc:
         if exc.status_code == status.HTTP_404_NOT_FOUND:
             return None
@@ -263,8 +334,18 @@ async def search_guild_members(server_id: int, query: str, limit: int = 10) -> l
     return []
 
 
-async def fetch_channel_message(channel_id: int, message_id: int) -> dict:
-    payload = await _discord_get(f"/channels/{channel_id}/messages/{message_id}")
+async def fetch_channel_message(
+    channel_id: int,
+    message_id: int,
+    *,
+    server_id: int | None = None,
+) -> dict:
+    path = f"/channels/{channel_id}/messages/{message_id}"
+    payload = (
+        await call_with_server_profile(_discord_get, path, server_id=server_id)
+        if server_id is not None
+        else await _discord_get(path)
+    )
     if isinstance(payload, dict):
         return payload
     return {}
@@ -283,10 +364,17 @@ async def _assert_role_mutations_allowed(server_id: int) -> None:
         )
 
 
-async def update_channel_slowmode(channel_id: int, seconds: int) -> dict:
-    payload = await _discord_patch(
+async def update_channel_slowmode(
+    channel_id: int,
+    seconds: int,
+    *,
+    server_id: int | None = None,
+) -> dict:
+    payload = await call_with_server_profile(
+        _discord_patch,
         f"/channels/{channel_id}",
         {"rate_limit_per_user": max(0, min(seconds, 21600))},
+        server_id=server_id,
     )
     return payload if isinstance(payload, dict) else {}
 
@@ -307,6 +395,7 @@ async def update_channel_role_overwrite(
     *,
     allow: int,
     deny: int,
+    server_id: int | None = None,
 ) -> None:
     payload = {
         "allow": str(allow),
@@ -315,7 +404,12 @@ async def update_channel_role_overwrite(
     }
     for attempt in range(3):
         try:
-            await _discord_put(f"/channels/{channel_id}/permissions/{role_id}", payload)
+            await call_with_server_profile(
+                _discord_put,
+                f"/channels/{channel_id}/permissions/{role_id}",
+                payload,
+                server_id=server_id,
+            )
             return
         except HTTPException as error:
             if error.status_code != status.HTTP_429_TOO_MANY_REQUESTS or attempt == 2:
@@ -399,6 +493,7 @@ async def create_channel_message(
     allowed_user_ids: list[int] | tuple[int, ...] | None = None,
     allowed_role_ids: list[int] | tuple[int, ...] | None = None,
     files: list[tuple[str, bytes, str]] | None = None,
+    server_id: int | None = None,
 ) -> dict:
     allowed_mentions: dict = {
         "parse": ["everyone"] if allow_everyone else [],
@@ -422,33 +517,58 @@ async def create_channel_message(
         }
 
     if files:
-        payload = await _discord_post_multipart(
+        payload = await call_with_server_profile(
+            _discord_post_multipart,
             f"/channels/{channel_id}/messages",
             message_payload,
             files,
+            server_id=server_id,
         )
     else:
-        payload = await _discord_post(
+        payload = await call_with_server_profile(
+            _discord_post,
             f"/channels/{channel_id}/messages",
             message_payload,
+            server_id=server_id,
         )
     if isinstance(payload, dict):
         return payload
     return {}
 
 
-async def delete_channel_message(channel_id: int, message_id: int) -> None:
-    await _discord_delete(f"/channels/{channel_id}/messages/{message_id}")
+async def delete_channel_message(
+    channel_id: int,
+    message_id: int,
+    *,
+    server_id: int | None = None,
+) -> None:
+    await call_with_server_profile(
+        _discord_delete,
+        f"/channels/{channel_id}/messages/{message_id}",
+        server_id=server_id,
+    )
 
 
-async def delete_channel(channel_id: int, *, reason: str | None = None) -> None:
-    await _discord_delete(f"/channels/{channel_id}", reason=reason)
+async def delete_channel(
+    channel_id: int,
+    *,
+    reason: str | None = None,
+    server_id: int | None = None,
+) -> None:
+    await call_with_server_profile(
+        _discord_delete,
+        f"/channels/{channel_id}",
+        reason=reason,
+        server_id=server_id,
+    )
 
 
-async def create_user_dm_channel(user_id: int) -> dict:
-    payload = await _discord_post(
+async def create_user_dm_channel(user_id: int, *, server_id: int | None = None) -> dict:
+    payload = await call_with_server_profile(
+        _discord_post,
         "/users/@me/channels",
         {"recipient_id": str(user_id)},
+        server_id=server_id,
     )
     if isinstance(payload, dict):
         return payload
@@ -462,6 +582,7 @@ async def edit_channel_message(
     content: str | None = None,
     embeds: list[dict] | None = None,
     components: list[dict] | None = None,
+    server_id: int | None = None,
 ) -> dict:
     message_payload: dict = {"allowed_mentions": {"parse": []}}
     if content is not None:
@@ -471,29 +592,42 @@ async def edit_channel_message(
     if components is not None:
         message_payload["components"] = components
 
-    payload = await _discord_patch(
+    payload = await call_with_server_profile(
+        _discord_patch,
         f"/channels/{channel_id}/messages/{message_id}",
         message_payload,
+        server_id=server_id,
     )
     if isinstance(payload, dict):
         return payload
     return {}
 
 
-async def create_direct_message(user_id: int, content: str) -> dict:
-    channel = await create_user_dm_channel(user_id)
+async def create_direct_message(
+    user_id: int,
+    content: str,
+    *,
+    server_id: int | None = None,
+) -> dict:
+    channel = await call_with_server_profile(
+        create_user_dm_channel,
+        user_id,
+        server_id=server_id,
+    )
     channel_id = channel.get("id")
     if channel_id is None:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Discord API did not return a DM channel id",
         )
-    payload = await _discord_post(
+    payload = await call_with_server_profile(
+        _discord_post,
         f"/channels/{channel_id}/messages",
         {
             "content": content,
             "allowed_mentions": {"parse": []},
         },
+        server_id=server_id,
     )
     if isinstance(payload, dict):
         return payload

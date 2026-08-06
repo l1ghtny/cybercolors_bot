@@ -11,6 +11,7 @@ from api.services.discord_guilds import (
     update_channel_role_overwrite,
     update_guild_role_permissions,
 )
+from api.services.discord_profiles import call_with_server_profile
 from src.db.models import ServerSecuritySettings
 
 CATEGORY_CHANNEL_TYPE = 4
@@ -185,11 +186,13 @@ async def apply_newcomer_restriction_template(
             skipped += 1
             continue
         source_allow, source_deny = _role_overwrite(channel, member_role_id)
-        await update_channel_role_overwrite(
+        await call_with_server_profile(
+            update_channel_role_overwrite,
             int(channel_id),
             newcomer_role_id,
             allow=source_allow & ~mask,
             deny=source_deny | mask,
+            server_id=server_id,
         )
         updated += 1
         # Stay well under Discord's global REST request limit on large guilds.

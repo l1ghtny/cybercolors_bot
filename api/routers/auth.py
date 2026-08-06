@@ -26,7 +26,13 @@ from api.services.dashboard_sessions import (
     get_dashboard_session,
     revoke_dashboard_session,
     validate_oauth_state,
-    validate_redirect_uri,
+)
+from api.services.discord_profiles import (
+    DiscordApplicationProfile,
+    invite_url_for_profile,
+    profile_key_for_server_id,
+    profile_for_request,
+    validate_profile_redirect_uri,
 )
 from src.db.database import get_session
 from src.db.models import GlobalUser, Server
@@ -38,13 +44,6 @@ logger = logging.getLogger("uvicorn")
 auth = APIRouter(prefix="/auth", tags=["auth"])
 
 
-test_bot_token = os.getenv("DISCORD_TOKEN_TEST")
-bot_token = os.getenv("DISCORD_BOT_TOKEN") or os.getenv("DISCORD_TOKEN")
-# --- Discord OAuth2 Credentials ---
-DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID")
-DISCORD_TEST_CLIENT_ID = os.getenv("DISCORD_TEST_CLIENT_ID")
-DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET")
-DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI")
 DISCORD_API_BASE_URL = "https://discord.com/api/v10"
 AUTH_GUILDS_CACHE_TTL_SECONDS = int(os.getenv("AUTH_GUILDS_CACHE_TTL_SECONDS", "120"))
 AUTH_GUILDS_CACHE_MAX_ENTRIES = int(os.getenv("AUTH_GUILDS_CACHE_MAX_ENTRIES", "1000"))
@@ -57,7 +56,7 @@ class _UserGuildsCacheEntry:
     expires_at: float
 
 
-_user_guilds_cache: dict[int, _UserGuildsCacheEntry] = {}
+_user_guilds_cache: dict[tuple[str, int], _UserGuildsCacheEntry] = {}
 
 
 @dataclass
@@ -66,11 +65,11 @@ class _BotGuildsCacheEntry:
     expires_at: float
 
 
-_bot_guilds_cache: _BotGuildsCacheEntry | None = None
+_bot_guilds_cache: dict[str, _BotGuildsCacheEntry] = {}
 
 
-def _get_bot_token_for_auth() -> str:
-    token = test_bot_token or bot_token
+def _get_bot_token_for_auth(profile: DiscordApplicationProfile) -> str:
+    token = profile.bot_token
     if not token:
         raise HTTPException(status_code=500, detail="Discord bot token is not configured")
     return token
@@ -90,6 +89,7 @@ def _extract_guild_id(guild: dict) -> int | None:
 async def _get_db_active_bot_guild_ids(
     session: AsyncSession,
     guild_ids: set[int],
+    profile_key: str,
 ) -> set[int]:
     if not guild_ids:
         return set()
@@ -97,6 +97,7 @@ async def _get_db_active_bot_guild_ids(
         await session.exec(
             select(Server.server_id).where(
                 Server.server_id.in_(list(guild_ids)),
+                Server.bot_profile == profile_key,
                 Server.bot_active == True,  # noqa: E712
             )
         )
@@ -104,32 +105,36 @@ async def _get_db_active_bot_guild_ids(
     return {int(server_id) for server_id in rows}
 
 
-async def _has_any_active_bot_guilds(session: AsyncSession) -> bool:
+async def _has_any_active_bot_guilds(session: AsyncSession, profile_key: str) -> bool:
     row = (
         await session.exec(
-            select(Server.server_id).where(Server.bot_active == True).limit(1)  # noqa: E712
+            select(Server.server_id).where(
+                Server.bot_profile == profile_key,
+                Server.bot_active == True,  # noqa: E712
+            ).limit(1)
         )
     ).first()
     return row is not None
 
 
-def _get_cached_user_guilds(user_id: int, refresh: bool) -> list[dict] | None:
+def _get_cached_user_guilds(profile_key: str, user_id: int, refresh: bool) -> list[dict] | None:
     if refresh or AUTH_GUILDS_CACHE_TTL_SECONDS <= 0:
         return None
 
-    cached = _user_guilds_cache.get(user_id)
+    cache_key = (profile_key, user_id)
+    cached = _user_guilds_cache.get(cache_key)
     if not cached:
         return None
 
     if cached.expires_at <= monotonic():
-        _user_guilds_cache.pop(user_id, None)
+        _user_guilds_cache.pop(cache_key, None)
         return None
 
     # Return a shallow copy so downstream code doesn't mutate shared cache state.
     return [dict(item) for item in cached.payload]
 
 
-def _store_cached_user_guilds(user_id: int, payload: list[dict]) -> None:
+def _store_cached_user_guilds(profile_key: str, user_id: int, payload: list[dict]) -> None:
     if AUTH_GUILDS_CACHE_TTL_SECONDS <= 0:
         return
 
@@ -145,27 +150,28 @@ def _store_cached_user_guilds(user_id: int, payload: list[dict]) -> None:
     if len(_user_guilds_cache) >= AUTH_GUILDS_CACHE_MAX_ENTRIES:
         _user_guilds_cache.clear()
 
-    _user_guilds_cache[user_id] = _UserGuildsCacheEntry(
+    _user_guilds_cache[(profile_key, user_id)] = _UserGuildsCacheEntry(
         payload=[dict(item) for item in payload],
         expires_at=now + AUTH_GUILDS_CACHE_TTL_SECONDS,
     )
 
 
-def _get_cached_bot_guild_ids(refresh: bool) -> set[int] | None:
+def _get_cached_bot_guild_ids(profile_key: str, refresh: bool) -> set[int] | None:
     if refresh or BOT_GUILDS_CACHE_TTL_SECONDS <= 0:
         return None
-    if _bot_guilds_cache is None:
+    cached = _bot_guilds_cache.get(profile_key)
+    if cached is None:
         return None
-    if _bot_guilds_cache.expires_at <= monotonic():
+    if cached.expires_at <= monotonic():
+        _bot_guilds_cache.pop(profile_key, None)
         return None
-    return set(_bot_guilds_cache.guild_ids)
+    return set(cached.guild_ids)
 
 
-def _store_cached_bot_guild_ids(guild_ids: set[int]) -> None:
-    global _bot_guilds_cache
+def _store_cached_bot_guild_ids(profile_key: str, guild_ids: set[int]) -> None:
     if BOT_GUILDS_CACHE_TTL_SECONDS <= 0:
         return
-    _bot_guilds_cache = _BotGuildsCacheEntry(
+    _bot_guilds_cache[profile_key] = _BotGuildsCacheEntry(
         guild_ids=set(guild_ids),
         expires_at=monotonic() + BOT_GUILDS_CACHE_TTL_SECONDS,
     )
@@ -215,18 +221,24 @@ async def _get_bot_guild_ids(
     client: httpx.AsyncClient,
     bot_headers: dict[str, str],
     refresh: bool,
+    profile_key: str,
 ) -> set[int]:
-    cached = _get_cached_bot_guild_ids(refresh=refresh)
+    cached = _get_cached_bot_guild_ids(profile_key, refresh=refresh)
     if cached is not None:
         return cached
-    guild_ids = await _fetch_bot_guild_ids(client=client, bot_headers=bot_headers)
-    _store_cached_bot_guild_ids(guild_ids)
+    guild_ids = {
+        guild_id
+        for guild_id in await _fetch_bot_guild_ids(client=client, bot_headers=bot_headers)
+        if profile_key_for_server_id(guild_id) == profile_key
+    }
+    _store_cached_bot_guild_ids(profile_key, guild_ids)
     return guild_ids
 
 
 async def _apply_bot_presence_snapshot(
     session: AsyncSession,
     bot_guild_ids: set[int],
+    profile_key: str,
 ) -> None:
     now = _utc_now()
 
@@ -242,6 +254,7 @@ async def _apply_bot_presence_snapshot(
                 Server(
                     server_id=guild_id,
                     server_name=str(guild_id),
+                    bot_profile=profile_key,
                     bot_active=True,
                     bot_joined_at=now,
                     bot_presence_updated_at=now,
@@ -249,6 +262,7 @@ async def _apply_bot_presence_snapshot(
             )
             continue
 
+        server.bot_profile = profile_key
         server.bot_active = True
         server.bot_left_at = None
         server.bot_presence_updated_at = now
@@ -256,7 +270,14 @@ async def _apply_bot_presence_snapshot(
             server.bot_joined_at = now
         session.add(server)
 
-    currently_active_rows = (await session.exec(select(Server).where(Server.bot_active == True))).all()  # noqa: E712
+    currently_active_rows = (
+        await session.exec(
+            select(Server).where(
+                Server.bot_profile == profile_key,
+                Server.bot_active == True,  # noqa: E712
+            )
+        )
+    ).all()
     for server in currently_active_rows:
         if int(server.server_id) in bot_guild_ids:
             continue
@@ -272,10 +293,19 @@ async def _sync_bot_presence_from_discord(
     client: httpx.AsyncClient,
     bot_headers: dict[str, str],
     session: AsyncSession,
+    profile_key: str,
 ) -> set[int]:
-    bot_guild_ids = await _fetch_bot_guild_ids(client=client, bot_headers=bot_headers)
-    _store_cached_bot_guild_ids(bot_guild_ids)
-    await _apply_bot_presence_snapshot(session=session, bot_guild_ids=bot_guild_ids)
+    bot_guild_ids = {
+        guild_id
+        for guild_id in await _fetch_bot_guild_ids(client=client, bot_headers=bot_headers)
+        if profile_key_for_server_id(guild_id) == profile_key
+    }
+    _store_cached_bot_guild_ids(profile_key, bot_guild_ids)
+    await _apply_bot_presence_snapshot(
+        session=session,
+        bot_guild_ids=bot_guild_ids,
+        profile_key=profile_key,
+    )
     return bot_guild_ids
 
 
@@ -292,17 +322,31 @@ def _to_auth_guild_payload(guild: dict) -> dict:
     return payload
 
 
+@auth.get("/profile")
+async def get_dashboard_profile(request: Request) -> dict[str, str]:
+    profile = profile_for_request(request)
+    return {
+        "key": profile.key,
+        "display_name": profile.display_name,
+        "frontend_origin": profile.frontend_origin,
+        "invite_url": invite_url_for_profile(profile),
+    }
+
+
 @auth.get("/authorize", response_model=AuthAuthorizeResponseModel)
 async def authorize(
+    request: Request,
     response: Response,
     redirect_uri: str | None = Query(default=None),
     command_management: bool = Query(default=False),
 ):
-    resolved_redirect_uri = validate_redirect_uri(redirect_uri)
+    profile = profile_for_request(request)
+    resolved_redirect_uri = validate_profile_redirect_uri(profile, redirect_uri)
     authorize_url, state_token = build_discord_authorize_url(
         response,
         redirect_uri=resolved_redirect_uri,
         command_management=command_management,
+        profile=profile,
     )
     return AuthAuthorizeResponseModel(authorize_url=authorize_url, state=state_token)
 
@@ -314,14 +358,15 @@ async def login(
     response: Response,
     session: AsyncSession = Depends(get_session),
 ):
+    profile = profile_for_request(request)
     validate_oauth_state(request, response, body.state)
-    redirect_uri = validate_redirect_uri(body.redirect_uri)
-    if not DISCORD_CLIENT_ID or not DISCORD_CLIENT_SECRET:
+    redirect_uri = validate_profile_redirect_uri(profile, body.redirect_uri)
+    if not profile.client_id or not profile.client_secret:
         raise HTTPException(status_code=500, detail="Discord OAuth credentials are not configured")
 
     token_data = {
-        "client_id": DISCORD_CLIENT_ID,
-        "client_secret": DISCORD_CLIENT_SECRET,
+        "client_id": profile.client_id,
+        "client_secret": profile.client_secret,
         "grant_type": "authorization_code",
         "code": body.code,
         "redirect_uri": redirect_uri,
@@ -371,6 +416,7 @@ async def login(
         response,
         discord_user_id=discord_id,
         token_payload=token_json,
+        application_profile=profile.key,
     )
     # The session cookie becomes usable as soon as this response reaches the
     # browser. Commit the matching database row first so an immediate /auth/me
@@ -416,6 +462,7 @@ async def logout(
 
 @auth.get("/guilds", response_model=list[AuthGuildModel])
 async def get_user_guilds(
+    request: Request,
     access_token: str = Depends(get_bearer_access_token),
     current_user_id: int = Depends(get_current_discord_user_id),
     session: AsyncSession = Depends(get_session),
@@ -427,13 +474,14 @@ async def get_user_guilds(
     - the bot is currently present;
     - and the user is owner/admin or explicitly allowlisted for dashboard access.
     """
+    profile = profile_for_request(request)
     headers = {"Authorization": f"Bearer {access_token}"}
-    bot_headers = {"Authorization": f"Bot {_get_bot_token_for_auth()}"}
+    bot_headers = {"Authorization": f"Bot {_get_bot_token_for_auth(profile)}"}
     request_started_at = monotonic()
 
     async with httpx.AsyncClient() as client:
         try:
-            cached_payload = _get_cached_user_guilds(current_user_id, refresh=refresh)
+            cached_payload = _get_cached_user_guilds(profile.key, current_user_id, refresh=refresh)
             if cached_payload is not None:
                 cached_guild_ids = {
                     guild_id
@@ -441,7 +489,9 @@ async def get_user_guilds(
                     for guild_id in [_extract_guild_id(guild)]
                     if guild_id is not None
                 }
-                active_cached_ids = await _get_db_active_bot_guild_ids(session, cached_guild_ids)
+                active_cached_ids = await _get_db_active_bot_guild_ids(
+                    session, cached_guild_ids, profile.key
+                )
                 filtered_cached_payload = [
                     guild
                     for guild in cached_payload
@@ -449,7 +499,7 @@ async def get_user_guilds(
                 ]
 
                 if len(filtered_cached_payload) != len(cached_payload):
-                    _store_cached_user_guilds(current_user_id, filtered_cached_payload)
+                    _store_cached_user_guilds(profile.key, current_user_id, filtered_cached_payload)
 
                 logger.info(
                     "auth.guilds cache hit user=%s guilds=%s filtered=%s refresh=%s duration_ms=%s",
@@ -476,18 +526,30 @@ async def get_user_guilds(
                     client=client,
                     bot_headers=bot_headers,
                     session=session,
+                    profile_key=profile.key,
                 )
                 active_bot_guild_ids = active_bot_guild_ids.intersection(user_guild_ids)
             else:
-                active_bot_guild_ids = await _get_db_active_bot_guild_ids(session, user_guild_ids)
-                if not active_bot_guild_ids and user_guild_ids and not await _has_any_active_bot_guilds(session):
+                active_bot_guild_ids = await _get_db_active_bot_guild_ids(
+                    session, user_guild_ids, profile.key
+                )
+                if (
+                    not active_bot_guild_ids
+                    and user_guild_ids
+                    and not await _has_any_active_bot_guilds(session, profile.key)
+                ):
                     fallback_bot_guild_ids = await _get_bot_guild_ids(
                         client=client,
                         bot_headers=bot_headers,
                         refresh=False,
+                        profile_key=profile.key,
                     )
                     if fallback_bot_guild_ids:
-                        await _apply_bot_presence_snapshot(session=session, bot_guild_ids=fallback_bot_guild_ids)
+                        await _apply_bot_presence_snapshot(
+                            session=session,
+                            bot_guild_ids=fallback_bot_guild_ids,
+                            profile_key=profile.key,
+                        )
                         active_bot_guild_ids = fallback_bot_guild_ids.intersection(user_guild_ids)
                         logger.info(
                             "auth.guilds bootstrapped bot presence from Discord snapshot guilds=%s",
@@ -560,7 +622,7 @@ async def get_user_guilds(
                 if str(guild.get("id", "")).isdigit() and int(guild["id"]) in authorized_guild_ids
             ]
 
-            _store_cached_user_guilds(current_user_id, authorized_guilds)
+            _store_cached_user_guilds(profile.key, current_user_id, authorized_guilds)
             logger.info(
                 "auth.guilds cache miss user=%s refresh=%s user_guilds=%s bot_active_overlap=%s candidates=%s authorized=%s duration_ms=%s",
                 current_user_id,
@@ -577,4 +639,3 @@ async def get_user_guilds(
             # Handle cases where the token might be expired or invalid
             raise HTTPException(status_code=e.response.status_code,
                                 detail=f"Error fetching guilds from Discord: {e.response.text}")
-

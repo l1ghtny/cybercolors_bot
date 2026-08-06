@@ -14,6 +14,7 @@ from api.services.discord_guilds import (
     fetch_channel,
     fetch_guild_roles,
 )
+from api.services.discord_profiles import call_with_server_profile
 from api.services.moderation_core import utc_now
 from src.db.models import Server, ServerLocalizationSettings, ServerModerationSettings
 from src.modules.localization.service import normalize_locale_code, tr
@@ -213,9 +214,11 @@ async def check_mod_log_setting(
             )
         localization_settings = await session.get(ServerLocalizationSettings, server_id)
         locale = normalize_locale_code(localization_settings.locale_code if localization_settings else None)
-        await create_channel_message(
+        await call_with_server_profile(
+            create_channel_message,
             channel_id=settings.mod_log_channel_id,
             content=tr(locale, "settings.mod_log_test_message"),
+            server_id=server_id,
         )
     except HTTPException as exc:
         return ServerModerationSettingsTestResultModel(ok=False, error=str(exc.detail))

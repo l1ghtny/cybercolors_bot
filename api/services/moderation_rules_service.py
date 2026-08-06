@@ -23,6 +23,7 @@ from api.models.moderation_rules import (
     ParsedModerationRuleModel,
 )
 from api.services.discord_guilds import fetch_channel_message
+from api.services.discord_profiles import call_with_server_profile
 from api.services.moderation_core import build_actor, utc_now
 from api.services.moderation_rule_llm_parser import parse_rules_from_text_with_llm
 from api.services.moderation_rule_sync_state import ModerationRuleSyncState, ModerationRuleSyncStatus
@@ -599,7 +600,12 @@ async def import_rules_from_messages(
     for ref in message_refs:
         channel_id = int(ref.channel_id)
         message_id = int(ref.message_id)
-        message = await fetch_channel_message(channel_id=channel_id, message_id=message_id)
+        message = await call_with_server_profile(
+            fetch_channel_message,
+            channel_id=channel_id,
+            message_id=message_id,
+            server_id=server_id,
+        )
         message_guild_id = message.get("guild_id")
         if message_guild_id is not None and str(message_guild_id).isdigit() and int(message_guild_id) != server_id:
             raise HTTPException(
@@ -670,7 +676,12 @@ async def import_rules_from_message(
     created_by_user_id: int | None,
     replace_existing: bool,
 ) -> list[ModerationRule]:
-    message = await fetch_channel_message(channel_id=channel_id, message_id=message_id)
+    message = await call_with_server_profile(
+        fetch_channel_message,
+        channel_id=channel_id,
+        message_id=message_id,
+        server_id=server_id,
+    )
     message_guild_id = message.get("guild_id")
     if message_guild_id is not None and str(message_guild_id).isdigit():
         if int(message_guild_id) != server_id:

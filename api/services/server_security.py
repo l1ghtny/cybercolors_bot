@@ -27,6 +27,7 @@ from api.services.discord_guilds import (
     update_guild_incident_actions,
     update_channel_slowmode,
 )
+from api.services.discord_profiles import call_with_server_profile
 from api.services.moderation_core import utc_now
 from api.services.newcomer_probation import (
     apply_newcomer_restriction_template,
@@ -469,7 +470,12 @@ async def apply_lockdown_state(
     try:
         if body.enabled:
             for channel_id, seconds in requested_slowmodes.items():
-                await update_channel_slowmode(int(channel_id), seconds)
+                await call_with_server_profile(
+                    update_channel_slowmode,
+                    int(channel_id),
+                    seconds,
+                    server_id=server_id,
+                )
                 applied_channels.append(channel_id)
             settings.lockdown_slowmode_previous = previous
             settings.lockdown_slowmode_channel_ids = requested_channel_ids
@@ -483,7 +489,12 @@ async def apply_lockdown_state(
             settings.role_mutations_paused = body.pause_role_mutations
         else:
             for channel_id, previous_seconds in (settings.lockdown_slowmode_previous or {}).items():
-                await update_channel_slowmode(int(channel_id), int(previous_seconds))
+                await call_with_server_profile(
+                    update_channel_slowmode,
+                    int(channel_id),
+                    int(previous_seconds),
+                    server_id=server_id,
+                )
             settings.lockdown_slowmode_previous = {}
             settings.lockdown_slowmode_channel_ids = []
             settings.lockdown_slowmode_seconds = None
@@ -492,7 +503,12 @@ async def apply_lockdown_state(
     except Exception:
         if body.enabled:
             for channel_id in reversed(applied_channels):
-                await update_channel_slowmode(int(channel_id), int(previous.get(channel_id, 0)))
+                await call_with_server_profile(
+                    update_channel_slowmode,
+                    int(channel_id),
+                    int(previous.get(channel_id, 0)),
+                    server_id=server_id,
+                )
             if settings.normal_permissions is not None:
                 await update_guild_role_permissions(
                     server_id=server_id,

@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.services.discord_guilds import fetch_channel
+from api.services.discord_profiles import get_profile, profile_key_for_server_id
 from api.services.moderation_rules_service import list_rules, to_rule_read_model
 from api.services.moderation_users_service import build_user_profile_card
 from src.db.models import Server, ServerAISettings
@@ -111,6 +112,7 @@ async def get_server_answer_context(session: AsyncSession, server_id: int) -> di
     server = await session.get(Server, server_id)
     settings = await session.get(ServerAISettings, server_id)
     server_name = server.server_name if server is not None else str(server_id)
+    profile_key = server.bot_profile if server is not None else profile_key_for_server_id(server_id)
     return {
         "server_name": server_name,
         "server_profile": {
@@ -118,7 +120,7 @@ async def get_server_answer_context(session: AsyncSession, server_id: int) -> di
             "configured_brief": settings.server_brief if settings is not None else None,
         },
         "bot_persona": {
-            "product_name": "CyberColors",
+            "product_name": get_profile(profile_key).display_name,
             "role": "Discord server assistant and moderation helper",
             "configured_persona": settings.answer_persona if settings is not None else None,
         },

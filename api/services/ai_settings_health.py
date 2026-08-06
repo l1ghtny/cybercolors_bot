@@ -12,6 +12,7 @@ from api.services.discord_guilds import (
     fetch_guild_member,
     fetch_guild_roles,
 )
+from api.services.discord_profiles import call_with_server_profile
 from src.db.models import ServerModerationSettings
 
 ADMINISTRATOR = 1 << 3
@@ -273,7 +274,7 @@ async def build_ai_settings_health(session: AsyncSession, server_id: int) -> Ser
 
     bot_user_id = None
     bot_role_ids: set[int] = set()
-    bot_user = await fetch_current_bot_user()
+    bot_user = await call_with_server_profile(fetch_current_bot_user, server_id=server_id)
     raw_bot_user_id = bot_user.get("id")
     if raw_bot_user_id is not None and str(raw_bot_user_id).isdigit():
         bot_user_id = int(raw_bot_user_id)

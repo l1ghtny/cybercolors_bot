@@ -17,6 +17,7 @@ from api.models.server_temp_voice import (
     ServerTempVoiceSettingsUpdateModel,
 )
 from api.services.discord_guilds import create_guild_voice_channel, delete_channel, fetch_guild_channels
+from api.services.discord_profiles import call_with_server_profile
 from api.services.moderation_core import utc_now
 from src.db.models import (
     AIModerationDecision,
@@ -386,9 +387,11 @@ async def delete_active_temp_voice_channel(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Temporary voice channel is already archived")
 
     try:
-        await delete_channel(
+        await call_with_server_profile(
+            delete_channel,
             temp_log.channel_id,
             reason=f"Manual temporary voice cleanup from dashboard by {actor_user_id}",
+            server_id=server_id,
         )
     except HTTPException as error:
         if error.status_code != status.HTTP_404_NOT_FOUND:

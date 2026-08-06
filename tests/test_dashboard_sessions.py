@@ -30,13 +30,16 @@ class FakeSession:
         self.records.pop(value.session_token_hash, None)
 
 
-def _request_with_cookie(name: str, value: str) -> Request:
+def _request_with_cookie(name: str, value: str, *, host: str = "testserver") -> Request:
     return Request(
         {
             "type": "http",
             "method": "GET",
             "path": "/",
-            "headers": [(b"cookie", f"{name}={value}".encode("ascii"))],
+            "headers": [
+                (b"host", host.encode("ascii")),
+                (b"cookie", f"{name}={value}".encode("ascii")),
+            ],
         }
     )
 
@@ -172,14 +175,9 @@ def test_login_commits_dashboard_session_before_returning(monkeypatch):
     async def create_session(*_args, **_kwargs):
         events.append("create_session")
 
-    monkeypatch.setattr(auth_router, "DISCORD_CLIENT_ID", "client-id")
-    monkeypatch.setattr(auth_router, "DISCORD_CLIENT_SECRET", "client-secret")
+    monkeypatch.setenv("CYBERCOLORS_DISCORD_CLIENT_ID", "client-id")
+    monkeypatch.setenv("CYBERCOLORS_DISCORD_CLIENT_SECRET", "client-secret")
     monkeypatch.setattr(auth_router, "validate_oauth_state", lambda *_args: None)
-    monkeypatch.setattr(
-        auth_router,
-        "validate_redirect_uri",
-        lambda _redirect_uri: "https://cybercolors.modral.app/callback",
-    )
     monkeypatch.setattr(auth_router.httpx, "AsyncClient", lambda **_kwargs: StubHttpClient())
     monkeypatch.setattr(auth_router, "create_dashboard_session", create_session)
 
@@ -190,7 +188,11 @@ def test_login_commits_dashboard_session_before_returning(monkeypatch):
                 state="oauth-state",
                 redirect_uri="https://cybercolors.modral.app/callback",
             ),
-            _request_with_cookie(dashboard_sessions.OAUTH_STATE_COOKIE_NAME, "oauth-state"),
+            _request_with_cookie(
+                dashboard_sessions.OAUTH_STATE_COOKIE_NAME,
+                "oauth-state",
+                host="cybercolors-api.modral.app",
+            ),
             Response(),
             LoginSession(),
         )

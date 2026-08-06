@@ -24,6 +24,7 @@ from api.models.ai_moderation import (
 )
 from api.models.moderation_actions import ModerationActionCreate
 from api.services.discord_guilds import edit_channel_message, fetch_channel_message
+from api.services.discord_profiles import call_with_server_profile
 from api.services.monitoring_service import upsert_monitored_user
 from api.services.moderation_actions_service import create_action
 from api.services.moderation_core import build_optional_actor, utc_now, to_moderation_history
@@ -506,9 +507,11 @@ async def _publish_ai_review_resolution(
                 action_number = linked_action.action_number
         original_embeds: list[dict] = []
         try:
-            message = await fetch_channel_message(
+            message = await call_with_server_profile(
+                fetch_channel_message,
                 channel_id=decision.review_channel_id,
                 message_id=decision.review_message_id,
+                server_id=decision.server_id,
             )
             embeds = message.get("embeds") if isinstance(message, dict) else None
             if isinstance(embeds, list):
@@ -516,9 +519,11 @@ async def _publish_ai_review_resolution(
         except Exception:
             original_embeds = []
 
-        await edit_channel_message(
+        await call_with_server_profile(
+            edit_channel_message,
             channel_id=decision.review_channel_id,
             message_id=decision.review_message_id,
+            server_id=decision.server_id,
             embeds=[
                 *original_embeds,
                 _ai_review_resolution_embed_payload(

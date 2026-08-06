@@ -1,11 +1,10 @@
-import os
-
 import discord
 from discord import app_commands
 from fastapi import HTTPException, status
 
 from api.models.bot_messages import BotMessageCreateModel
 from api.services.bot_messages import send_bot_message
+from api.services.discord_profiles import get_profile, profile_key_for_server_id
 from src.db.database import get_async_session
 from src.modules.localization.service import get_server_locale, tr
 from src.modules.moderation.bot_rbac import ensure_bot_permission
@@ -22,10 +21,7 @@ CYBERCOLORS_REPLY_TRANSLATIONS = {
 
 
 def bot_display_name(server_id: int) -> str:
-    branded_guild_id = os.getenv("TEST_GUILD_ID", "").strip()
-    if branded_guild_id and str(server_id) == branded_guild_id:
-        return CYBERCOLORS_BOT_NAME
-    return DEFAULT_BOT_NAME
+    return get_profile(profile_key_for_server_id(server_id)).display_name
 
 
 class StaticCommandTranslator(app_commands.Translator):
@@ -207,3 +203,7 @@ reply_as_cybercolors_ctx = app_commands.ContextMenu(
 )
 reply_as_cybercolors_ctx.default_permissions = discord.Permissions(moderate_members=True)
 reply_as_cybercolors_ctx.guild_only = True
+
+
+def reply_context_command_for_profile(profile_key: str) -> app_commands.ContextMenu:
+    return reply_as_cybercolors_ctx if profile_key == "cybercolors" else reply_as_bot_ctx

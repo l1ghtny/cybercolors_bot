@@ -59,6 +59,9 @@ spec:
                 name: cybercolors-app-secrets
                 optional: true
             - secretRef:
+                name: modral-discord-credentials
+                optional: true
+            - secretRef:
                 name: cybercolors-evidence-storage
             - secretRef:
                 name: cybercolors-scheduled-storage
