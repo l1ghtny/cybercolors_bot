@@ -26,7 +26,7 @@ Then open `http://localhost:3000`. Under **Dashboards**, use:
 - **CyberColors Logs** for the bot, backend, workers, and database logs in the `cybercolors` namespace.
 - **Cluster Log Overview** for cross-namespace volume, errors, and the noisiest workloads.
 - **Platform Overview** for node health, cluster CPU and memory, filesystem and PVC capacity, scrape health, alerts, and restart offenders.
-- **CyberColors Runtime** for pod readiness, PostgreSQL availability, per-pod CPU, memory, throttling, network throughput, and storage.
+- **Modral / CyberColors Runtime** for both Discord gateway states, pod readiness, PostgreSQL availability, per-pod CPU, memory, throttling, network throughput, and storage.
 - **Observability Health** for Prometheus ingestion and rules, Loki ingestion and canary latency, Alloy configuration health, targets, alerts, and observability PVCs.
 - The chart-provided **Loki** dashboards for storage and query-engine internals.
 
@@ -46,11 +46,10 @@ password merely to make it match the secret.
 
 The dashboards are source-controlled and intentionally read-only. Make lasting changes in the JSON files under `deploy/k8s/observability/dashboards` and apply the Kustomization. Use **Save as** for temporary personal experiments.
 
-The CyberColors dashboard currently measures workload-level performance. HTTP
-request latency, Discord event latency, queue depth, and business-operation
-rates require application metrics that the services do not expose yet. Sentry
-continues to provide application error tracing; add OpenTelemetry or native
-Prometheus instrumentation before treating Grafana as an application APM.
+The runtime dashboard combines workload-level performance with the connection
+state reported by each Discord gateway. HTTP request latency, queue depth, and
+selected AI moderation rates are also available as native Prometheus metrics;
+Sentry continues to provide application error tracing.
 
 ## Grafana MCP for ChatGPT
 

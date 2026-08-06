@@ -138,6 +138,8 @@ configure_sentry("discord-bot")
 # Each gateway Deployment selects exactly one Discord application profile.
 BOT_PROFILE = runtime_bot_profile_key()
 DISCORD_TOKEN = get_profile(BOT_PROFILE).bot_token
+DISCORD_GATEWAY_STATUS = DISCORD_GATEWAY_CONNECTED.labels(bot_profile=BOT_PROFILE)
+DISCORD_GATEWAY_STATUS.set(0)
 
 
 def runtime_owns_guild(guild_id: int) -> bool:
@@ -247,7 +249,7 @@ class Aclient(discord.AutoShardedClient):
     # commands local sync
     async def on_ready(self):
         await self.wait_until_ready()
-        DISCORD_GATEWAY_CONNECTED.set(1)
+        DISCORD_GATEWAY_STATUS.set(1)
         if not self.synced:  # check if slash commands have been synced
             await tree.set_translator(StaticCommandTranslator())
             synced = await sync_application_commands(
@@ -279,10 +281,10 @@ class Aclient(discord.AutoShardedClient):
         logger.info(f"We have logged in as {self.user}.")
 
     async def on_disconnect(self):
-        DISCORD_GATEWAY_CONNECTED.set(0)
+        DISCORD_GATEWAY_STATUS.set(0)
 
     async def on_resumed(self):
-        DISCORD_GATEWAY_CONNECTED.set(1)
+        DISCORD_GATEWAY_STATUS.set(1)
 
 
 client = Aclient()
