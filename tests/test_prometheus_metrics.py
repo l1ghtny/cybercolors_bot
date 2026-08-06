@@ -92,3 +92,17 @@ def test_runtime_dashboard_tracks_both_discord_gateways():
     assert "max by (bot_profile)" in history_query
     assert 'bot_profile=~"cybercolors|modral"' in history_query
     assert "(cybercolors|modral)-.*" in panels["Pod readiness"]["targets"][0]["expr"]
+
+
+def test_teamcity_embeddings_hash_tracks_metrics_in_build_and_deploy():
+    pipeline_path = Path(__file__).resolve().parents[1] / ".teamcity.cybercolors.yml"
+    pipeline = pipeline_path.read_text(encoding="utf-8")
+    hash_blocks = [
+        block.split(')"', 1)[0]
+        for block in pipeline.split('EMBEDDINGS_HASH="$(')[1:]
+    ]
+
+    assert len(hash_blocks) == 2
+    assert all(
+        "src/modules/observability/prometheus.py" in block for block in hash_blocks
+    )
