@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -23,6 +24,16 @@ TRANSCRIBE_GPU = os.getenv("MODAL_WHISPER_GPU") or "T4"
 TRANSCRIBE_MAX_CONTAINERS = int(os.getenv("MODAL_WHISPER_MAX_CONTAINERS") or "1")
 TRANSCRIBE_SCALEDOWN_WINDOW = int(os.getenv("MODAL_WHISPER_SCALEDOWN_WINDOW") or "30")
 TRANSCRIBE_LANGUAGE = os.getenv("WHISPER_LANGUAGE") or None
+VAD_SAMPLE_RATE = 16_000
+VAD_LEADING_PADDING_SECONDS = 0.25
+VAD_TRAILING_PADDING_SECONDS = 1.0
+VAD_MIN_TRIM_SECONDS = 0.5
+
+_TRAILING_SUBTITLE_CREDITS_RE = re.compile(
+    r"\s*Редактор\s+субтитров\s+[А-ЯЁA-Z]\.?\s*[А-ЯЁA-Z][А-ЯЁа-яёA-Za-z-]+"
+    r"\s+Корректор\s+[А-ЯЁA-Z]\.?\s*[А-ЯЁA-Z][А-ЯЁа-яёA-Za-z-]+\s*[.!]?\s*$",
+    re.IGNORECASE,
+)
 
 image = (
     modal.Image.debian_slim(python_version="3.12")
@@ -34,6 +45,7 @@ image = (
         "accelerate>=0.26.0",
         "hf-transfer>=0.1.8",
         "librosa>=0.10.0",
+        "silero-vad==6.2.1",
         "soundfile>=0.12.1",
         "torch>=2.2.0",
         "transformers==5.14.1",
@@ -75,6 +87,7 @@ class YouTubeWhisperTranscriber:
     @modal.enter()
     def load_model(self) -> None:
         import torch
+        from silero_vad import load_silero_vad
         from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
 
         torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
@@ -101,6 +114,7 @@ class YouTubeWhisperTranscriber:
             torch_dtype=torch_dtype,
             device=device,
         )
+        self.vad_model = load_silero_vad()
 
     @modal.method()
     def transcribe_audio(
@@ -131,25 +145,33 @@ class YouTubeWhisperTranscriber:
                 youtube_url=youtube_url,
                 max_audio_bytes=max_audio_bytes,
             )
+            audio_input, audio_preprocessing = _prepare_audio_for_transcription(
+                audio_path=audio_path,
+                vad_model=self.vad_model,
+            )
             result = _run_whisper_pipeline(
                 pipeline=self.pipeline,
-                audio_path=audio_path,
+                audio_path=audio_input,
                 generate_kwargs=generate_kwargs,
             )
             audio_file_name = audio_path.name
             audio_size_bytes = audio_path.stat().st_size
 
         chunks = result.get("chunks") or []
+        timestamp_offset = float(audio_preprocessing.get("speech_start_seconds") or 0.0)
         segments = [
             {
-                "start": _timestamp_start(chunk.get("timestamp")),
-                "end": _timestamp_end(chunk.get("timestamp")),
+                "start": _offset_timestamp(_timestamp_start(chunk.get("timestamp")), timestamp_offset),
+                "end": _offset_timestamp(_timestamp_end(chunk.get("timestamp")), timestamp_offset),
                 "text": str(chunk.get("text") or "").strip(),
             }
             for chunk in chunks
             if str(chunk.get("text") or "").strip()
         ]
-        text = str(result.get("text") or " ".join(segment["text"] for segment in segments)).strip()
+        segments = _strip_trailing_hallucination_from_segments(segments)
+        text = _strip_trailing_transcription_hallucination(
+            str(result.get("text") or " ".join(segment["text"] for segment in segments)).strip()
+        )
         return {
             "text": text,
             "language": _detected_language(result, selected_language=selected_language),
@@ -161,13 +183,14 @@ class YouTubeWhisperTranscriber:
             "metadata": metadata or {},
             "segments_count": len(segments),
             "segments": segments,
+            "audio_preprocessing": audio_preprocessing,
         }
 
 
 def _run_whisper_pipeline(
     *,
     pipeline: Any,
-    audio_path: Path,
+    audio_path: Any,
     generate_kwargs: dict[str, Any],
 ) -> dict[str, Any]:
     """Use Whisper's native sequential long-form generation.
@@ -177,12 +200,97 @@ def _run_whisper_pipeline(
     complete, untruncated features to ``model.generate`` and uses Whisper's
     timestamp-based long-form algorithm.
     """
+    pipeline_input = str(audio_path) if isinstance(audio_path, Path) else audio_path
     return pipeline(
-        str(audio_path),
+        pipeline_input,
         return_timestamps=True,
         return_language=True,
         generate_kwargs=generate_kwargs,
     )
+
+
+def _prepare_audio_for_transcription(*, audio_path: Path, vad_model: Any) -> tuple[Any, dict[str, Any]]:
+    import librosa
+    import torch
+    from silero_vad import get_speech_timestamps
+
+    try:
+        waveform, _sampling_rate = librosa.load(str(audio_path), sr=VAD_SAMPLE_RATE, mono=True)
+        total_samples = len(waveform)
+        speech_timestamps = get_speech_timestamps(
+            torch.from_numpy(waveform),
+            vad_model,
+            sampling_rate=VAD_SAMPLE_RATE,
+            min_silence_duration_ms=500,
+            speech_pad_ms=250,
+        )
+        trim_start, trim_end = _speech_trim_bounds(
+            speech_timestamps,
+            total_samples=total_samples,
+            sampling_rate=VAD_SAMPLE_RATE,
+        )
+    except Exception as exc:
+        logger.exception("modal_audio_vad_failed audio_file=%s", audio_path.name)
+        return audio_path, {"vad_applied": False, "fallback_reason": type(exc).__name__}
+
+    duration_seconds = total_samples / VAD_SAMPLE_RATE if total_samples else 0.0
+    speech_start_seconds = trim_start / VAD_SAMPLE_RATE
+    speech_end_seconds = trim_end / VAD_SAMPLE_RATE
+    leading_trim_seconds = speech_start_seconds
+    trailing_trim_seconds = max(0.0, duration_seconds - speech_end_seconds)
+    preprocessing = {
+        "vad_applied": bool(speech_timestamps),
+        "audio_duration_seconds": round(duration_seconds, 3),
+        "speech_start_seconds": round(speech_start_seconds, 3),
+        "speech_end_seconds": round(speech_end_seconds, 3),
+        "leading_trim_seconds": round(leading_trim_seconds, 3),
+        "trailing_trim_seconds": round(trailing_trim_seconds, 3),
+    }
+    if not speech_timestamps or max(leading_trim_seconds, trailing_trim_seconds) < VAD_MIN_TRIM_SECONDS:
+        return audio_path, preprocessing
+
+    logger.info(
+        "modal_audio_vad_trimmed audio_file=%s duration_seconds=%.3f leading_trim_seconds=%.3f trailing_trim_seconds=%.3f",
+        audio_path.name,
+        duration_seconds,
+        leading_trim_seconds,
+        trailing_trim_seconds,
+    )
+    return {"array": waveform[trim_start:trim_end], "sampling_rate": VAD_SAMPLE_RATE}, preprocessing
+
+
+def _speech_trim_bounds(
+    speech_timestamps: list[dict[str, Any]],
+    *,
+    total_samples: int,
+    sampling_rate: int,
+) -> tuple[int, int]:
+    if not speech_timestamps or total_samples <= 0:
+        return 0, max(0, total_samples)
+
+    leading_padding = round(VAD_LEADING_PADDING_SECONDS * sampling_rate)
+    trailing_padding = round(VAD_TRAILING_PADDING_SECONDS * sampling_rate)
+    first_speech_sample = int(speech_timestamps[0]["start"])
+    last_speech_sample = int(speech_timestamps[-1]["end"])
+    return (
+        max(0, first_speech_sample - leading_padding),
+        min(total_samples, last_speech_sample + trailing_padding),
+    )
+
+
+def _strip_trailing_transcription_hallucination(text: str) -> str:
+    return _TRAILING_SUBTITLE_CREDITS_RE.sub("", text or "").strip()
+
+
+def _strip_trailing_hallucination_from_segments(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not segments:
+        return segments
+    cleaned_text = _strip_trailing_transcription_hallucination(str(segments[-1].get("text") or ""))
+    if cleaned_text == str(segments[-1].get("text") or "").strip():
+        return segments
+    if cleaned_text:
+        return [*segments[:-1], {**segments[-1], "text": cleaned_text}]
+    return segments[:-1]
 
 
 def _detected_language(result: dict[str, Any], *, selected_language: str | None) -> str | None:
@@ -334,3 +442,7 @@ def _timestamp_end(timestamp: Any) -> float | None:
         value = timestamp[1]
         return float(value) if value is not None else None
     return None
+
+
+def _offset_timestamp(value: float | None, offset: float) -> float | None:
+    return value + offset if value is not None else None

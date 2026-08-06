@@ -285,6 +285,9 @@ async def update_knowledge_source(
     if source.status == "deleted":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Deleted knowledge sources cannot be updated")
 
+    was_indexed = source.status == "ready" or source.indexed_at is not None
+    title_changed = body.title is not None and body.title != source.title
+
     next_source_type = body.source_type or source.source_type
     next_source_url = body.source_url if "source_url" in body.model_fields_set else source.source_url
     if next_source_type == "youtube" and (
@@ -300,10 +303,12 @@ async def update_knowledge_source(
                 detail={"code": exc.code, "message": str(exc)},
             ) from exc
 
+    source_type_changed = body.source_type is not None and body.source_type != source.source_type
+    source_url_changed = "source_url" in body.model_fields_set and next_source_url != source.source_url
+    content_changed = "content_text" in body.model_fields_set and body.content_text != source.content_text
+
     if body.source_type is not None:
         source.source_type = body.source_type
-        if source.status == "ready":
-            source.status = "draft"
     if body.subject_type is not None:
         source.subject_type = body.subject_type
     if "subject_user_id" in body.model_fields_set:
@@ -325,15 +330,32 @@ async def update_knowledge_source(
         source.title = body.title
     if "content_text" in body.model_fields_set:
         source.content_text = body.content_text
-        if source.status == "ready":
-            source.status = "draft"
     if "source_url" in body.model_fields_set or body.source_type == "youtube":
         source.source_url = next_source_url
     if body.metadata_json is not None:
         source.metadata_json = body.metadata_json
+
+    reindex_job_type: str | None = None
+    if body.status is None and was_indexed:
+        if source_type_changed or source_url_changed:
+            reindex_job_type = "reindex_source"
+        elif title_changed or content_changed:
+            reindex_job_type = "reindex_content"
+    if reindex_job_type is not None:
+        source.status = "queued"
+        source.error_code = None
+        source.error_message = None
+
     source.updated_at = utcnow_utc_tz()
     session.add(source)
     await session.flush()
+    if reindex_job_type is not None:
+        await queue_knowledge_index_job(
+            session,
+            server_id=server_id,
+            source_id=source.id,
+            job_type=reindex_job_type,
+        )
     await session.refresh(source)
     counts = await _chunk_counts(session, [source.id])
     return _source_to_model(source, chunk_count=counts.get(source.id, 0))

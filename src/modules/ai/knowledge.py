@@ -255,7 +255,7 @@ async def process_knowledge_index_job_with_embedder(
     embedder: KnowledgeEmbedder | None,
 ) -> None:
     now = utcnow_utc_tz()
-    if job.job_type not in {"index_source", "reindex_source"} or job.source_id is None:
+    if job.job_type not in {"index_source", "reindex_source", "reindex_content"} or job.source_id is None:
         await _mark_job_failed(session, job, f"Unsupported knowledge index job: {job.job_type}")
         return
 
@@ -269,7 +269,10 @@ async def process_knowledge_index_job_with_embedder(
     await session.flush()
 
     try:
-        index_text = await _prepare_source_index_text(source)
+        if job.job_type == "reindex_content":
+            index_text = knowledge_source_index_text(source)
+        else:
+            index_text = await _prepare_source_index_text(source)
     except KnowledgeImportError as exc:
         retry = exc.code in RETRYABLE_KNOWLEDGE_IMPORT_ERRORS
         source.error_code = exc.code

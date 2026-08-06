@@ -21,8 +21,16 @@ from api.services.ai_knowledge import (
     update_knowledge_source,
 )
 from src.db.database import engine, get_async_session
-from src.db.models import AIKnowledgeChunk, AIKnowledgeSource, GlobalUser, Server
+from src.db.models import (
+    AIKnowledgeChunk,
+    AIKnowledgeIndexJob,
+    AIKnowledgeSource,
+    GlobalUser,
+    Server,
+    utcnow_utc_tz,
+)
 from src.modules.ai import embeddings as embeddings_module
+from src.modules.ai import knowledge as knowledge_module
 from src.modules.ai.knowledge import (
     KNOWLEDGE_EMBEDDING_DIMENSIONS,
     RETRYABLE_KNOWLEDGE_IMPORT_ERRORS,
@@ -415,6 +423,71 @@ async def _knowledge_api_service_scenario() -> None:
 
 def test_knowledge_api_service_crud_and_reindex_queue():
     asyncio.run(_knowledge_api_service_scenario())
+
+
+async def _manual_youtube_edit_reindex_scenario(monkeypatch) -> None:
+    await engine.dispose()
+    async with engine.begin() as conn:
+        await ensure_pgvector_or_skip(conn)
+        await conn.run_sync(SQLModel.metadata.create_all)
+
+    server_id = _make_discord_id()
+    async with get_async_session() as session:
+        session.add(Server(server_id=server_id, server_name="Manual edit test"))
+        source = AIKnowledgeSource(
+            server_id=server_id,
+            source_type="youtube",
+            subject_type="server",
+            status="ready",
+            visibility="public_answer",
+            title="Pilot video",
+            content_text="Original imported transcript.",
+            source_url="https://www.youtube.com/watch?v=IzZusnvGLv8",
+            indexed_at=utcnow_utc_tz(),
+        )
+        session.add(source)
+        await session.flush()
+
+        updated = await update_knowledge_source(
+            session=session,
+            server_id=server_id,
+            source_id=source.id,
+            body=AIKnowledgeSourceUpdateModel(content_text="Manually corrected transcript."),
+        )
+
+        assert updated.status == "queued"
+        job = (
+            await session.exec(select(AIKnowledgeIndexJob).where(AIKnowledgeIndexJob.source_id == source.id))
+        ).one()
+        assert job.job_type == "reindex_content"
+
+        def fail_if_youtube_is_imported(_url: str):
+            raise AssertionError("A manual-content reindex must not reimport YouTube")
+
+        monkeypatch.setattr(knowledge_module, "extract_text_from_youtube_url", fail_if_youtube_is_imported)
+        assert await run_knowledge_index_job_once(
+            session,
+            server_id=server_id,
+            embedder=FakeKnowledgeEmbedder(),
+        )
+
+        await session.refresh(source)
+        chunks = (
+            await session.exec(
+                select(AIKnowledgeChunk)
+                .where(AIKnowledgeChunk.source_id == source.id)
+                .order_by(AIKnowledgeChunk.chunk_ordinal)
+            )
+        ).all()
+        assert source.status == "ready"
+        assert source.content_text == "Manually corrected transcript."
+        assert job.status == "completed"
+        assert chunks
+        assert "Manually corrected transcript." in chunks[0].chunk_text
+
+
+def test_manual_youtube_edit_reindexes_saved_content_without_reimport(monkeypatch):
+    asyncio.run(_manual_youtube_edit_reindex_scenario(monkeypatch))
 
 
 async def _knowledge_file_import_scenario() -> None:

@@ -378,6 +378,7 @@ def _extract_youtube_audio_and_transcribe(
         "language": transcription.get("language"),
         "transcription_model": transcription.get("model"),
         "segments_count": transcription.get("segments_count"),
+        "audio_preprocessing": transcription.get("audio_preprocessing"),
         "extracted_chars": len(text),
     }
 
@@ -568,6 +569,7 @@ class ModalTranscriptionProvider:
             "language": payload.get("language"),
             "model": payload.get("model") or payload.get("transcription_model"),
             "segments_count": len(segments) if isinstance(segments, list) else payload.get("segments_count"),
+            "audio_preprocessing": payload.get("audio_preprocessing"),
         }
 
     def _remote_callable(self):
