@@ -70,7 +70,11 @@ def render_celebration_message(template_text: str, user_mention: str) -> str:
     return rendered
 
 
-async def check_birthday_new(client: discord.Client):
+async def check_birthday_new(
+    client: discord.Client,
+    *,
+    guild_ids: set[int] | None = None,
+):
     """
     Checks for user birthdays based on their timezone and sends a greeting.
     """
@@ -89,6 +93,8 @@ async def check_birthday_new(client: discord.Client):
 
             for membership in gu.memberships:
                 server = membership.server
+                if guild_ids is not None and int(server.server_id) not in guild_ids:
+                    continue
                 try:
                     guild = await client.fetch_guild(server.server_id)
                 except (discord.Forbidden, discord.NotFound, discord.HTTPException) as error:

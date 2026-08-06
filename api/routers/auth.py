@@ -1,7 +1,6 @@
 ﻿import logging
 import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from time import monotonic
 
 import httpx
@@ -29,13 +28,19 @@ from api.services.dashboard_sessions import (
 )
 from api.services.discord_profiles import (
     DiscordApplicationProfile,
+    get_profile,
     invite_url_for_profile,
-    profile_key_for_server_id,
     profile_for_request,
     validate_profile_redirect_uri,
 )
+from api.services.gateway_installations import (
+    active_installation_server_ids,
+    gateway_metadata_for_servers,
+    has_active_installations,
+    sync_gateway_presence_snapshot,
+)
 from src.db.database import get_session
-from src.db.models import GlobalUser, Server
+from src.db.models import GlobalUser
 
 load_dotenv()
 
@@ -75,10 +80,6 @@ def _get_bot_token_for_auth(profile: DiscordApplicationProfile) -> str:
     return token
 
 
-def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
-
-
 def _extract_guild_id(guild: dict) -> int | None:
     raw_id = guild.get("id")
     if raw_id is None or not str(raw_id).isdigit():
@@ -91,30 +92,15 @@ async def _get_db_active_bot_guild_ids(
     guild_ids: set[int],
     profile_key: str,
 ) -> set[int]:
-    if not guild_ids:
-        return set()
-    rows = (
-        await session.exec(
-            select(Server.server_id).where(
-                Server.server_id.in_(list(guild_ids)),
-                Server.bot_profile == profile_key,
-                Server.bot_active == True,  # noqa: E712
-            )
-        )
-    ).all()
-    return {int(server_id) for server_id in rows}
+    return await active_installation_server_ids(
+        session,
+        profile_key=profile_key,
+        server_ids=guild_ids,
+    )
 
 
 async def _has_any_active_bot_guilds(session: AsyncSession, profile_key: str) -> bool:
-    row = (
-        await session.exec(
-            select(Server.server_id).where(
-                Server.bot_profile == profile_key,
-                Server.bot_active == True,  # noqa: E712
-            ).limit(1)
-        )
-    ).first()
-    return row is not None
+    return await has_active_installations(session, profile_key=profile_key)
 
 
 def _get_cached_user_guilds(profile_key: str, user_id: int, refresh: bool) -> list[dict] | None:
@@ -226,11 +212,7 @@ async def _get_bot_guild_ids(
     cached = _get_cached_bot_guild_ids(profile_key, refresh=refresh)
     if cached is not None:
         return cached
-    guild_ids = {
-        guild_id
-        for guild_id in await _fetch_bot_guild_ids(client=client, bot_headers=bot_headers)
-        if profile_key_for_server_id(guild_id) == profile_key
-    }
+    guild_ids = await _fetch_bot_guild_ids(client=client, bot_headers=bot_headers)
     _store_cached_bot_guild_ids(profile_key, guild_ids)
     return guild_ids
 
@@ -240,53 +222,11 @@ async def _apply_bot_presence_snapshot(
     bot_guild_ids: set[int],
     profile_key: str,
 ) -> None:
-    now = _utc_now()
-
-    existing_rows = (
-        await session.exec(select(Server).where(Server.server_id.in_(list(bot_guild_ids))))
-    ).all() if bot_guild_ids else []
-    existing_by_id = {int(item.server_id): item for item in existing_rows}
-
-    for guild_id in bot_guild_ids:
-        server = existing_by_id.get(guild_id)
-        if not server:
-            session.add(
-                Server(
-                    server_id=guild_id,
-                    server_name=str(guild_id),
-                    bot_profile=profile_key,
-                    bot_active=True,
-                    bot_joined_at=now,
-                    bot_presence_updated_at=now,
-                )
-            )
-            continue
-
-        server.bot_profile = profile_key
-        server.bot_active = True
-        server.bot_left_at = None
-        server.bot_presence_updated_at = now
-        if server.bot_joined_at is None:
-            server.bot_joined_at = now
-        session.add(server)
-
-    currently_active_rows = (
-        await session.exec(
-            select(Server).where(
-                Server.bot_profile == profile_key,
-                Server.bot_active == True,  # noqa: E712
-            )
-        )
-    ).all()
-    for server in currently_active_rows:
-        if int(server.server_id) in bot_guild_ids:
-            continue
-        server.bot_active = False
-        server.bot_left_at = now
-        server.bot_presence_updated_at = now
-        session.add(server)
-
-    await session.flush()
+    await sync_gateway_presence_snapshot(
+        session,
+        guilds=((guild_id, str(guild_id), None) for guild_id in bot_guild_ids),
+        profile_key=profile_key,
+    )
 
 
 async def _sync_bot_presence_from_discord(
@@ -295,11 +235,7 @@ async def _sync_bot_presence_from_discord(
     session: AsyncSession,
     profile_key: str,
 ) -> set[int]:
-    bot_guild_ids = {
-        guild_id
-        for guild_id in await _fetch_bot_guild_ids(client=client, bot_headers=bot_headers)
-        if profile_key_for_server_id(guild_id) == profile_key
-    }
+    bot_guild_ids = await _fetch_bot_guild_ids(client=client, bot_headers=bot_headers)
     _store_cached_bot_guild_ids(profile_key, bot_guild_ids)
     await _apply_bot_presence_snapshot(
         session=session,
@@ -309,7 +245,13 @@ async def _sync_bot_presence_from_discord(
     return bot_guild_ids
 
 
-def _to_auth_guild_payload(guild: dict) -> dict:
+def _to_auth_guild_payload(
+    guild: dict,
+    *,
+    surface_profile: str,
+    primary_profile: str,
+    installed_profiles: tuple[str, ...],
+) -> dict:
     payload = dict(guild)
     payload["id"] = str(guild.get("id", ""))
     payload["name"] = str(guild.get("name", ""))
@@ -319,6 +261,12 @@ def _to_auth_guild_payload(guild: dict) -> dict:
     payload["permissions"] = str(permissions) if permissions is not None else "0"
     payload["bot_present"] = True
     payload["dashboard_access"] = True
+    payload["installed_gateway_profiles"] = list(installed_profiles)
+    payload["primary_gateway_profile"] = primary_profile
+    payload["surface_is_primary"] = surface_profile == primary_profile
+    payload["canonical_dashboard_url"] = (
+        f"{get_profile(primary_profile).dashboard_base_url}/dashboard/{payload['id']}/overview"
+    )
     return payload
 
 
@@ -497,19 +445,40 @@ async def get_user_guilds(
                     for guild in cached_payload
                     if (guild_id := _extract_guild_id(guild)) is not None and guild_id in active_cached_ids
                 ]
+                gateway_metadata = await gateway_metadata_for_servers(
+                    session,
+                    active_cached_ids,
+                )
+                refreshed_cached_payload = []
+                for guild in filtered_cached_payload:
+                    guild_id = _extract_guild_id(guild)
+                    metadata = gateway_metadata.get(guild_id) if guild_id is not None else None
+                    if metadata is None:
+                        continue
+                    refreshed_cached_payload.append(
+                        _to_auth_guild_payload(
+                            guild,
+                            surface_profile=profile.key,
+                            primary_profile=metadata.primary_profile,
+                            installed_profiles=metadata.installed_profiles,
+                        )
+                    )
 
-                if len(filtered_cached_payload) != len(cached_payload):
-                    _store_cached_user_guilds(profile.key, current_user_id, filtered_cached_payload)
+                _store_cached_user_guilds(
+                    profile.key,
+                    current_user_id,
+                    refreshed_cached_payload,
+                )
 
                 logger.info(
                     "auth.guilds cache hit user=%s guilds=%s filtered=%s refresh=%s duration_ms=%s",
                     current_user_id,
                     len(cached_payload),
-                    len(filtered_cached_payload),
+                    len(refreshed_cached_payload),
                     refresh,
                     int((monotonic() - request_started_at) * 1000),
                 )
-                return filtered_cached_payload
+                return refreshed_cached_payload
 
             guilds_res = await client.get(f"{DISCORD_API_BASE_URL}/users/@me/guilds", headers=headers)
             guilds_res.raise_for_status()
@@ -616,11 +585,25 @@ async def get_user_guilds(
                 if member_role_ids.intersection(allowed_roles):
                     authorized_guild_ids.add(guild_id)
 
-            authorized_guilds = [
-                _to_auth_guild_payload(guild)
-                for guild in guilds_json
-                if str(guild.get("id", "")).isdigit() and int(guild["id"]) in authorized_guild_ids
-            ]
+            gateway_metadata = await gateway_metadata_for_servers(session, authorized_guild_ids)
+            authorized_guilds = []
+            for guild in guilds_json:
+                if not str(guild.get("id", "")).isdigit():
+                    continue
+                guild_id = int(guild["id"])
+                if guild_id not in authorized_guild_ids:
+                    continue
+                metadata = gateway_metadata.get(guild_id)
+                if metadata is None:
+                    continue
+                authorized_guilds.append(
+                    _to_auth_guild_payload(
+                        guild,
+                        surface_profile=profile.key,
+                        primary_profile=metadata.primary_profile,
+                        installed_profiles=metadata.installed_profiles,
+                    )
+                )
 
             _store_cached_user_guilds(profile.key, current_user_id, authorized_guilds)
             logger.info(

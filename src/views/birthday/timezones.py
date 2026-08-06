@@ -80,7 +80,11 @@ class DropdownTimezones(discord.ui.View):
                 embed.add_field(name='Выбранный часовой пояс:', value=add_timezone, inline=False)
                 embed.add_field(name='', value=f'**{interaction.user.mention}, я всех приглашу на твой день рождения :)**')
                 await interaction.response.send_message(embed=embed)
-                await check_birthday_new(client=self.client)
+                if interaction.guild_id is not None:
+                    await check_birthday_new(
+                        client=self.client,
+                        guild_ids={interaction.guild_id},
+                    )
             except Exception as error:
                 await interaction.response.send_message(
                     'Добавить часовой пояс не получилось из-за ошибки "{}"'.format(error.__str__()))

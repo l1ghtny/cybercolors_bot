@@ -39,6 +39,9 @@ class Server(SQLModel, table=True):
     bot_joined_at: Optional[datetime] = None
     bot_left_at: Optional[datetime] = None
     bot_presence_updated_at: Optional[datetime] = None
+    gateway_installations: List["ServerGatewayInstallation"] = Relationship(
+        back_populates="server"
+    )
 
     users: List["User"] = Relationship(back_populates="server")
     congratulations: List["Congratulation"] = Relationship(back_populates="server")
@@ -93,6 +96,50 @@ class Server(SQLModel, table=True):
         back_populates="server",
         sa_relationship_kwargs={"uselist": False},
     )
+
+
+class ServerGatewayInstallation(SQLModel, table=True):
+    """One Discord application installation on a server.
+
+    ``Server.bot_profile`` remains the single primary gateway allowed to
+    produce side effects. These rows track every installed gateway so a
+    server can overlap safely during a migration.
+    """
+
+    __tablename__ = "server_gateway_installations"
+    __table_args__ = (
+        Index(
+            "ix_server_gateway_installations_profile_active",
+            "profile_key",
+            "active",
+        ),
+    )
+
+    server_id: int = Field(
+        sa_column=Column(
+            BigInteger,
+            ForeignKey("servers.server_id", ondelete="CASCADE"),
+            primary_key=True,
+        )
+    )
+    profile_key: str = Field(
+        sa_column=Column(String(length=32), primary_key=True)
+    )
+    active: bool = Field(default=False, nullable=False)
+    joined_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(TIMESTAMP(timezone=True), nullable=True),
+    )
+    left_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(TIMESTAMP(timezone=True), nullable=True),
+    )
+    presence_updated_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(TIMESTAMP(timezone=True), nullable=True),
+    )
+
+    server: Optional["Server"] = Relationship(back_populates="gateway_installations")
 
 
 class GlobalUser(SQLModel, table=True):

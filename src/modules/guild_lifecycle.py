@@ -1,14 +1,10 @@
-from datetime import datetime, timezone
-
 import discord
-from sqlmodel import select
 
+from api.services.gateway_installations import (
+    record_gateway_presence,
+    sync_gateway_presence_snapshot,
+)
 from src.db.database import get_async_session
-from src.db.models import Server
-
-
-def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 def _guild_icon_url(guild: discord.Guild) -> str | None:
@@ -21,36 +17,18 @@ async def mark_guild_presence(
     is_active: bool,
     *,
     bot_profile: str = "cybercolors",
-) -> None:
-    now = _utc_now()
+) -> str:
     async with get_async_session() as session:
-        server = await session.get(Server, guild.id)
-        if not server:
-            server = Server(
-                server_id=guild.id,
-                server_name=guild.name,
-                icon=_guild_icon_url(guild),
-                bot_profile=bot_profile,
-                bot_active=is_active,
-                bot_joined_at=now if is_active else None,
-                bot_left_at=None if is_active else now,
-                bot_presence_updated_at=now,
-            )
-        else:
-            server.server_name = guild.name
-            server.icon = _guild_icon_url(guild)
-            server.bot_profile = bot_profile
-            server.bot_active = is_active
-            server.bot_presence_updated_at = now
-            if is_active:
-                server.bot_left_at = None
-                if server.bot_joined_at is None:
-                    server.bot_joined_at = now
-            else:
-                server.bot_left_at = now
-
-        session.add(server)
+        primary_profile = await record_gateway_presence(
+            session,
+            server_id=guild.id,
+            server_name=guild.name,
+            icon=_guild_icon_url(guild),
+            profile_key=bot_profile,
+            active=is_active,
+        )
         await session.commit()
+        return primary_profile
 
 
 async def sync_active_guild_presence(
@@ -58,50 +36,13 @@ async def sync_active_guild_presence(
     *,
     bot_profile: str = "cybercolors",
 ) -> None:
-    now = _utc_now()
-    active_ids = {guild.id for guild in guilds}
-
     async with get_async_session() as session:
-        rows = (await session.exec(select(Server).where(Server.server_id.in_(list(active_ids))))).all() if active_ids else []
-        existing_by_id = {row.server_id: row for row in rows}
-
-        for guild in guilds:
-            server = existing_by_id.get(guild.id)
-            if not server:
-                server = Server(
-                    server_id=guild.id,
-                    server_name=guild.name,
-                    icon=_guild_icon_url(guild),
-                    bot_profile=bot_profile,
-                    bot_active=True,
-                    bot_joined_at=now,
-                    bot_presence_updated_at=now,
-                )
-            else:
-                server.server_name = guild.name
-                server.icon = _guild_icon_url(guild)
-                server.bot_profile = bot_profile
-                server.bot_active = True
-                server.bot_left_at = None
-                server.bot_presence_updated_at = now
-                if server.bot_joined_at is None:
-                    server.bot_joined_at = now
-            session.add(server)
-
-        currently_active_rows = (
-            await session.exec(
-                select(Server).where(
-                    Server.bot_profile == bot_profile,
-                    Server.bot_active == True,  # noqa: E712
-                )
-            )
-        ).all()
-        for server in currently_active_rows:
-            if server.server_id in active_ids:
-                continue
-            server.bot_active = False
-            server.bot_left_at = now
-            server.bot_presence_updated_at = now
-            session.add(server)
-
+        await sync_gateway_presence_snapshot(
+            session,
+            guilds=(
+                (guild.id, guild.name, _guild_icon_url(guild))
+                for guild in guilds
+            ),
+            profile_key=bot_profile,
+        )
         await session.commit()

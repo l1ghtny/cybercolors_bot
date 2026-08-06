@@ -5,7 +5,7 @@ from api.dependencies.auth import get_bearer_access_token
 from api.dependencies.current_user import get_current_discord_user_id
 from api.services.dashboard_sessions import get_dashboard_session
 from api.services.dashboard_access_service import assert_dashboard_access, assert_server_admin_or_owner
-from api.services.discord_profiles import get_profile
+from api.services.discord_profiles import cache_server_profile, get_profile
 from api.services.rbac_service import assert_user_has_permission
 from src.db.database import get_session
 from src.db.models import Server
@@ -20,7 +20,10 @@ async def assert_server_surface(
     dashboard_session = await get_dashboard_session(request, session)
     assert dashboard_session is not None
     server = await session.get(Server, server_id)
-    if server is None or server.bot_profile == dashboard_session.application_profile:
+    if server is None:
+        return
+    cache_server_profile(server_id, server.bot_profile)
+    if server.bot_profile == dashboard_session.application_profile:
         return
     canonical_base_url = get_profile(server.bot_profile).dashboard_base_url
     raise HTTPException(

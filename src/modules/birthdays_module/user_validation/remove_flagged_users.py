@@ -12,9 +12,13 @@ def normalize_utc(dt: datetime.datetime) -> datetime.datetime:
     return dt.astimezone(datetime.timezone.utc)
 
 
-async def remove_old_flagged_users():
+async def remove_old_flagged_users(*, guild_ids: set[int] | None = None):
+    if guild_ids is not None and not guild_ids:
+        return
     async with get_async_session() as session:
         query = select(User).where(User.is_member == False)
+        if guild_ids is not None:
+            query = query.where(User.server_id.in_(list(guild_ids)))
         result = await session.exec(query)
         flagged_users = result.all()
 

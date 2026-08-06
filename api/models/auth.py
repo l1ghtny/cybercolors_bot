@@ -36,3 +36,7 @@ class AuthGuildModel(BaseModel):
     permissions: str = "0"
     bot_present: bool = True
     dashboard_access: bool = True
+    installed_gateway_profiles: list[str] = Field(default_factory=list)
+    primary_gateway_profile: str | None = None
+    surface_is_primary: bool = True
+    canonical_dashboard_url: str | None = None

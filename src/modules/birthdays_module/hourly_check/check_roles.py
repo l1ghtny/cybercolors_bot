@@ -31,7 +31,9 @@ def birthday_role_age(
     return current_time.astimezone(datetime.timezone.utc) - role_added_at.astimezone(datetime.timezone.utc)
 
 
-async def check_roles(client):
+async def check_roles(client, *, guild_ids: set[int] | None = None):
+    if guild_ids is not None and not guild_ids:
+        return
     async with get_async_session() as session:
         query = (
             select(User, Birthday)
@@ -39,6 +41,8 @@ async def check_roles(client):
             .where(Birthday.role_added_at.isnot(None))
             .options(selectinload(User.server))
         )
+        if guild_ids is not None:
+            query = query.where(User.server_id.in_(list(guild_ids)))
         result = await session.exec(query)
         items = result.all()
 

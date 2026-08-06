@@ -10,6 +10,7 @@ from fastapi import HTTPException, Request, status
 CYBERCOLORS_PROFILE = "cybercolors"
 MODRAL_PROFILE = "modral"
 SUPPORTED_PROFILES = frozenset({CYBERCOLORS_PROFILE, MODRAL_PROFILE})
+_server_profile_cache: dict[int, str] = {}
 
 
 async def call_with_server_profile(
@@ -182,7 +183,22 @@ def cybercolors_guild_ids() -> frozenset[int]:
     return frozenset(configured)
 
 
+def cache_server_profile(server_id: int, profile_key: str) -> None:
+    """Cache the persisted primary gateway for synchronous Discord helpers."""
+    normalized = profile_key.strip().lower()
+    if normalized not in SUPPORTED_PROFILES:
+        raise ValueError(f"Unsupported Discord application profile: {profile_key}")
+    _server_profile_cache[int(server_id)] = normalized
+
+
+def clear_server_profile_cache() -> None:
+    _server_profile_cache.clear()
+
+
 def profile_key_for_server_id(server_id: int) -> str:
+    cached = _server_profile_cache.get(int(server_id))
+    if cached is not None:
+        return cached
     return CYBERCOLORS_PROFILE if int(server_id) in cybercolors_guild_ids() else MODRAL_PROFILE
 
 

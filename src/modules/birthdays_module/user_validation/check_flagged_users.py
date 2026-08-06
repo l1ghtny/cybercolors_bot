@@ -8,9 +8,13 @@ from src.modules.logs_setup import logger
 logger = logger.logging.getLogger("bot")
 
 
-async def remove_flag_from_users_by_server(client):
+async def remove_flag_from_users_by_server(client, *, guild_ids: set[int] | None = None):
+    if guild_ids is not None and not guild_ids:
+        return
     async with get_async_session() as session:
         query = select(User).where(User.is_member == False)
+        if guild_ids is not None:
+            query = query.where(User.server_id.in_(list(guild_ids)))
         servers_and_users = await session.exec(query)
         servers_and_users = servers_and_users.all()
         for each in servers_and_users:

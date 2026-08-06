@@ -126,7 +126,13 @@ from src.modules.observability.sentry import birthday_hourly_monitor, configure_
 from src.modules.observability.bot_metrics import DISCORD_GATEWAY_CONNECTED
 from src.modules.observability.prometheus import start_bot_metrics_server
 from api.services.moderation_rules_service import sync_rules_from_source_message_edit
-from api.services.discord_profiles import get_profile, profile_key_for_server_id, runtime_bot_profile_key
+from api.services.discord_profiles import (
+    cache_server_profile,
+    get_profile,
+    profile_key_for_server_id,
+    runtime_bot_profile_key,
+)
+from api.services.gateway_installations import gateway_metadata_for_servers
 from api.services.newcomer_probation import can_use_public_member_commands
 from src.views.replies.delete_multiple_replies import DeleteReplyMultiple, DeleteReplyMultipleSelect
 from src.views.replies.delete_one_reply import DeleteOneReply
@@ -140,9 +146,13 @@ BOT_PROFILE = runtime_bot_profile_key()
 DISCORD_TOKEN = get_profile(BOT_PROFILE).bot_token
 DISCORD_GATEWAY_STATUS = DISCORD_GATEWAY_CONNECTED.labels(bot_profile=BOT_PROFILE)
 DISCORD_GATEWAY_STATUS.set(0)
+PRIMARY_GUILD_IDS: set[int] = set()
+PRIMARY_ASSIGNMENTS_LOADED = False
 
 
 def runtime_owns_guild(guild_id: int) -> bool:
+    if PRIMARY_ASSIGNMENTS_LOADED:
+        return int(guild_id) in PRIMARY_GUILD_IDS
     return profile_key_for_server_id(guild_id) == BOT_PROFILE
 
 intents = discord.Intents.all()
@@ -246,6 +256,26 @@ class Aclient(discord.AutoShardedClient):
         self.security_pause_cache[server_id] = (paused, now + 5.0)
         return paused
 
+    async def refresh_primary_guild_assignments(self) -> None:
+        global PRIMARY_ASSIGNMENTS_LOADED
+        visible_guild_ids = {int(guild.id) for guild in self.guilds}
+        async with get_async_session() as session:
+            metadata = await gateway_metadata_for_servers(
+                session,
+                visible_guild_ids,
+            )
+        assigned_ids = {
+            server_id
+            for server_id, item in metadata.items()
+            if item.primary_profile == BOT_PROFILE
+            and BOT_PROFILE in item.installed_profiles
+        }
+        PRIMARY_GUILD_IDS.clear()
+        PRIMARY_GUILD_IDS.update(assigned_ids)
+        for guild_id, item in metadata.items():
+            cache_server_profile(guild_id, item.primary_profile)
+        PRIMARY_ASSIGNMENTS_LOADED = True
+
     # commands local sync
     async def on_ready(self):
         await self.wait_until_ready()
@@ -266,18 +296,21 @@ class Aclient(discord.AutoShardedClient):
             self.synced = True
         if not self.added:
             self.added = True
+        if not self.guild_presence_synced:
+            await sync_active_guild_presence(
+                list(self.guilds),
+                bot_profile=BOT_PROFILE,
+            )
+            await self.refresh_primary_guild_assignments()
+            self.guild_presence_synced = True
+        if not gateway_assignment_refresh.is_running():
+            gateway_assignment_refresh.start()
         if not birthday.is_running():
             birthday.start()
         if not check_users_with_birthdays.is_running():
             check_users_with_birthdays.start()
         if not auto_unmute_worker.is_running():
             auto_unmute_worker.start()
-        if not self.guild_presence_synced:
-            await sync_active_guild_presence(
-                [guild for guild in self.guilds if runtime_owns_guild(guild.id)],
-                bot_profile=BOT_PROFILE,
-            )
-            self.guild_presence_synced = True
         logger.info(f"We have logged in as {self.user}.")
 
     async def on_disconnect(self):
@@ -298,7 +331,13 @@ class CyberColorsCommandTree(app_commands.CommandTree):
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.guild_id is not None and not runtime_owns_guild(interaction.guild_id):
-            message = "This server is assigned to the other Modral Discord application."
+            primary_name = get_profile(
+                profile_key_for_server_id(interaction.guild_id)
+            ).display_name
+            message = (
+                f"This server is managed by {primary_name}. "
+                "Use that Discord application instead."
+            )
             if interaction.response.is_done():
                 await interaction.followup.send(message, ephemeral=True)
             else:
@@ -682,8 +721,9 @@ async def birthday_check(interaction: discord.Interaction):
     if not await ensure_bot_permission(interaction, "birthdays.settings.edit", locale=locale):
         return
     await interaction.response.defer()
-    await check_birthday_new(client)
-    await check_roles(client)
+    guild_ids = {interaction.guild.id}
+    await check_birthday_new(client, guild_ids=guild_ids)
+    await check_roles(client, guild_ids=guild_ids)
     await interaction.followup.send('OK')
 
 
@@ -759,7 +799,7 @@ async def force_validation(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     try:
         logger.info('validation process started (forced)')
-        await main_validation_process(client)
+        await main_validation_process(client, guild_ids={interaction.guild.id})
     except Exception as error:
         logger.exception("Forced validation failed: %s", error)
         await interaction.followup.send(f'Ошибка при валидации: {error}', ephemeral=True)
@@ -812,6 +852,8 @@ async def on_message(message):
 @client.event
 async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent):
     """Triggered when a message is deleted. Moves it to deleted_messages table."""
+    if payload.guild_id is None or not runtime_owns_guild(payload.guild_id):
+        return
     async with AsyncSession(engine) as session:
         await handle_message_deletion(payload.message_id, payload.guild_id, session)
 
@@ -819,6 +861,8 @@ async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent):
 @client.event
 async def on_raw_bulk_message_delete(payload: discord.RawBulkMessageDeleteEvent):
     """Triggered when multiple messages are deleted in bulk."""
+    if payload.guild_id is None or not runtime_owns_guild(payload.guild_id):
+        return
     async with AsyncSession(engine) as session:
         await handle_bulk_message_deletion(payload.message_ids, payload.guild_id, session)
 
@@ -826,6 +870,8 @@ async def on_raw_bulk_message_delete(payload: discord.RawBulkMessageDeleteEvent)
 @client.event
 async def on_raw_message_edit(payload: discord.RawMessageUpdateEvent):
     if payload.guild_id is None or payload.channel_id is None:
+        return
+    if not runtime_owns_guild(payload.guild_id):
         return
     content = payload.data.get("content")
     if not isinstance(content, str):
@@ -852,14 +898,19 @@ async def on_raw_message_edit(payload: discord.RawMessageUpdateEvent):
 @tasks.loop(time=check_time)
 async def birthday():
     with birthday_hourly_monitor():
-        await check_birthday_new(client)
-        await check_roles(client)
+        await check_birthday_new(client, guild_ids=set(PRIMARY_GUILD_IDS))
+        await check_roles(client, guild_ids=set(PRIMARY_GUILD_IDS))
 
 
 @tasks.loop(time=users_time)
 async def check_users_with_birthdays():
     logger.info('validation process started')
-    await main_validation_process(client)
+    await main_validation_process(client, guild_ids=set(PRIMARY_GUILD_IDS))
+
+
+@tasks.loop(seconds=30)
+async def gateway_assignment_refresh():
+    await client.refresh_primary_guild_assignments()
 
 
 @tasks.loop(seconds=60)
@@ -875,6 +926,8 @@ async def auto_unmute_worker():
 
 @client.event
 async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+    if not runtime_owns_guild(member.guild.id):
+        return
     await create_voice_channel(member, before, after)
     if before.channel != after.channel and after.channel is not None:
         asyncio.create_task(record_voice_join_activity(member, after))
@@ -882,24 +935,33 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
 
 @client.event
 async def on_thread_create(thread: discord.Thread):
+    if not runtime_owns_guild(thread.guild.id):
+        return
     asyncio.create_task(record_thread_create_activity(thread))
 
 
 @client.event
 async def on_interaction(interaction: discord.Interaction):
+    if interaction.guild_id is not None and not runtime_owns_guild(interaction.guild_id):
+        return
     asyncio.create_task(record_bot_command_activity(interaction))
 
 
 @client.event
 async def on_guild_join(guild: discord.Guild):
+    primary_profile = await mark_guild_presence(
+        guild,
+        is_active=True,
+        bot_profile=BOT_PROFILE,
+    )
+    await client.refresh_primary_guild_assignments()
     if not runtime_owns_guild(guild.id):
-        logger.error(
-            "Ignoring guild %s because BOT_PROFILE=%s does not own it.",
+        logger.info(
+            "Recorded secondary gateway installation for guild %s; primary=%s runtime=%s.",
             guild.id,
+            primary_profile,
             BOT_PROFILE,
         )
-        return
-    await mark_guild_presence(guild, is_active=True, bot_profile=BOT_PROFILE)
     # Branded context commands are global per Discord application. Clearing
     # the guild registry removes the legacy per-guild branded override.
     guild_count = await sync_guild_application_commands(
@@ -916,6 +978,8 @@ async def on_guild_join(guild: discord.Guild):
 
 @client.event
 async def on_member_join(member: discord.Member):
+    if not runtime_owns_guild(member.guild.id):
+        return
     async with get_async_session() as session:
         await check_if_server_exists(member.guild, session)
         await check_if_user_exists(member, member.guild, session)
@@ -925,24 +989,32 @@ async def on_member_join(member: discord.Member):
 
 @client.event
 async def on_member_update(before: discord.Member, after: discord.Member):
+    if not runtime_owns_guild(after.guild.id):
+        return
     await handle_newcomer_role_granted(before, after)
     await record_member_nickname_change(before, after)
 
 
 @client.event
 async def on_user_update(before: discord.User, after: discord.User):
-    await record_user_display_name_change(before, after, client.guilds)
+    await record_user_display_name_change(
+        before,
+        after,
+        [guild for guild in client.guilds if runtime_owns_guild(guild.id)],
+    )
 
 
 @client.event
 async def on_member_remove(member: discord.Member):
+    if not runtime_owns_guild(member.guild.id):
+        return
     await flag_user(member.id, member.guild.id)
 
 
 @client.event
 async def on_guild_remove(guild: discord.Guild):
-    if runtime_owns_guild(guild.id):
-        await mark_guild_presence(guild, is_active=False, bot_profile=BOT_PROFILE)
+    await mark_guild_presence(guild, is_active=False, bot_profile=BOT_PROFILE)
+    PRIMARY_GUILD_IDS.discard(guild.id)
 
 
 # def handle_uncaught_exception(exc_type, exc_value, exc_traceback):
