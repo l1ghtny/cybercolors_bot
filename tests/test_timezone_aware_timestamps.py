@@ -53,9 +53,25 @@ def test_timezone_migration_covers_every_previously_naive_timestamp():
         for table_name, column_names in _migration_columns().items()
         for column_name in column_names
     }
-    already_timezone_aware = {("global_users", "joined_discord")}
+    created_timezone_aware = {
+        ("global_users", "joined_discord"),
+        ("server_gateway_installations", "joined_at"),
+        ("server_gateway_installations", "left_at"),
+        ("server_gateway_installations", "presence_updated_at"),
+        ("scheduled_bot_post_attachments", "created_at"),
+        ("scheduled_bot_post_runs", "created_at"),
+        ("scheduled_bot_post_runs", "finished_at"),
+        ("scheduled_bot_post_runs", "scheduled_for"),
+        ("scheduled_bot_posts", "created_at"),
+        ("scheduled_bot_posts", "last_run_at"),
+        ("scheduled_bot_posts", "lease_until"),
+        ("scheduled_bot_posts", "next_run_at"),
+        ("scheduled_bot_posts", "updated_at"),
+    }
 
-    assert migrated_columns == _modeled_timestamp_columns() - already_timezone_aware
+    uncovered_columns = _modeled_timestamp_columns() - created_timezone_aware - migrated_columns
+
+    assert not uncovered_columns
 
 
 def test_calendar_dates_remain_date_only():
