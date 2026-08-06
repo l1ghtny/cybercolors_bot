@@ -1,8 +1,10 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException, Request
+from sqlalchemy.dialects import postgresql
 
 from api.dependencies import server_access
 from api.services import dashboard_sessions
@@ -15,6 +17,7 @@ from api.services.discord_profiles import (
     validate_profile_redirect_uri,
 )
 from src.db.models import DashboardSession, Server
+from src.modules.moderation.moderation_helpers import ensure_message_foreign_keys
 
 
 def _request(host: str, cookie_value: str | None = None) -> Request:
@@ -121,3 +124,33 @@ def test_server_surface_mismatch_returns_canonical_dashboard(monkeypatch):
     assert exc_info.value.status_code == 409
     assert exc_info.value.detail["code"] == "server_surface_mismatch"
     assert exc_info.value.detail["canonical_url"] == "https://dashboard.modral.app/dashboard/987"
+
+
+def test_message_ingestion_server_upserts_include_application_profile(monkeypatch):
+    monkeypatch.setenv("CYBERCOLORS_GUILD_IDS", "123")
+
+    class Session:
+        def __init__(self):
+            self.statements = []
+
+        async def exec(self, statement):
+            self.statements.append(statement)
+
+    async def captured_profile(guild_id: int) -> str:
+        session = Session()
+        message = SimpleNamespace(
+            guild=SimpleNamespace(id=guild_id, name="Test guild", icon=None),
+            author=SimpleNamespace(
+                id=456,
+                name="member",
+                display_avatar=None,
+                created_at=datetime.now(timezone.utc),
+                joined_at=None,
+            ),
+        )
+        await ensure_message_foreign_keys(message, session)
+        compiled = session.statements[0].compile(dialect=postgresql.dialect())
+        return compiled.params["bot_profile"]
+
+    assert asyncio.run(captured_profile(123)) == CYBERCOLORS_PROFILE
+    assert asyncio.run(captured_profile(999)) == MODRAL_PROFILE

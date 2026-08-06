@@ -6,6 +6,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from api.services.discord_profiles import profile_key_for_server_id
 from src.db.database import get_async_session
 from src.db.models import (
     AttachmentLog,
@@ -53,6 +54,7 @@ async def ensure_message_foreign_keys(message: d.Message, session: AsyncSession)
             server_id=guild.id,
             server_name=guild.name,
             icon=icon_url,
+            bot_profile=profile_key_for_server_id(guild.id),
             bot_active=True,
             bot_presence_updated_at=now,
         )
@@ -299,6 +301,7 @@ async def _record_deleted_message_from_claim(
         .values(
             server_id=guild_id,
             server_name=None,
+            bot_profile=profile_key_for_server_id(guild_id),
             bot_active=True,
             bot_presence_updated_at=deleted_at,
         )
