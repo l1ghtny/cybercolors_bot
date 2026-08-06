@@ -31,19 +31,90 @@ def _presence_label(member: discord.Member, locale: str | None) -> str:
     return tr(locale, f"public_profile.status_{status_key}")
 
 
+def _member_roles(member: discord.Member) -> list[discord.Role]:
+    guild_id = getattr(getattr(member, "guild", None), "id", None)
+    return [
+        role
+        for role in getattr(member, "roles", ())
+        if getattr(role, "id", None) != guild_id and getattr(role, "name", "") != "@everyone"
+    ]
+
+
+def _profile_color(member: discord.Member) -> discord.Color:
+    color = getattr(member, "color", None)
+    if isinstance(color, discord.Color) and color.value:
+        return color
+    return PROFILE_EMBED_COLOR
+
+
+def _badge_labels(member: discord.Member, locale: str | None) -> list[str]:
+    badges: list[str] = []
+    guild = getattr(member, "guild", None)
+    if getattr(guild, "owner_id", None) == member.id:
+        badges.append(tr(locale, "public_profile.badge_owner"))
+    if getattr(member, "premium_since", None) is not None:
+        badges.append(tr(locale, "public_profile.badge_booster"))
+    if getattr(member, "bot", False):
+        badges.append(tr(locale, "public_profile.badge_bot"))
+    return badges
+
+
+def _activity_label(member: discord.Member, locale: str | None) -> str | None:
+    custom_activity: str | None = None
+    activity_keys = {
+        discord.ActivityType.playing: "playing",
+        discord.ActivityType.streaming: "streaming",
+        discord.ActivityType.listening: "listening",
+        discord.ActivityType.watching: "watching",
+        discord.ActivityType.competing: "competing",
+    }
+    for activity in getattr(member, "activities", ()):
+        activity_type = getattr(activity, "type", None)
+        if activity_type == discord.ActivityType.custom:
+            state = getattr(activity, "state", None)
+            if state:
+                custom_activity = f"💬 {discord.utils.escape_markdown(str(state))}"
+            continue
+
+        activity_key = activity_keys.get(activity_type)
+        if activity_key is None:
+            continue
+        activity_name = getattr(activity, "title", None) or getattr(activity, "name", None)
+        if activity_name:
+            return tr(
+                locale,
+                f"public_profile.activity_{activity_key}",
+                activity=discord.utils.escape_markdown(str(activity_name)),
+            )
+    return custom_activity
+
+
 def build_public_profile_embed(
     *,
     member: discord.Member,
+    requester: discord.abc.User | None = None,
     locale: str | None = None,
 ) -> discord.Embed:
+    roles = _member_roles(member)
+    top_role = discord.utils.escape_markdown(roles[-1].name) if roles else "—"
+    badges = _badge_labels(member, locale)
+    activity = _activity_label(member, locale)
+    description_lines = [
+        f"**{tr(locale, 'public_profile.user_id')}:** `{member.id}`",
+        f"**{tr(locale, 'public_profile.username')}:** @{member.name}",
+        f"**{tr(locale, 'public_profile.status')}:** {_presence_label(member, locale)}",
+        f"**{tr(locale, 'public_profile.top_role')}:** {top_role}",
+        f"**{tr(locale, 'public_profile.role_count')}:** {len(roles)}",
+    ]
+    if badges:
+        description_lines.append(f"**{tr(locale, 'public_profile.badges')}:** {' · '.join(badges)}")
+    if activity:
+        description_lines.append(f"**{tr(locale, 'public_profile.activity')}:** {activity}")
+
     embed = discord.Embed(
         title=tr(locale, "public_profile.title", member=member.display_name),
-        description=(
-            f"**{tr(locale, 'public_profile.user_id')}:** `{member.id}`\n"
-            f"**{tr(locale, 'public_profile.username')}:** @{member.name}\n"
-            f"**{tr(locale, 'public_profile.status')}:** {_presence_label(member, locale)}"
-        ),
-        color=PROFILE_EMBED_COLOR,
+        description="\n".join(description_lines),
+        color=_profile_color(member),
     )
     avatar_url = _avatar_url(member)
     if avatar_url:
@@ -59,7 +130,13 @@ def build_public_profile_embed(
         value=_discord_datetime(member.created_at),
         inline=False,
     )
-    embed.set_footer(text=tr(locale, "public_profile.footer"))
+    if requester is None:
+        embed.set_footer(text=tr(locale, "public_profile.footer"))
+    else:
+        embed.set_footer(
+            text=tr(locale, "public_profile.requested_by", member=requester.display_name),
+            icon_url=_avatar_url(requester),
+        )
     return embed
 
 
@@ -75,6 +152,6 @@ async def profile(interaction: discord.Interaction, user: discord.Member | None 
     locale = await get_server_locale(interaction.guild.id)
     target = user or interaction.user
     await interaction.followup.send(
-        embed=build_public_profile_embed(member=target, locale=locale),
+        embed=build_public_profile_embed(member=target, requester=interaction.user, locale=locale),
         allowed_mentions=discord.AllowedMentions.none(),
     )

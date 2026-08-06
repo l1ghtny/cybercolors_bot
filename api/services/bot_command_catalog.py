@@ -871,8 +871,8 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         ],
         workflow=[
             "Uses the selected member or defaults to the requester.",
-            "Shows the member's avatar, username, ID, presence, server join date, and Discord account creation date.",
-            "Posts the localized profile card publicly without moderation history, monitoring state, cases, or dashboard links.",
+            "Shows the member's avatar, username, ID, presence, role color, top role, role count, public badges, current activity, and join dates.",
+            "Posts the localized profile card with a requester footer and no moderation history, monitoring state, cases, or dashboard links.",
         ],
     ),
     BotCommandDocModel(
@@ -1600,8 +1600,8 @@ RU_COMMAND_TEXT: dict[str, dict[str, list[str] | str]] = {
         "summary": "Показать общедоступный профиль участника Discord.",
         "workflow": [
             "Показывает профиль выбранного участника; если участник не указан, показывает профиль автора команды.",
-            "Показывает аватар, имя пользователя, ID, статус, дату вступления на сервер и дату регистрации в Discord.",
-            "Публикует локализованную карточку без истории модерации, статуса наблюдения, дел и ссылок на панель управления.",
+            "Показывает аватар, имя пользователя, ID, статус, цвет и название высшей роли, количество ролей, общедоступные значки, текущую активность и даты вступления.",
+            "Публикует локализованную карточку с именем автора запроса, но без истории модерации, статуса наблюдения, дел и ссылок на панель управления.",
         ],
     },
     "warns": {
