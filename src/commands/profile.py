@@ -31,6 +31,16 @@ def _presence_label(member: discord.Member, locale: str | None) -> str:
     return tr(locale, f"public_profile.status_{status_key}")
 
 
+def _cached_member(member: discord.Member) -> discord.Member:
+    guild = getattr(member, "guild", None)
+    get_member = getattr(guild, "get_member", None)
+    if callable(get_member):
+        cached = get_member(member.id)
+        if cached is not None:
+            return cached
+    return member
+
+
 def _member_roles(member: discord.Member) -> list[discord.Role]:
     guild_id = getattr(getattr(member, "guild", None), "id", None)
     return [
@@ -95,6 +105,7 @@ def build_public_profile_embed(
     requester: discord.abc.User | None = None,
     locale: str | None = None,
 ) -> discord.Embed:
+    member = _cached_member(member)
     roles = _member_roles(member)
     top_role = discord.utils.escape_markdown(roles[-1].name) if roles else "—"
     badges = _badge_labels(member, locale)

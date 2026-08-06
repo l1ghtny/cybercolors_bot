@@ -106,3 +106,20 @@ def test_public_profile_missing_join_date_uses_placeholder():
     assert "**Server roles:** 0" in embed.description
     assert "**Badges:**" not in embed.description
     assert "**Activity:**" not in embed.description
+
+
+def test_public_profile_uses_cached_presence_instead_of_partial_interaction_member():
+    cached = _member(status="online")
+    guild = SimpleNamespace(id=123, owner_id=999)
+    guild.get_member = lambda member_id: cached if member_id == cached.id else None
+    cached.guild = guild
+    interaction_member = _member(
+        status="offline",
+        activities=[],
+        guild=guild,
+    )
+
+    embed = build_public_profile_embed(member=interaction_member, locale="en")
+
+    assert "**Status:** 🟢 Online" in embed.description
+    assert "**Activity:** 🎮 Playing Chess" in embed.description
