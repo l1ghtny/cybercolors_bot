@@ -88,5 +88,7 @@ def test_runtime_dashboard_tracks_both_discord_gateways():
     assert dashboard["title"] == "Modral / CyberColors Runtime"
     assert 'bot_profile="cybercolors"' in panels["CyberColors gateway"]["targets"][0]["expr"]
     assert 'bot_profile="modral"' in panels["Modral gateway"]["targets"][0]["expr"]
-    assert "max by (bot_profile)" in panels["Discord gateway history"]["targets"][0]["expr"]
+    history_query = panels["Discord gateway history"]["targets"][0]["expr"]
+    assert "max by (bot_profile)" in history_query
+    assert 'bot_profile=~"cybercolors|modral"' in history_query
     assert "(cybercolors|modral)-.*" in panels["Pod readiness"]["targets"][0]["expr"]
