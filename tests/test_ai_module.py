@@ -1327,6 +1327,7 @@ def test_available_commands_tool_filters_public_newcomer_and_staff_access(monkey
         "bday.change",
         "bday.list",
         "cat",
+        "profile",
         "warns",
     }
 
@@ -1346,6 +1347,7 @@ def test_available_commands_tool_filters_public_newcomer_and_staff_access(monkey
         "bday.change",
         "bday.list",
         "cat",
+        "profile",
         "warns",
     }
 

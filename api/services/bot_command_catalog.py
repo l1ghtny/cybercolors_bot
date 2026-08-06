@@ -854,6 +854,28 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         ],
     ),
     BotCommandDocModel(
+        id="profile",
+        name="profile",
+        qualified_name="profile",
+        invoke="/profile",
+        category="misc",
+        audience="public_member",
+        summary="Show a member's public Discord profile.",
+        parameters=[
+            _param(
+                "user",
+                "member",
+                "Optional member; defaults to the member running the command.",
+                required=False,
+            )
+        ],
+        workflow=[
+            "Uses the selected member or defaults to the requester.",
+            "Shows the member's avatar, username, ID, presence, server join date, and Discord account creation date.",
+            "Posts the localized profile card publicly without moderation history, monitoring state, cases, or dashboard links.",
+        ],
+    ),
+    BotCommandDocModel(
         id="warns",
         name="warns",
         qualified_name="warns",
@@ -1216,6 +1238,9 @@ RU_PARAMETER_DESCRIPTIONS_BY_COMMAND: dict[str, dict[str, str]] = {
     "warns": {
         "user": "Участник, чьи предупреждения нужно показать; без выбора команда покажет ваши предупреждения.",
     },
+    "profile": {
+        "user": "Участник, чей профиль нужно показать; без выбора команда покажет ваш профиль.",
+    },
 }
 
 
@@ -1569,6 +1594,14 @@ RU_COMMAND_TEXT: dict[str, dict[str, list[str] | str]] = {
             "Обновляет сохранённые данные участника и его статус на сервере.",
             "Загружает даты вступления, количество действий и открытых дел, чаще всего упомянутые правила и недавние действия.",
             "Отправляет приватную карточку с аватаром участника и кнопкой перехода к полному профилю в панели управления.",
+        ],
+    },
+    "profile": {
+        "summary": "Показать общедоступный профиль участника Discord.",
+        "workflow": [
+            "Показывает профиль выбранного участника; если участник не указан, показывает профиль автора команды.",
+            "Показывает аватар, имя пользователя, ID, статус, дату вступления на сервер и дату регистрации в Discord.",
+            "Публикует локализованную карточку без истории модерации, статуса наблюдения, дел и ссылок на панель управления.",
         ],
     },
     "warns": {

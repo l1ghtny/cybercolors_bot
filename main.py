@@ -13,6 +13,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from src.commands.misc.cats import CAT_CAPTION_MAX_LENGTH, cat_command, cat_command_text
 from src.commands.app_command_errors import handle_app_command_error
 from src.commands.temp_voice import temp_voice_limit, temp_voice_rename
+from src.commands.profile import profile
 from src.commands.warns import warns
 from src.commands.moderation.security import (
     security_create_newcomer_role,
@@ -144,7 +145,7 @@ intents.voice_states = True
 
 logger = logger.logging.getLogger("bot")
 
-PUBLIC_MEMBER_COMMAND_NAMES = frozenset({"bday add", "bday change", "bday list", "cat", "warns"})
+PUBLIC_MEMBER_COMMAND_NAMES = frozenset({"bday add", "bday change", "bday list", "cat", "profile", "warns"})
 
 
 # main class
@@ -437,6 +438,7 @@ tree.add_command(temp_voice_group)
 tree.add_command(rules_import_from_message_ctx)
 tree.add_command(link_message_to_action_ctx)
 tree.add_command(start_action_from_message_ctx)
+tree.add_command(profile)
 tree.add_command(warns)
 
 

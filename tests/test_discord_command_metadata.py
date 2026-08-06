@@ -314,7 +314,7 @@ def test_bot_command_catalog_endpoint_returns_filterable_contract():
     response = client.get("/bot-commands", params={"category": "moderation-cases"})
     assert response.status_code == 200
     body = response.json()
-    assert body["version"] == "2026-08-06"
+    assert body["version"] == "2026-08-06.1"
     assert body["locale"] == "en"
     assert body["available_locales"] == ["en", "ru"]
     assert {command["category"] for command in body["commands"]} == {"moderation-cases"}
@@ -486,7 +486,7 @@ def test_moderation_bot_commands_use_product_rbac_permissions():
 def test_only_confirmed_member_commands_are_public():
     public_commands = {command.id for command in BOT_COMMANDS if command.audience == "public_member"}
 
-    assert public_commands == {"bday.add", "bday.change", "bday.list", "cat", "warns"}
+    assert public_commands == {"bday.add", "bday.change", "bday.list", "cat", "profile", "warns"}
 
 
 def test_public_command_catalog_matches_newcomer_command_allowlist():
