@@ -838,6 +838,44 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         workflow=["Loads recent action summaries and sends an ephemeral embed with dashboard links."],
     ),
     BotCommandDocModel(
+        id="mod.profile",
+        name="profile",
+        qualified_name="mod profile",
+        invoke="/mod profile",
+        category="moderation-actions",
+        summary="Show a polished member profile and moderation summary.",
+        required_permissions=["moderate_members"],
+        parameters=[USER_PARAM],
+        components=[_component("button", "Open in dashboard", "Open the full member profile in the dashboard.")],
+        workflow=[
+            "Refreshes the member's stored Discord identity and membership details.",
+            "Loads join dates, moderation totals, top cited rules, and recent actions.",
+            "Sends a private profile embed with the member avatar and a dashboard button.",
+        ],
+    ),
+    BotCommandDocModel(
+        id="warns",
+        name="warns",
+        qualified_name="warns",
+        invoke="/warns",
+        category="moderation-actions",
+        audience="public_member",
+        summary="Show a member's active warnings without exposing private moderation details.",
+        parameters=[
+            _param(
+                "user",
+                "member",
+                "Optional member; defaults to the member running the command.",
+                required=False,
+            )
+        ],
+        workflow=[
+            "Loads active warning actions for the selected member or the requester.",
+            "Shows public rule labels and issue dates without reasons, commentary, moderators, cases, or dashboard links.",
+            "Posts the localized warning card publicly and suppresses mention notifications.",
+        ],
+    ),
+    BotCommandDocModel(
         id="mod.actions.undo",
         name="undo",
         qualified_name="mod actions undo",
@@ -1028,6 +1066,7 @@ COMMAND_RBAC_PERMISSIONS: dict[str, tuple[str, ...]] = {
     "mod.cases.link_action": ("moderation.cases.manage",),
     "mod.cases.unlink_action": ("moderation.cases.manage",),
     "mod.actions.list": ("moderation.actions.view",),
+    "mod.profile": ("moderation.actions.view", "moderation.cases.view"),
     "mod.actions.undo": ("moderation.actions.revert",),
     "birthdays_settings": ("birthdays.settings.edit",),
     "add_reply": ("replies.manage",),
@@ -1173,6 +1212,9 @@ RU_PARAMETER_DESCRIPTIONS_BY_COMMAND: dict[str, dict[str, str]] = {
     },
     "mod.actions.undo": {
         "reason": "Необязательная причина отмены модераторского действия.",
+    },
+    "warns": {
+        "user": "Участник, чьи предупреждения нужно показать; без выбора команда покажет ваши предупреждения.",
     },
 }
 
@@ -1520,6 +1562,22 @@ RU_COMMAND_TEXT: dict[str, dict[str, list[str] | str]] = {
     "mod.actions.list": {
         "summary": "Показать недавние модераторские действия.",
         "workflow": ["Загружает недавние действия и отправляет приватную карточку со ссылками на панель управления."],
+    },
+    "mod.profile": {
+        "summary": "Показать аккуратную карточку участника и краткую сводку по модерации.",
+        "workflow": [
+            "Обновляет сохранённые данные участника и его статус на сервере.",
+            "Загружает даты вступления, количество действий и открытых дел, чаще всего упомянутые правила и недавние действия.",
+            "Отправляет приватную карточку с аватаром участника и кнопкой перехода к полному профилю в панели управления.",
+        ],
+    },
+    "warns": {
+        "summary": "Показать активные предупреждения участника без закрытых данных модерации.",
+        "workflow": [
+            "Загружает активные предупреждения выбранного участника; если участник не указан, показывает предупреждения автора команды.",
+            "Показывает только названия правил и даты выдачи — без причин, комментариев, данных модератора, дел и ссылок на панель управления.",
+            "Публикует локализованную карточку и не отправляет уведомления упомянутым участникам.",
+        ],
     },
     "mod.actions.undo": {
         "summary": "Отменить активное предупреждение, мут или бан и записать результат.",

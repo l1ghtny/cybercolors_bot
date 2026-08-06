@@ -314,7 +314,7 @@ def test_bot_command_catalog_endpoint_returns_filterable_contract():
     response = client.get("/bot-commands", params={"category": "moderation-cases"})
     assert response.status_code == 200
     body = response.json()
-    assert body["version"] == "2026-07-29"
+    assert body["version"] == "2026-08-06"
     assert body["locale"] == "en"
     assert body["available_locales"] == ["en", "ru"]
     assert {command["category"] for command in body["commands"]} == {"moderation-cases"}
@@ -426,6 +426,7 @@ def test_moderation_bot_commands_use_product_rbac_permissions():
         "ban": {"moderation.actions.apply.ban"},
         "unban": {"moderation.actions.apply.ban"},
         "actions_list": {"moderation.actions.view"},
+        "member_profile": {"moderation.actions.view", "moderation.cases.view"},
         "action_revert": {"moderation.actions.revert"},
         "_open_action_revert_confirmation": {"moderation.actions.revert"},
         "moderation_settings": {"moderation.settings.view"},
@@ -485,7 +486,34 @@ def test_moderation_bot_commands_use_product_rbac_permissions():
 def test_only_confirmed_member_commands_are_public():
     public_commands = {command.id for command in BOT_COMMANDS if command.audience == "public_member"}
 
-    assert public_commands == {"bday.add", "bday.change", "bday.list", "cat"}
+    assert public_commands == {"bday.add", "bday.change", "bday.list", "cat", "warns"}
+
+
+def test_public_command_catalog_matches_newcomer_command_allowlist():
+    module = ast.parse((ROOT / "main.py").read_text(encoding="utf-8"), filename="main.py")
+    allowlist: set[str] | None = None
+    for node in module.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(target, ast.Name) and target.id == "PUBLIC_MEMBER_COMMAND_NAMES" for target in node.targets):
+            continue
+        if not isinstance(node.value, ast.Call) or not node.value.args:
+            continue
+        values = node.value.args[0]
+        if isinstance(values, (ast.Set, ast.Tuple, ast.List)):
+            allowlist = {
+                item.value
+                for item in values.elts
+                if isinstance(item, ast.Constant) and isinstance(item.value, str)
+            }
+        break
+
+    catalog_names = {
+        command.qualified_name
+        for command in BOT_COMMANDS
+        if command.audience == "public_member"
+    }
+    assert allowlist == catalog_names
 
 
 def test_bot_command_catalog_endpoint_returns_russian_locale():

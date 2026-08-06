@@ -1327,6 +1327,7 @@ def test_available_commands_tool_filters_public_newcomer_and_staff_access(monkey
         "bday.change",
         "bday.list",
         "cat",
+        "warns",
     }
 
     newcomer = asyncio.run(run([101]))
@@ -1345,6 +1346,7 @@ def test_available_commands_tool_filters_public_newcomer_and_staff_access(monkey
         "bday.change",
         "bday.list",
         "cat",
+        "warns",
     }
 
 

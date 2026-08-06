@@ -13,6 +13,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from src.commands.misc.cats import CAT_CAPTION_MAX_LENGTH, cat_command, cat_command_text
 from src.commands.app_command_errors import handle_app_command_error
 from src.commands.temp_voice import temp_voice_limit, temp_voice_rename
+from src.commands.warns import warns
 from src.commands.moderation.security import (
     security_create_newcomer_role,
     security_newcomer_role_suggestion,
@@ -49,6 +50,7 @@ from src.commands.moderation.actions import (
     register_moderation_action_components,
     unban,
 )
+from src.commands.moderation.profile import member_profile
 from src.commands.moderation.cases import (
     case_add_rule,
     case_add_user,
@@ -142,7 +144,7 @@ intents.voice_states = True
 
 logger = logger.logging.getLogger("bot")
 
-PUBLIC_MEMBER_COMMAND_NAMES = frozenset({"bday add", "bday change", "bday list", "cat"})
+PUBLIC_MEMBER_COMMAND_NAMES = frozenset({"bday add", "bday change", "bday list", "cat", "warns"})
 
 
 # main class
@@ -386,6 +388,7 @@ moderation_group.add_command(kick)
 moderation_group.add_command(ban)
 moderation_group.add_command(unban)
 moderation_group.add_command(security_lockdown)
+moderation_group.add_command(member_profile)
 
 moderation_rules_group.add_command(rule_add)
 moderation_rules_group.add_command(rules_import_message)
@@ -434,6 +437,7 @@ tree.add_command(temp_voice_group)
 tree.add_command(rules_import_from_message_ctx)
 tree.add_command(link_message_to_action_ctx)
 tree.add_command(start_action_from_message_ctx)
+tree.add_command(warns)
 
 
 # Add birthdays to the database
