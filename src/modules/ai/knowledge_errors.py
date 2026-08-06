@@ -16,6 +16,7 @@ PUBLIC_KNOWLEDGE_ERRORS = {
     "youtube_captions_missing": "No captions were available for this YouTube video.",
     "youtube_audio_download_failed": "The video's audio could not be retrieved from YouTube.",
     "youtube_audio_missing": "No usable audio was found for this YouTube video.",
+    "youtube_audio_too_large": "The video's audio is too large to transcribe.",
     "empty_transcription": "The video was processed, but no transcript was produced.",
     "modal_transcription_not_configured": "Video transcription is not currently available.",
     "modal_transcription_failed": "The video transcription service could not process this video.",

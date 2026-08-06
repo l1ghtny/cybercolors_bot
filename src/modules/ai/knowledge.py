@@ -38,7 +38,6 @@ READY_SOURCE_STATUSES = {"ready"}
 PUBLIC_ANSWER_VISIBILITIES = {"public_answer"}
 ACTIVE_JOB_STATUSES = {"pending", "running"}
 RETRYABLE_KNOWLEDGE_IMPORT_ERRORS = {
-    "youtube_access_challenge",
     "youtube_fetch_failed",
     "youtube_audio_download_failed",
     "modal_transcription_failed",

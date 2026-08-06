@@ -25,6 +25,7 @@ from src.db.models import AIKnowledgeChunk, AIKnowledgeSource, GlobalUser, Serve
 from src.modules.ai import embeddings as embeddings_module
 from src.modules.ai.knowledge import (
     KNOWLEDGE_EMBEDDING_DIMENSIONS,
+    RETRYABLE_KNOWLEDGE_IMPORT_ERRORS,
     build_knowledge_chunks,
     knowledge_source_index_text,
     run_knowledge_index_job_once,
@@ -59,6 +60,10 @@ class FakeKnowledgeEmbedder:
                 vector[2] = 1.0
             embeddings.append(vector)
         return embeddings
+
+
+def test_youtube_access_challenge_is_not_requeued_without_an_external_change():
+    assert "youtube_access_challenge" not in RETRYABLE_KNOWLEDGE_IMPORT_ERRORS
 
 
 def _make_discord_id() -> int:
@@ -640,53 +645,16 @@ def test_modal_transcription_provider_requires_endpoint():
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-def test_youtube_audio_fallback_uses_modal_provider(monkeypatch):
+def test_youtube_audio_fallback_downloads_locally_and_uploads_to_modal(monkeypatch):
     temp_dir = _make_test_temp_dir()
-
-    class FakeModalProvider:
-        def transcribe_youtube(self, *, youtube_url, source_url, source_metadata):
-            assert youtube_url == "https://youtube.test/video"
-            assert source_url == "https://youtube.test/video"
-            assert source_metadata["video_id"] == "abc"
-            return {
-                "text": "Mina talks about Friday movie nights.",
-                "language": "en",
-                "model": "whisper-large-v3",
-                "segments_count": 2,
-            }
-
-    monkeypatch.setattr("src.modules.ai.knowledge_imports.ModalTranscriptionProvider", FakeModalProvider)
-
-    try:
-        text, metadata = _extract_youtube_audio_and_transcribe(
-            url="https://youtube.test/video",
-            info={"id": "abc", "title": "Server update", "duration": 42, "webpage_url": "https://youtube.test/video"},
-            temp_dir=temp_dir,
-        )
-    finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
-
-    assert text == "Mina talks about Friday movie nights."
-    assert metadata["provider"] == "modal"
-    assert metadata["mode"] == "audio_transcription"
-    assert metadata["transcription_model"] == "whisper-large-v3"
-
-
-def test_youtube_audio_fallback_uploads_local_audio_when_modal_youtube_is_blocked(monkeypatch):
-    temp_dir = _make_test_temp_dir()
-    downloaded_audio = temp_dir / "audio.webm"
+    downloaded_audio = temp_dir / "audio.m4a"
     downloaded_audio.write_bytes(b"fake-youtube-audio")
 
     class FakeModalProvider:
-        def transcribe_youtube(self, *, youtube_url, source_url, source_metadata):
-            raise KnowledgeImportError(
-                "modal_transcription_failed",
-                "ERROR: [youtube] abc: Sign in to confirm you're not a bot. Use --cookies for auth.",
-            )
-
         def transcribe(self, *, audio_path, source_url, source_metadata):
             assert audio_path == downloaded_audio
-            assert source_metadata["modal_youtube_error"]
+            assert source_url == "https://youtube.test/video"
+            assert source_metadata["video_id"] == "abc"
             return {
                 "text": "Mina talks about Friday movie nights.",
                 "language": "en",
@@ -712,5 +680,6 @@ def test_youtube_audio_fallback_uploads_local_audio_when_modal_youtube_is_blocke
 
     assert text == "Mina talks about Friday movie nights."
     assert metadata["provider"] == "modal"
+    assert metadata["mode"] == "audio_transcription"
     assert metadata["fallback_mode"] == "local_audio_upload"
     assert metadata["transcription_model"] == "whisper-large-v3"

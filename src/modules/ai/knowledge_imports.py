@@ -22,10 +22,16 @@ MAX_KNOWLEDGE_UPLOAD_BYTES = int(os.getenv("AI_KNOWLEDGE_MAX_UPLOAD_BYTES") or s
 MAX_EXTRACTED_TEXT_CHARS = int(os.getenv("AI_KNOWLEDGE_MAX_EXTRACTED_TEXT_CHARS") or "500000")
 YOUTUBE_TRANSCRIPTION_PROVIDER = (os.getenv("AI_YOUTUBE_TRANSCRIPTION_PROVIDER") or "modal").strip().lower()
 YOUTUBE_AUDIO_MAX_BYTES = int(os.getenv("AI_YOUTUBE_AUDIO_MAX_BYTES") or str(250 * 1024 * 1024))
-YOUTUBE_AUDIO_FORMAT = os.getenv("AI_YOUTUBE_AUDIO_FORMAT") or "bestaudio/best"
+YOUTUBE_AUDIO_FORMAT = os.getenv("AI_YOUTUBE_AUDIO_FORMAT") or (
+    "bestaudio[acodec^=opus][abr<=96]/"
+    "bestaudio[abr<=96]/"
+    "bestaudio[abr<=128]/"
+    "bestaudio"
+)
+YOUTUBE_PROXY_URL = (os.getenv("AI_YOUTUBE_PROXY_URL") or "").strip() or None
 YOUTUBE_CAPTION_LANGUAGES = [
     item.strip()
-    for item in (os.getenv("AI_YOUTUBE_CAPTION_LANGUAGES") or "en").split(",")
+    for item in (os.getenv("AI_YOUTUBE_CAPTION_LANGUAGES") or "en,ru").split(",")
     if item.strip()
 ]
 TRANSCRIPTION_TIMEOUT_SECONDS = int(os.getenv("AI_YOUTUBE_TRANSCRIPTION_TIMEOUT_SECONDS") or "900")
@@ -64,6 +70,7 @@ TEXT_MIME_TYPES = {
 _TIMESTAMP_RE = re.compile(r"^\d{1,2}:\d{2}(?::\d{2})?[\d.,]*\s+-->\s+")
 _WEBVTT_TAG_RE = re.compile(r"<[^>]+>")
 _WHITESPACE_RE = re.compile(r"\s+")
+_URL_CREDENTIALS_RE = re.compile(r"(?i)\b((?:https?|socks4a?|socks5h?)://)[^/@\s]+@")
 
 
 class KnowledgeImportError(RuntimeError):
@@ -120,16 +127,20 @@ class _YtDlpDiagnosticLogger:
         self.video_id = video_id
 
     def debug(self, message: str) -> None:
-        logger.debug("yt_dlp video_id=%s %s", self.video_id, message)
+        logger.debug("yt_dlp video_id=%s %s", self.video_id, _redact_url_credentials(message))
 
     def info(self, message: str) -> None:
-        logger.info("yt_dlp video_id=%s %s", self.video_id, message)
+        logger.info("yt_dlp video_id=%s %s", self.video_id, _redact_url_credentials(message))
 
     def warning(self, message: str) -> None:
-        logger.warning("yt_dlp video_id=%s %s", self.video_id, message)
+        logger.warning("yt_dlp video_id=%s %s", self.video_id, _redact_url_credentials(message))
 
     def error(self, message: str) -> None:
-        logger.error("yt_dlp video_id=%s %s", self.video_id, message)
+        logger.error("yt_dlp video_id=%s %s", self.video_id, _redact_url_credentials(message))
+
+
+def _redact_url_credentials(message: str) -> str:
+    return _URL_CREDENTIALS_RE.sub(r"\1***@", message)
 
 
 def _youtube_import_error(exc: Exception, *, action: str) -> KnowledgeImportError:
@@ -261,7 +272,7 @@ def extract_text_from_youtube_url(url: str) -> tuple[str, dict[str, Any]]:
             "skip_download": True,
             "noplaylist": True,
             "writesubtitles": True,
-            "writeautomaticsub": True,
+            "writeautomaticsub": False,
             "subtitleslangs": YOUTUBE_CAPTION_LANGUAGES,
             "subtitlesformat": "vtt/best",
             "outtmpl": output_template,
@@ -270,16 +281,22 @@ def extract_text_from_youtube_url(url: str) -> tuple[str, dict[str, Any]]:
             "no_warnings": False,
             "logger": _YtDlpDiagnosticLogger(video_id=normalized.video_id),
         }
+        if YOUTUBE_PROXY_URL is not None:
+            options["proxy"] = YOUTUBE_PROXY_URL
+            logger.info("youtube_proxy_enabled video_id=%s", normalized.video_id)
         try:
             with yt_dlp.YoutubeDL(options) as downloader:
                 info = downloader.extract_info(normalized.canonical_url, download=True)
         except Exception as exc:
-            logger.exception(
-                "youtube_extract_failed video_id=%s exception_type=%s",
+            error = _youtube_import_error(exc, action="metadata")
+            logger.warning(
+                "youtube_extract_failed video_id=%s exception_type=%s error_code=%s detail=%s",
                 normalized.video_id,
                 type(exc).__name__,
+                error.code,
+                _redact_url_credentials(str(exc))[:1000],
             )
-            raise _youtube_import_error(exc, action="metadata") from exc
+            raise error from None
 
         if not isinstance(info, dict) or info.get("_type") in {"playlist", "multi_video"} or "entries" in info:
             logger.error("youtube_extract_rejected_collection video_id=%s", normalized.video_id)
@@ -339,24 +356,13 @@ def _extract_youtube_audio_and_transcribe(
         "video_title": info.get("title"),
         "duration": info.get("duration"),
     }
+    audio_path = _download_youtube_audio(url=url, temp_dir=temp_dir)
     provider = ModalTranscriptionProvider()
-    try:
-        transcription = provider.transcribe_youtube(
-            youtube_url=url,
-            source_url=source_url,
-            source_metadata=source_metadata,
-        )
-        fallback_mode = "modal_youtube"
-    except KnowledgeImportError as exc:
-        if not _should_retry_youtube_transcription_with_local_audio(exc):
-            raise
-        audio_path = _download_youtube_audio(url=url, temp_dir=temp_dir)
-        transcription = provider.transcribe(
-            audio_path=audio_path,
-            source_url=source_url,
-            source_metadata={**source_metadata, "modal_youtube_error": str(exc)},
-        )
-        fallback_mode = "local_audio_upload"
+    transcription = provider.transcribe(
+        audio_path=audio_path,
+        source_url=source_url,
+        source_metadata=source_metadata,
+    )
     text = _bounded_text(transcription["text"])
     if not text:
         raise KnowledgeImportError("empty_transcription", "Modal transcription returned no readable text.")
@@ -368,7 +374,7 @@ def _extract_youtube_audio_and_transcribe(
         "video_title": info.get("title"),
         "duration": info.get("duration"),
         "webpage_url": source_url,
-        "fallback_mode": fallback_mode,
+        "fallback_mode": "local_audio_upload",
         "language": transcription.get("language"),
         "transcription_model": transcription.get("model"),
         "segments_count": transcription.get("segments_count"),
@@ -395,18 +401,25 @@ def _download_youtube_audio(*, url: str, temp_dir: Path) -> Path:
         "quiet": True,
         "noprogress": True,
         "no_warnings": False,
+        "retries": 5,
+        "http_chunk_size": 5 * 1024 * 1024,
         "logger": _YtDlpDiagnosticLogger(video_id=normalized.video_id),
     }
+    if YOUTUBE_PROXY_URL is not None:
+        options["proxy"] = YOUTUBE_PROXY_URL
     try:
         with yt_dlp.YoutubeDL(options) as downloader:
             downloader.extract_info(normalized.canonical_url, download=True)
     except Exception as exc:
-        logger.exception(
-            "youtube_audio_download_failed video_id=%s exception_type=%s",
+        error = _youtube_import_error(exc, action="audio")
+        logger.warning(
+            "youtube_audio_download_failed video_id=%s exception_type=%s error_code=%s detail=%s",
             normalized.video_id,
             type(exc).__name__,
+            error.code,
+            _redact_url_credentials(str(exc))[:1000],
         )
-        raise _youtube_import_error(exc, action="audio") from exc
+        raise error from None
 
     candidates = sorted(
         [item for item in temp_dir.glob("audio_*") if item.is_file()],
@@ -415,16 +428,13 @@ def _download_youtube_audio(*, url: str, temp_dir: Path) -> Path:
     )
     if not candidates:
         raise KnowledgeImportError("youtube_audio_missing", "No YouTube audio file was downloaded.")
-    return candidates[0]
-
-
-def _should_retry_youtube_transcription_with_local_audio(exc: KnowledgeImportError) -> bool:
-    message = str(exc).lower()
-    return (
-        exc.code == "modal_transcription_failed"
-        and "youtube" in message
-        and any(marker in message for marker in ("sign in", "not a bot", "cookies", "bot"))
-    )
+    audio_path = candidates[0]
+    if audio_path.stat().st_size > YOUTUBE_AUDIO_MAX_BYTES:
+        raise KnowledgeImportError(
+            "youtube_audio_too_large",
+            f"YouTube audio exceeds the {YOUTUBE_AUDIO_MAX_BYTES}-byte transcription limit.",
+        )
+    return audio_path
 
 
 def _select_caption_files(temp_dir: Path) -> list[Path]:

@@ -3,6 +3,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+from collections import Counter
 from importlib import metadata as importlib_metadata
 from pathlib import Path
 from typing import Any
@@ -21,8 +22,6 @@ TRANSCRIBE_TIMEOUT_SECONDS = int(os.getenv("MODAL_WHISPER_TIMEOUT_SECONDS") or "
 TRANSCRIBE_GPU = os.getenv("MODAL_WHISPER_GPU") or "T4"
 TRANSCRIBE_MAX_CONTAINERS = int(os.getenv("MODAL_WHISPER_MAX_CONTAINERS") or "1")
 TRANSCRIBE_SCALEDOWN_WINDOW = int(os.getenv("MODAL_WHISPER_SCALEDOWN_WINDOW") or "30")
-TRANSCRIBE_CHUNK_LENGTH_SECONDS = int(os.getenv("WHISPER_CHUNK_LENGTH_SECONDS") or "30")
-TRANSCRIBE_BATCH_SIZE = int(os.getenv("WHISPER_BATCH_SIZE") or "4")
 TRANSCRIBE_LANGUAGE = os.getenv("WHISPER_LANGUAGE") or None
 
 image = (
@@ -37,7 +36,7 @@ image = (
         "librosa>=0.10.0",
         "soundfile>=0.12.1",
         "torch>=2.2.0",
-        "transformers>=4.41.0",
+        "transformers==5.14.1",
         "yt-dlp[default]>=2026.7.4",
     )
     .env(
@@ -132,11 +131,9 @@ class YouTubeWhisperTranscriber:
                 youtube_url=youtube_url,
                 max_audio_bytes=max_audio_bytes,
             )
-            result = self.pipeline(
-                str(audio_path),
-                batch_size=TRANSCRIBE_BATCH_SIZE,
-                chunk_length_s=TRANSCRIBE_CHUNK_LENGTH_SECONDS,
-                return_timestamps=True,
+            result = _run_whisper_pipeline(
+                pipeline=self.pipeline,
+                audio_path=audio_path,
                 generate_kwargs=generate_kwargs,
             )
             audio_file_name = audio_path.name
@@ -155,7 +152,7 @@ class YouTubeWhisperTranscriber:
         text = str(result.get("text") or " ".join(segment["text"] for segment in segments)).strip()
         return {
             "text": text,
-            "language": selected_language,
+            "language": _detected_language(result, selected_language=selected_language),
             "model": MODEL_NAME,
             "source_url": source_url,
             "content_type": content_type,
@@ -165,6 +162,50 @@ class YouTubeWhisperTranscriber:
             "segments_count": len(segments),
             "segments": segments,
         }
+
+
+def _run_whisper_pipeline(
+    *,
+    pipeline: Any,
+    audio_path: Path,
+    generate_kwargs: dict[str, Any],
+) -> dict[str, Any]:
+    """Use Whisper's native sequential long-form generation.
+
+    Passing ``chunk_length_s`` makes the generic ASR pipeline split audio into
+    experimental fixed chunks. Without it, the Whisper pipeline passes the
+    complete, untruncated features to ``model.generate`` and uses Whisper's
+    timestamp-based long-form algorithm.
+    """
+    return pipeline(
+        str(audio_path),
+        return_timestamps=True,
+        return_language=True,
+        generate_kwargs=generate_kwargs,
+    )
+
+
+def _detected_language(result: dict[str, Any], *, selected_language: str | None) -> str | None:
+    if selected_language:
+        return selected_language
+
+    top_level_language = result.get("language")
+    if isinstance(top_level_language, str) and top_level_language.strip():
+        return top_level_language.strip()
+
+    detected_languages = [
+        language.strip()
+        for chunk in result.get("chunks") or []
+        if isinstance(chunk, dict)
+        and isinstance((language := chunk.get("language")), str)
+        and language.strip()
+    ]
+    if not detected_languages:
+        return None
+
+    normalized_counts = Counter(language.casefold() for language in detected_languages)
+    most_common_language = normalized_counts.most_common(1)[0][0]
+    return next(language for language in detected_languages if language.casefold() == most_common_language)
 
 
 def _materialize_audio(
@@ -224,9 +265,12 @@ def _download_youtube_audio(*, youtube_url: str, temp_dir: Path) -> Path:
     try:
         with yt_dlp.YoutubeDL(options) as downloader:
             info = downloader.extract_info(youtube_url, download=True)
-    except Exception:
+    except Exception as exc:
         logger.exception("modal_youtube_download_failed")
-        raise
+        message = str(exc).lower()
+        if any(marker in message for marker in ("not a bot", "confirm you", "cookies", "ip has been blocked")):
+            raise RuntimeError("YouTube bot access challenge while downloading audio") from None
+        raise RuntimeError(f"YouTube audio download failed: {type(exc).__name__}") from None
     logger.info(
         "modal_youtube_download_completed video_id=%s duration=%s",
         info.get("id") if isinstance(info, dict) else None,
