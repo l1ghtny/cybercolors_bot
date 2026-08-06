@@ -404,10 +404,14 @@ jobs:
     name: 6. Deploy with Argo CD
     runs-on: self-hosted
     dependencies:
-      - build_frontend
-      - build_indexer
-      - build_embeddings
-      - run_migrations
+      - build_frontend:
+          on-failed-dependency: cancel
+      - build_indexer:
+          on-failed-dependency: cancel
+      - build_embeddings:
+          on-failed-dependency: cancel
+      - run_migrations:
+          on-failed-dependency: cancel
     steps:
       - type: script
         name: Patch Argo image tags and verify workloads
@@ -477,9 +481,34 @@ jobs:
           EMBEDDINGS_TAG="emb-$EMBEDDINGS_HASH"
           cd ..
 
+          current_argocd_backend_tag() {
+            kubectl -n argocd get application cybercolors \
+              -o jsonpath='{range .spec.source.kustomize.images[*]}{.}{"\n"}{end}' \
+              2>/dev/null \
+              | grep '^localhost:32000/cybercolors-backend:' \
+              | tail -n 1 \
+              | sed 's/.*://' \
+              || true
+          }
+
+          superseded_by_newer_deploy() {
+            local current_backend_tag
+            current_backend_tag="$(current_argocd_backend_tag)"
+            [[ "$current_backend_tag" =~ ^[0-9]+$ ]] && \
+              [ "$current_backend_tag" -gt "$BACKEND_TAG" ]
+          }
+
+          patch_argocd_images() {
+            kubectl -n argocd patch application cybercolors --type merge -p "{\"spec\":{\"source\":{\"kustomize\":{\"images\":[\"localhost:32000/cybercolors-backend:$BACKEND_TAG\",\"localhost:32000/cybercolors-frontend:$FRONTEND_TAG\",\"localhost:32000/cybercolors-indexer:$INDEXER_TAG\",\"localhost:32000/cybercolors-embeddings:$EMBEDDINGS_TAG\"]}}}}"
+            kubectl -n argocd annotate application cybercolors argocd.argoproj.io/refresh=hard --overwrite
+          }
+
           kubectl apply -f cybercolors_bot/deploy/argocd/cybercolors-application.yaml
-          kubectl -n argocd patch application cybercolors --type merge -p "{\"spec\":{\"source\":{\"kustomize\":{\"images\":[\"localhost:32000/cybercolors-backend:$BACKEND_TAG\",\"localhost:32000/cybercolors-frontend:$FRONTEND_TAG\",\"localhost:32000/cybercolors-indexer:$INDEXER_TAG\",\"localhost:32000/cybercolors-embeddings:$EMBEDDINGS_TAG\"]}}}}"
-          kubectl -n argocd annotate application cybercolors argocd.argoproj.io/refresh=hard --overwrite
+          if superseded_by_newer_deploy; then
+            echo "Deploy $BACKEND_TAG is superseded by Argo backend tag $(current_argocd_backend_tag); skipping stale rollout."
+            exit 0
+          fi
+          patch_argocd_images
 
           for i in $(seq 1 90); do
             if kubectl -n cybercolors get rollout cybercolors-backend >/dev/null 2>&1 && \
@@ -505,6 +534,12 @@ jobs:
           kubectl -n cybercolors rollout status deployment/modral-bot --timeout=900s
           kubectl -n cybercolors rollout status deployment/cybercolors-newcomer-release-worker --timeout=900s
           kubectl -n cybercolors rollout status deployment/cybercolors-indexer-worker --timeout=1800s
+
+          if superseded_by_newer_deploy; then
+            echo "Deploy $BACKEND_TAG was superseded by Argo backend tag $(current_argocd_backend_tag); leaving the newer rollout in place."
+            exit 0
+          fi
+          patch_argocd_images
 
           for i in $(seq 1 90); do
             BACKEND_IMAGE="$(kubectl -n cybercolors get deployment cybercolors-backend -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)"
