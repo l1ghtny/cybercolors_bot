@@ -185,6 +185,149 @@ def test_birthday_role_check_skips_invalid_timestamp_and_processes_next_record(m
     assert session.commits == 1
 
 
+def test_birthday_role_check_removes_roles_from_all_servers_before_clearing_timestamp(monkeypatch):
+    role_one = SimpleNamespace(id=101, name="birthday-one")
+    role_two = SimpleNamespace(id=202, name="birthday-two")
+
+    class FakeMember:
+        def __init__(self):
+            self.removed_roles = []
+
+        async def remove_roles(self, role):
+            self.removed_roles.append(role)
+
+    member_one = FakeMember()
+    member_two = FakeMember()
+    guilds = {
+        11: SimpleNamespace(roles=[role_one], get_member=lambda user_id: member_one),
+        22: SimpleNamespace(roles=[role_two], get_member=lambda user_id: member_two),
+    }
+    birthday = SimpleNamespace(
+        role_added_at=datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=2)
+    )
+    memberships = [
+        SimpleNamespace(
+            user_id=42,
+            server_id=11,
+            server=SimpleNamespace(birthday_role_id=role_one.id),
+        ),
+        SimpleNamespace(
+            user_id=42,
+            server_id=22,
+            server=SimpleNamespace(birthday_role_id=role_two.id),
+        ),
+    ]
+
+    class FakeSession:
+        def __init__(self):
+            self.merged = []
+            self.commits = 0
+
+        async def exec(self, statement):
+            return SimpleNamespace(all=lambda: [(membership, birthday) for membership in memberships])
+
+        async def merge(self, item):
+            self.merged.append(item)
+
+        async def commit(self):
+            assert member_one.removed_roles == [role_one]
+            assert member_two.removed_roles == [role_two]
+            self.commits += 1
+
+    session = FakeSession()
+
+    class FakeSessionContext:
+        async def __aenter__(self):
+            return session
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+    client = SimpleNamespace(get_guild=guilds.get)
+    monkeypatch.setattr(check_roles, "get_async_session", lambda: FakeSessionContext())
+
+    asyncio.run(check_roles.check_roles(client))
+
+    assert birthday.role_added_at is None
+    assert session.merged == [birthday]
+    assert session.commits == 1
+
+
+def test_birthday_role_check_retries_all_servers_if_one_removal_fails(monkeypatch):
+    class FakeDiscordError(Exception):
+        pass
+
+    monkeypatch.setattr(check_roles.discord, "Forbidden", FakeDiscordError)
+    monkeypatch.setattr(check_roles.discord, "HTTPException", FakeDiscordError)
+
+    role_one = SimpleNamespace(id=101, name="birthday-one")
+    role_two = SimpleNamespace(id=202, name="birthday-two")
+
+    class FailingMember:
+        async def remove_roles(self, role):
+            raise FakeDiscordError("missing permissions")
+
+    class SuccessfulMember:
+        def __init__(self):
+            self.removed_roles = []
+
+        async def remove_roles(self, role):
+            self.removed_roles.append(role)
+
+    successful_member = SuccessfulMember()
+    guilds = {
+        11: SimpleNamespace(roles=[role_one], get_member=lambda user_id: FailingMember()),
+        22: SimpleNamespace(roles=[role_two], get_member=lambda user_id: successful_member),
+    }
+    role_added_at = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=2)
+    birthday = SimpleNamespace(role_added_at=role_added_at)
+    memberships = [
+        SimpleNamespace(
+            user_id=42,
+            server_id=11,
+            server=SimpleNamespace(birthday_role_id=role_one.id),
+        ),
+        SimpleNamespace(
+            user_id=42,
+            server_id=22,
+            server=SimpleNamespace(birthday_role_id=role_two.id),
+        ),
+    ]
+
+    class FakeSession:
+        def __init__(self):
+            self.merged = []
+            self.commits = 0
+
+        async def exec(self, statement):
+            return SimpleNamespace(all=lambda: [(membership, birthday) for membership in memberships])
+
+        async def merge(self, item):
+            self.merged.append(item)
+
+        async def commit(self):
+            self.commits += 1
+
+    session = FakeSession()
+
+    class FakeSessionContext:
+        async def __aenter__(self):
+            return session
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+    client = SimpleNamespace(get_guild=guilds.get)
+    monkeypatch.setattr(check_roles, "get_async_session", lambda: FakeSessionContext())
+
+    asyncio.run(check_roles.check_roles(client))
+
+    assert successful_member.removed_roles == [role_two]
+    assert birthday.role_added_at == role_added_at
+    assert session.merged == []
+    assert session.commits == 0
+
+
 def test_birthday_settings_warning_detects_role_hierarchy_and_permissions(monkeypatch):
     async def fake_bot_user():
         return {"id": "99"}

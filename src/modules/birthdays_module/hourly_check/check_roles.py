@@ -46,32 +46,67 @@ async def check_roles(client, *, guild_ids: set[int] | None = None):
         result = await session.exec(query)
         items = result.all()
 
+        # The assignment timestamp is global per Discord user, while birthday
+        # roles are server-specific. Process every membership before clearing
+        # the shared timestamp so a commit cannot invalidate later rows.
+        memberships_by_user: dict[int, tuple[Birthday, list[User]]] = {}
         for user, birthday in items:
-            role_time = birthday.role_added_at
-            role_guild_id = user.server_id
-            role_user_id = user.user_id
-            server_role_id = user.server.birthday_role_id if user.server else None
+            _, memberships = memberships_by_user.setdefault(
+                user.user_id,
+                (birthday, []),
+            )
+            memberships.append(user)
 
-            discord_user = client.get_user(role_user_id)
+        timestamps_cleared = False
+        for role_user_id, (birthday, memberships) in memberships_by_user.items():
+            role_time = birthday.role_added_at
             try:
                 role_age = birthday_role_age(role_time)
             except (AttributeError, TypeError, ValueError):
                 logger.exception(
-                    'Invalid birthday role timestamp for user ID %s in server ID %s: %r',
+                    'Invalid birthday role timestamp for user ID %s across server IDs %s: %r',
                     role_user_id,
-                    role_guild_id,
+                    [membership.server_id for membership in memberships],
                     role_time,
                 )
                 continue
-            current_guild = client.get_guild(role_guild_id)
-            current_member = current_guild.get_member(role_user_id) if current_guild else None
-            current_role = discord.utils.get(current_guild.roles, id=server_role_id) if current_guild and server_role_id else None
             logger.info(f'timedelta in days: {role_age.days}')
-            if role_age >= datetime.timedelta(days=1) and current_member and current_role:
-                logger.info('checked role is older than 1 day')
+            if role_age < datetime.timedelta(days=1):
+                continue
+
+            logger.info('checked role is older than 1 day')
+            all_roles_managed = True
+            for membership in memberships:
+                role_guild_id = membership.server_id
+                server_role_id = membership.server.birthday_role_id if membership.server else None
+                current_guild = client.get_guild(role_guild_id)
+                if current_guild is None:
+                    all_roles_managed = False
+                    logger.warning(
+                        'Could not manage birthday role for user ID %s because server ID %s is unavailable',
+                        role_user_id,
+                        role_guild_id,
+                    )
+                    continue
+
+                current_member = current_guild.get_member(role_user_id)
+                current_role = (
+                    discord.utils.get(current_guild.roles, id=server_role_id)
+                    if server_role_id
+                    else None
+                )
+                if current_member is None or current_role is None:
+                    logger.info(
+                        'No birthday role to remove for user ID %s in server ID %s',
+                        role_user_id,
+                        role_guild_id,
+                    )
+                    continue
+
                 try:
                     await current_member.remove_roles(current_role)
                 except (discord.Forbidden, discord.HTTPException) as error:
+                    all_roles_managed = False
                     logger.warning(
                         'Could not remove birthday role ID %s from user ID %s in server ID %s: %s',
                         server_role_id,
@@ -81,12 +116,17 @@ async def check_roles(client, *, guild_ids: set[int] | None = None):
                     )
                     continue
 
+                logger.info(
+                    'Birthday role %s removed from user ID %s in server ID %s',
+                    current_role.name,
+                    role_user_id,
+                    role_guild_id,
+                )
+
+            if all_roles_managed:
                 birthday.role_added_at = None
                 await session.merge(birthday)
-                await session.commit()
-                logger.info(f'role removed from user {discord_user.name if discord_user else role_user_id}')
-            else:
-                if current_role and discord_user:
-                    logger.info(f'role {current_role.name} on user {discord_user.name} is not older than 1 day')
-                else:
-                    logger.info('Skipping role check due to missing guild/member/role context')
+                timestamps_cleared = True
+
+        if timestamps_cleared:
+            await session.commit()
