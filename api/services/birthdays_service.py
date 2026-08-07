@@ -34,7 +34,7 @@ def to_birthday_read(user: User, global_user: GlobalUser, birthday: Birthday) ->
         day=birthday.day,
         month=birthday.month,
         timezone=birthday.timezone,
-        role_added_at=birthday.role_added_at,
+        role_added_at=user.birthday_role_added_at,
     )
 
 

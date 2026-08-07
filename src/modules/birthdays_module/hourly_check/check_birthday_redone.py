@@ -17,11 +17,32 @@ JINJA_STYLE_MENTION_PLACEHOLDER = re.compile(r"\{\{\s*user_mention\s*\}\}")
 RAW_MENTION_PLACEHOLDER = re.compile(r"(?<!\w)user_mention(?!\w)")
 
 
-async def mark_birthday_processed(session, birthday: Birthday) -> None:
-    birthday.role_added_at = utcnow_utc_tz()
-    await session.merge(birthday)
+async def persist_birthday_membership_state(
+    session,
+    membership: User,
+    *,
+    greeted: bool,
+    role_added: bool,
+) -> None:
+    processed_at = utcnow_utc_tz()
+    if greeted:
+        membership.birthday_greeted_at = processed_at
+    if role_added:
+        membership.birthday_role_added_at = processed_at
+    await session.merge(membership)
     await session.commit()
-    await session.refresh(birthday)
+    await session.refresh(membership)
+
+
+def birthday_greeting_was_sent_today(
+    greeted_at: datetime.datetime | None,
+    current_time: datetime.datetime,
+) -> bool:
+    if greeted_at is None:
+        return False
+    if greeted_at.tzinfo is None:
+        greeted_at = greeted_at.replace(tzinfo=datetime.timezone.utc)
+    return greeted_at.astimezone(current_time.tzinfo).date() == current_time.date()
 
 
 async def send_birthday_greeting(client: discord.Client, server, embed: discord.Embed) -> bool:
@@ -101,8 +122,8 @@ async def check_birthday_new(
                     logger.warning("Could not fetch guild ID %s: %s", server.server_id, error)
                     continue
 
-                if not guild or not server.birthday_role_id:
-                    logger.warning(f"Guild or birthday role not found for server ID: {server.server_id}")
+                if not guild:
+                    logger.warning(f"Guild not found for server ID: {server.server_id}")
                     continue
 
                 try:
@@ -131,42 +152,57 @@ async def check_birthday_new(
                 )
 
                 is_birthday_day = user_current_time.date() == birthday_date
-                is_midnight_user_tz = user_current_time.hour == 0
-                role_not_assigned_yet = birthday.role_added_at is None
-                should_celebrate = is_birthday_day and (is_midnight_user_tz or role_not_assigned_yet)
+                greeting_already_sent = birthday_greeting_was_sent_today(
+                    membership.birthday_greeted_at,
+                    user_current_time,
+                )
+                should_send_greeting = is_birthday_day and not greeting_already_sent
+                should_add_role = (
+                    is_birthday_day
+                    and server.birthday_role_id is not None
+                    and membership.birthday_role_added_at is None
+                )
 
-                if should_celebrate:
+                if should_send_greeting or should_add_role:
                     logger.info(f"It's {member.name}'s birthday! 🎉")
 
+                greeting_sent = False
+                if should_send_greeting:
                     congrats_statement = select(Congratulation).where(Congratulation.server_id == server.server_id)
                     congrats_result = await session.exec(congrats_statement)
                     greetings = congrats_result.all()
 
                     if not greetings:
                         logger.warning(f"No congratulations messages found for server {server.server_name}")
-                        continue
+                    else:
+                        greeting = random.choice(greetings)
+                        embed_description = render_celebration_message(greeting.bot_message, member.mention)
+                        embed = discord.Embed(colour=discord.Colour.dark_gold(), description=embed_description)
+                        greeting_sent = await send_birthday_greeting(client, server, embed)
 
-                    greeting = random.choice(greetings)
-                    embed_description = render_celebration_message(greeting.bot_message, member.mention)
-                    embed = discord.Embed(colour=discord.Colour.dark_gold(), description=embed_description)
-
-                    greeting_sent = await send_birthday_greeting(client, server, embed)
-                    if greeting_sent:
-                        await mark_birthday_processed(session, birthday)
-
+                role_added = False
+                if should_add_role:
                     birthday_role = guild.get_role(server.birthday_role_id)
                     if birthday_role:
                         role_added = await add_birthday_role(member, birthday_role, server.server_id)
                         if role_added:
-                            if not greeting_sent:
-                                await mark_birthday_processed(session, birthday)
                             logger.info(
-                                f"Birthday role added to {member.name} and timestamp updated to {birthday.role_added_at}"
+                                "Birthday role added to %s in server ID %s",
+                                member.name,
+                                server.server_id,
                             )
                     else:
                         logger.warning(
                             f"Could not find birthday role with ID {server.birthday_role_id} in guild {guild.name}"
                         )
+
+                if greeting_sent or role_added:
+                    await persist_birthday_membership_state(
+                        session,
+                        membership,
+                        greeted=greeting_sent,
+                        role_added=role_added,
+                    )
 
     logger.info("Finished birthday check.")
 

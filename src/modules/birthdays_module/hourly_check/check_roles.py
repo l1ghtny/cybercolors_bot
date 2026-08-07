@@ -5,12 +5,12 @@ from sqlalchemy.orm import selectinload
 
 from sqlmodel import select
 
-from src.db.models import User, Birthday
+from src.db.models import User
 from src.modules.logs_setup import logger
 from src.db.database import get_async_session
 from src.modules.observability.bot_metrics import (
     BIRTHDAY_ROLE_CLEANUP_PENDING,
-    BIRTHDAY_ROLE_CLEANUP_USERS,
+    BIRTHDAY_ROLE_CLEANUP_MEMBERSHIPS,
     BIRTHDAY_ROLE_REMOVALS,
 )
 
@@ -48,41 +48,33 @@ async def check_roles(
         return
     async with get_async_session() as session:
         query = (
-            select(User, Birthday)
-            .join(Birthday, Birthday.user_id == User.user_id)
-            .where(Birthday.role_added_at.isnot(None))
+            select(User)
+            .where(User.birthday_role_added_at.isnot(None))
             .options(selectinload(User.server))
         )
         if guild_ids is not None:
             query = query.where(User.server_id.in_(list(guild_ids)))
         result = await session.exec(query)
-        items = result.all()
-
-        # The assignment timestamp is global per Discord user, while birthday
-        # roles are server-specific. Process every membership before clearing
-        # the shared timestamp so a commit cannot invalidate later rows.
-        memberships_by_user: dict[int, tuple[Birthday, list[User]]] = {}
-        for user, birthday in items:
-            _, memberships = memberships_by_user.setdefault(
-                user.user_id,
-                (birthday, []),
-            )
-            memberships.append(user)
+        memberships = result.all()
 
         timestamps_cleared = 0
         pending_cleanups = 0
-        for role_user_id, (birthday, memberships) in memberships_by_user.items():
-            role_time = birthday.role_added_at
+        for membership in memberships:
+            role_time = membership.birthday_role_added_at
+            role_user_id = membership.user_id
+            role_guild_id = membership.server_id
             try:
                 role_age = birthday_role_age(role_time)
             except (AttributeError, TypeError, ValueError):
                 logger.exception(
-                    'Invalid birthday role timestamp for user ID %s across server IDs %s: %r',
+                    'Invalid birthday role timestamp for user ID %s in server ID %s: %r',
                     role_user_id,
-                    [membership.server_id for membership in memberships],
+                    role_guild_id,
                     role_time,
                 )
-                BIRTHDAY_ROLE_CLEANUP_USERS.labels(outcome="invalid_timestamp").inc()
+                BIRTHDAY_ROLE_CLEANUP_MEMBERSHIPS.labels(
+                    outcome="invalid_timestamp"
+                ).inc()
                 pending_cleanups += 1
                 continue
             logger.info(f'timedelta in days: {role_age.days}')
@@ -90,41 +82,43 @@ async def check_roles(
                 continue
 
             logger.info('checked role is older than 1 day')
-            all_roles_managed = True
-            for membership in memberships:
-                role_guild_id = membership.server_id
-                server_role_id = membership.server.birthday_role_id if membership.server else None
-                current_guild = client.get_guild(role_guild_id)
-                if current_guild is None:
-                    all_roles_managed = False
-                    BIRTHDAY_ROLE_REMOVALS.labels(outcome="server_unavailable").inc()
-                    logger.warning(
-                        'Could not manage birthday role for user ID %s because server ID %s is unavailable',
-                        role_user_id,
-                        role_guild_id,
-                    )
-                    continue
-
-                current_member = current_guild.get_member(role_user_id)
-                current_role = (
-                    discord.utils.get(current_guild.roles, id=server_role_id)
-                    if server_role_id
-                    else None
+            server_role_id = membership.server.birthday_role_id if membership.server else None
+            current_guild = client.get_guild(role_guild_id)
+            if current_guild is None:
+                BIRTHDAY_ROLE_REMOVALS.labels(outcome="server_unavailable").inc()
+                BIRTHDAY_ROLE_CLEANUP_MEMBERSHIPS.labels(
+                    outcome="retry_pending"
+                ).inc()
+                pending_cleanups += 1
+                logger.warning(
+                    'Could not manage birthday role for user ID %s because server ID %s is unavailable',
+                    role_user_id,
+                    role_guild_id,
                 )
-                if current_member is None or current_role is None:
-                    BIRTHDAY_ROLE_REMOVALS.labels(outcome="absent").inc()
-                    logger.info(
-                        'No birthday role to remove for user ID %s in server ID %s',
-                        role_user_id,
-                        role_guild_id,
-                    )
-                    continue
+                continue
 
+            current_member = current_guild.get_member(role_user_id)
+            current_role = (
+                discord.utils.get(current_guild.roles, id=server_role_id)
+                if server_role_id
+                else None
+            )
+            if current_member is None or current_role is None:
+                BIRTHDAY_ROLE_REMOVALS.labels(outcome="absent").inc()
+                logger.info(
+                    'No birthday role to remove for user ID %s in server ID %s',
+                    role_user_id,
+                    role_guild_id,
+                )
+            else:
                 try:
                     await current_member.remove_roles(current_role)
                 except (discord.Forbidden, discord.HTTPException) as error:
-                    all_roles_managed = False
                     BIRTHDAY_ROLE_REMOVALS.labels(outcome="discord_error").inc()
+                    BIRTHDAY_ROLE_CLEANUP_MEMBERSHIPS.labels(
+                        outcome="retry_pending"
+                    ).inc()
+                    pending_cleanups += 1
                     logger.warning(
                         'Could not remove birthday role ID %s from user ID %s in server ID %s: %s',
                         server_role_id,
@@ -142,26 +136,22 @@ async def check_roles(
                     role_guild_id,
                 )
 
-            if all_roles_managed:
-                birthday.role_added_at = None
-                await session.merge(birthday)
-                timestamps_cleared += 1
-            else:
-                BIRTHDAY_ROLE_CLEANUP_USERS.labels(outcome="retry_pending").inc()
-                pending_cleanups += 1
+            membership.birthday_role_added_at = None
+            await session.merge(membership)
+            timestamps_cleared += 1
 
         if timestamps_cleared:
             try:
                 await session.commit()
             except Exception:
-                BIRTHDAY_ROLE_CLEANUP_USERS.labels(outcome="database_error").inc(
+                BIRTHDAY_ROLE_CLEANUP_MEMBERSHIPS.labels(outcome="database_error").inc(
                     timestamps_cleared
                 )
                 pending_cleanups += timestamps_cleared
                 if update_pending_metric:
                     BIRTHDAY_ROLE_CLEANUP_PENDING.set(pending_cleanups)
                 raise
-            BIRTHDAY_ROLE_CLEANUP_USERS.labels(outcome="completed").inc(
+            BIRTHDAY_ROLE_CLEANUP_MEMBERSHIPS.labels(outcome="completed").inc(
                 timestamps_cleared
             )
         if update_pending_metric:

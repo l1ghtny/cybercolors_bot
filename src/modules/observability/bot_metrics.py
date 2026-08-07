@@ -11,12 +11,12 @@ BIRTHDAY_ROLE_REMOVALS = Counter(
     "Birthday role removal attempts by outcome.",
     ("outcome",),
 )
-BIRTHDAY_ROLE_CLEANUP_USERS = Counter(
-    "cybercolors_birthday_role_cleanup_users_total",
-    "Birthday users processed for role cleanup by outcome.",
+BIRTHDAY_ROLE_CLEANUP_MEMBERSHIPS = Counter(
+    "cybercolors_birthday_role_cleanup_memberships_total",
+    "Server memberships processed for birthday role cleanup by outcome.",
     ("outcome",),
 )
 BIRTHDAY_ROLE_CLEANUP_PENDING = Gauge(
     "cybercolors_birthday_role_cleanup_pending",
-    "Birthday users still awaiting successful role cleanup after the latest run.",
+    "Server memberships still awaiting successful birthday role cleanup after the latest run.",
 )

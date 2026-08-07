@@ -55,6 +55,8 @@ def test_timezone_migration_covers_every_previously_naive_timestamp():
     }
     created_timezone_aware = {
         ("global_users", "joined_discord"),
+        ("users", "birthday_greeted_at"),
+        ("users", "birthday_role_added_at"),
         ("server_gateway_installations", "joined_at"),
         ("server_gateway_installations", "left_at"),
         ("server_gateway_installations", "presence_updated_at"),

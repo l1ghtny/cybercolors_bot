@@ -5,7 +5,7 @@ from pathlib import Path
 from src.modules.birthdays_module.hourly_check import check_roles
 from src.modules.observability.bot_metrics import (
     BIRTHDAY_ROLE_CLEANUP_PENDING,
-    BIRTHDAY_ROLE_CLEANUP_USERS,
+    BIRTHDAY_ROLE_CLEANUP_MEMBERSHIPS,
     BIRTHDAY_ROLE_REMOVALS,
 )
 
@@ -13,8 +13,11 @@ from src.modules.observability.bot_metrics import (
 def test_birthday_role_metrics_use_only_bounded_outcome_labels():
     assert BIRTHDAY_ROLE_REMOVALS._name == "cybercolors_birthday_role_removals"
     assert BIRTHDAY_ROLE_REMOVALS._labelnames == ("outcome",)
-    assert BIRTHDAY_ROLE_CLEANUP_USERS._name == "cybercolors_birthday_role_cleanup_users"
-    assert BIRTHDAY_ROLE_CLEANUP_USERS._labelnames == ("outcome",)
+    assert (
+        BIRTHDAY_ROLE_CLEANUP_MEMBERSHIPS._name
+        == "cybercolors_birthday_role_cleanup_memberships"
+    )
+    assert BIRTHDAY_ROLE_CLEANUP_MEMBERSHIPS._labelnames == ("outcome",)
     assert BIRTHDAY_ROLE_CLEANUP_PENDING._name == "cybercolors_birthday_role_cleanup_pending"
     assert BIRTHDAY_ROLE_CLEANUP_PENDING._labelnames == ()
 
@@ -53,4 +56,5 @@ def test_runtime_dashboard_exposes_birthday_role_cleanup_metrics():
 
     assert "cybercolors_birthday_role_removals_total" in outcomes_query
     assert "cybercolors_birthday_role_cleanup_pending" in pending_query
+    assert "cybercolors_birthday_role_cleanup_memberships_total" in retries_query
     assert 'outcome=~"retry_pending|invalid_timestamp|database_error"' in retries_query

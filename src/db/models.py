@@ -279,6 +279,14 @@ class User(SQLModel, table=True):
     left_server_at: Optional[datetime] = None
     flagged_absent_at: Optional[datetime] = None
     is_member: bool = True
+    birthday_greeted_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(TIMESTAMP(timezone=True), nullable=True),
+    )
+    birthday_role_added_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(TIMESTAMP(timezone=True), nullable=True),
+    )
 
     # --- Relationships ---
     server_id: int = Field(sa_column=Column(BigInteger, ForeignKey("servers.server_id"), nullable=False, primary_key=True))
@@ -295,6 +303,8 @@ class Birthday(SQLModel, table=True):
     day: int
     month: int
     timezone: Optional[str] = None
+    # Kept temporarily for backwards-compatible rolling deployments. New
+    # greeting and role assignment state lives on each server membership.
     role_added_at: Optional[datetime] = None
 
     # --- Relationships ---
