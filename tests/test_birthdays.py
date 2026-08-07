@@ -8,6 +8,11 @@ from pydantic import ValidationError
 from api.models.birthdays import BirthdayWriteModel
 from api.services import birthday_permission_warnings
 from src.modules.birthdays_module.hourly_check import check_birthday_redone, check_roles
+from src.modules.observability.bot_metrics import (
+    BIRTHDAY_ROLE_CLEANUP_PENDING,
+    BIRTHDAY_ROLE_CLEANUP_USERS,
+    BIRTHDAY_ROLE_REMOVALS,
+)
 
 
 def test_birthday_timezone_accepts_iana_name_and_normalizes_blank():
@@ -186,6 +191,8 @@ def test_birthday_role_check_skips_invalid_timestamp_and_processes_next_record(m
 
 
 def test_birthday_role_check_removes_roles_from_all_servers_before_clearing_timestamp(monkeypatch):
+    removed_before = BIRTHDAY_ROLE_REMOVALS.labels(outcome="removed")._value.get()
+    completed_before = BIRTHDAY_ROLE_CLEANUP_USERS.labels(outcome="completed")._value.get()
     role_one = SimpleNamespace(id=101, name="birthday-one")
     role_two = SimpleNamespace(id=202, name="birthday-two")
 
@@ -251,9 +258,15 @@ def test_birthday_role_check_removes_roles_from_all_servers_before_clearing_time
     assert birthday.role_added_at is None
     assert session.merged == [birthday]
     assert session.commits == 1
+    assert BIRTHDAY_ROLE_REMOVALS.labels(outcome="removed")._value.get() == removed_before + 2
+    assert BIRTHDAY_ROLE_CLEANUP_USERS.labels(outcome="completed")._value.get() == completed_before + 1
+    assert BIRTHDAY_ROLE_CLEANUP_PENDING._value.get() == 0
 
 
 def test_birthday_role_check_retries_all_servers_if_one_removal_fails(monkeypatch):
+    removed_before = BIRTHDAY_ROLE_REMOVALS.labels(outcome="removed")._value.get()
+    errors_before = BIRTHDAY_ROLE_REMOVALS.labels(outcome="discord_error")._value.get()
+    retries_before = BIRTHDAY_ROLE_CLEANUP_USERS.labels(outcome="retry_pending")._value.get()
     class FakeDiscordError(Exception):
         pass
 
@@ -326,6 +339,10 @@ def test_birthday_role_check_retries_all_servers_if_one_removal_fails(monkeypatc
     assert birthday.role_added_at == role_added_at
     assert session.merged == []
     assert session.commits == 0
+    assert BIRTHDAY_ROLE_REMOVALS.labels(outcome="removed")._value.get() == removed_before + 1
+    assert BIRTHDAY_ROLE_REMOVALS.labels(outcome="discord_error")._value.get() == errors_before + 1
+    assert BIRTHDAY_ROLE_CLEANUP_USERS.labels(outcome="retry_pending")._value.get() == retries_before + 1
+    assert BIRTHDAY_ROLE_CLEANUP_PENDING._value.get() == 1
 
 
 def test_birthday_settings_warning_detects_role_hierarchy_and_permissions(monkeypatch):

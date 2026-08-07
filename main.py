@@ -723,7 +723,7 @@ async def birthday_check(interaction: discord.Interaction):
     await interaction.response.defer()
     guild_ids = {interaction.guild.id}
     await check_birthday_new(client, guild_ids=guild_ids)
-    await check_roles(client, guild_ids=guild_ids)
+    await check_roles(client, guild_ids=guild_ids, update_pending_metric=False)
     await interaction.followup.send('OK')
 
 

@@ -8,6 +8,11 @@ from sqlmodel import select
 from src.db.models import User, Birthday
 from src.modules.logs_setup import logger
 from src.db.database import get_async_session
+from src.modules.observability.bot_metrics import (
+    BIRTHDAY_ROLE_CLEANUP_PENDING,
+    BIRTHDAY_ROLE_CLEANUP_USERS,
+    BIRTHDAY_ROLE_REMOVALS,
+)
 
 logger = logger.logging.getLogger("bot")
 
@@ -31,8 +36,15 @@ def birthday_role_age(
     return current_time.astimezone(datetime.timezone.utc) - role_added_at.astimezone(datetime.timezone.utc)
 
 
-async def check_roles(client, *, guild_ids: set[int] | None = None):
+async def check_roles(
+    client,
+    *,
+    guild_ids: set[int] | None = None,
+    update_pending_metric: bool = True,
+):
     if guild_ids is not None and not guild_ids:
+        if update_pending_metric:
+            BIRTHDAY_ROLE_CLEANUP_PENDING.set(0)
         return
     async with get_async_session() as session:
         query = (
@@ -57,7 +69,8 @@ async def check_roles(client, *, guild_ids: set[int] | None = None):
             )
             memberships.append(user)
 
-        timestamps_cleared = False
+        timestamps_cleared = 0
+        pending_cleanups = 0
         for role_user_id, (birthday, memberships) in memberships_by_user.items():
             role_time = birthday.role_added_at
             try:
@@ -69,6 +82,8 @@ async def check_roles(client, *, guild_ids: set[int] | None = None):
                     [membership.server_id for membership in memberships],
                     role_time,
                 )
+                BIRTHDAY_ROLE_CLEANUP_USERS.labels(outcome="invalid_timestamp").inc()
+                pending_cleanups += 1
                 continue
             logger.info(f'timedelta in days: {role_age.days}')
             if role_age < datetime.timedelta(days=1):
@@ -82,6 +97,7 @@ async def check_roles(client, *, guild_ids: set[int] | None = None):
                 current_guild = client.get_guild(role_guild_id)
                 if current_guild is None:
                     all_roles_managed = False
+                    BIRTHDAY_ROLE_REMOVALS.labels(outcome="server_unavailable").inc()
                     logger.warning(
                         'Could not manage birthday role for user ID %s because server ID %s is unavailable',
                         role_user_id,
@@ -96,6 +112,7 @@ async def check_roles(client, *, guild_ids: set[int] | None = None):
                     else None
                 )
                 if current_member is None or current_role is None:
+                    BIRTHDAY_ROLE_REMOVALS.labels(outcome="absent").inc()
                     logger.info(
                         'No birthday role to remove for user ID %s in server ID %s',
                         role_user_id,
@@ -107,6 +124,7 @@ async def check_roles(client, *, guild_ids: set[int] | None = None):
                     await current_member.remove_roles(current_role)
                 except (discord.Forbidden, discord.HTTPException) as error:
                     all_roles_managed = False
+                    BIRTHDAY_ROLE_REMOVALS.labels(outcome="discord_error").inc()
                     logger.warning(
                         'Could not remove birthday role ID %s from user ID %s in server ID %s: %s',
                         server_role_id,
@@ -116,6 +134,7 @@ async def check_roles(client, *, guild_ids: set[int] | None = None):
                     )
                     continue
 
+                BIRTHDAY_ROLE_REMOVALS.labels(outcome="removed").inc()
                 logger.info(
                     'Birthday role %s removed from user ID %s in server ID %s',
                     current_role.name,
@@ -126,7 +145,24 @@ async def check_roles(client, *, guild_ids: set[int] | None = None):
             if all_roles_managed:
                 birthday.role_added_at = None
                 await session.merge(birthday)
-                timestamps_cleared = True
+                timestamps_cleared += 1
+            else:
+                BIRTHDAY_ROLE_CLEANUP_USERS.labels(outcome="retry_pending").inc()
+                pending_cleanups += 1
 
         if timestamps_cleared:
-            await session.commit()
+            try:
+                await session.commit()
+            except Exception:
+                BIRTHDAY_ROLE_CLEANUP_USERS.labels(outcome="database_error").inc(
+                    timestamps_cleared
+                )
+                pending_cleanups += timestamps_cleared
+                if update_pending_metric:
+                    BIRTHDAY_ROLE_CLEANUP_PENDING.set(pending_cleanups)
+                raise
+            BIRTHDAY_ROLE_CLEANUP_USERS.labels(outcome="completed").inc(
+                timestamps_cleared
+            )
+        if update_pending_metric:
+            BIRTHDAY_ROLE_CLEANUP_PENDING.set(pending_cleanups)
