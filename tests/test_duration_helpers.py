@@ -2,6 +2,7 @@ import pytest
 from discord import app_commands
 
 from src.modules.moderation.durations import (
+    MAX_BAN_DURATION_MINUTES,
     action_duration_choices,
     configured_duration_choices,
     duration_unit_choices,
@@ -120,4 +121,28 @@ def test_configured_duration_rejects_values_not_in_server_presets():
             selection="360",
             default_minutes=720,
             presets_minutes=[60, 720],
+        )
+
+
+def test_ban_duration_can_use_longer_configured_presets():
+    selected = resolve_configured_duration_selection(
+        selection="129600",
+        default_minutes=43200,
+        presets_minutes=[43200, 129600],
+        allow_permanent=True,
+        max_minutes=MAX_BAN_DURATION_MINUTES,
+    )
+
+    assert selected.minutes == 129600
+    assert selected.label == "3 months"
+
+
+def test_ban_duration_is_still_capped_at_one_year():
+    with pytest.raises(ValueError, match="maximum"):
+        resolve_configured_duration_selection(
+            selection="561600",
+            default_minutes=43200,
+            presets_minutes=[43200, 561600],
+            allow_permanent=True,
+            max_minutes=MAX_BAN_DURATION_MINUTES,
         )

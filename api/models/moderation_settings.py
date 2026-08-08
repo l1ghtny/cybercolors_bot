@@ -2,6 +2,11 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from src.modules.moderation.durations import (
+    MAX_BAN_DURATION_MINUTES,
+    MAX_MUTE_DURATION_MINUTES,
+)
+
 
 class ServerModerationSettingsReadModel(BaseModel):
     server_id: str
@@ -20,10 +25,10 @@ class ServerModerationSettingsReadModel(BaseModel):
 
 class ServerModerationSettingsUpdateModel(BaseModel):
     mute_role_id: str | None = Field(default=None, pattern=r"^\d*$")
-    default_mute_minutes: int | None = Field(default=None, ge=1, le=43200)
-    max_mute_minutes: int | None = Field(default=None, ge=1, le=43200)
+    default_mute_minutes: int | None = Field(default=None, ge=1, le=MAX_MUTE_DURATION_MINUTES)
+    max_mute_minutes: int | None = Field(default=None, ge=1, le=MAX_MUTE_DURATION_MINUTES)
     mute_duration_presets: list[int] | None = None
-    default_ban_minutes: int | None = Field(default=None, ge=1, le=43200)
+    default_ban_minutes: int | None = Field(default=None, ge=1, le=MAX_BAN_DURATION_MINUTES)
     ban_duration_presets: list[int] | None = None
     auto_reconnect_voice_on_mute: bool | None = None
     mod_log_channel_id: str | None = Field(default=None, pattern=r"^\d*$")
@@ -50,9 +55,8 @@ class ServerModerationSettingsUpdateModel(BaseModel):
             raise ValueError(f"activity_excluded_channel_ids must contain only Discord numeric IDs. Invalid values: {sample}")
         return normalized
 
-    @field_validator("mute_duration_presets", "ban_duration_presets")
-    @classmethod
-    def validate_duration_presets(cls, value: list[int] | None) -> list[int] | None:
+    @staticmethod
+    def _normalize_duration_presets(value: list[int] | None, *, max_minutes: int) -> list[int] | None:
         if value is None:
             return None
         normalized = sorted(set(value))
@@ -60,9 +64,19 @@ class ServerModerationSettingsUpdateModel(BaseModel):
             raise ValueError("At least one duration preset is required")
         if len(normalized) > 23:
             raise ValueError("At most 23 duration presets are allowed")
-        if any(minutes < 1 or minutes > 43200 for minutes in normalized):
-            raise ValueError("Duration presets must be between 1 and 43200 minutes")
+        if any(minutes < 1 or minutes > max_minutes for minutes in normalized):
+            raise ValueError(f"Duration presets must be between 1 and {max_minutes} minutes")
         return normalized
+
+    @field_validator("mute_duration_presets")
+    @classmethod
+    def validate_mute_duration_presets(cls, value: list[int] | None) -> list[int] | None:
+        return cls._normalize_duration_presets(value, max_minutes=MAX_MUTE_DURATION_MINUTES)
+
+    @field_validator("ban_duration_presets")
+    @classmethod
+    def validate_ban_duration_presets(cls, value: list[int] | None) -> list[int] | None:
+        return cls._normalize_duration_presets(value, max_minutes=MAX_BAN_DURATION_MINUTES)
 
     @model_validator(mode="after")
     def validate_durations(self):

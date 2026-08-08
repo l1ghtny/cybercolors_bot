@@ -4,7 +4,12 @@ from dataclasses import dataclass
 from discord import app_commands
 
 
-MAX_ACTION_DURATION_MINUTES = 43_200
+MAX_MUTE_DURATION_MINUTES = 43_200
+MAX_BAN_DURATION_MINUTES = 525_600
+# Keep the generic default at the stricter mute limit. Ban call sites must opt
+# into the longer limit explicitly so a future action cannot inherit it by
+# accident.
+MAX_ACTION_DURATION_MINUTES = MAX_MUTE_DURATION_MINUTES
 DURATION_UNIT_MINUTES = {
     "minutes": 1,
     "hours": 60,

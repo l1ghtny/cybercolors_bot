@@ -22,7 +22,7 @@ from src.modules.moderation.bot_services import (
     rule_label,
     validate_target_for_moderation,
 )
-from src.modules.moderation.durations import parse_duration_text
+from src.modules.moderation.durations import MAX_BAN_DURATION_MINUTES, parse_duration_text
 from src.modules.moderation.moderation_helpers import (
     check_if_server_exists,
     check_if_user_exists,
@@ -391,7 +391,10 @@ class StartActionCommentaryModal(discord.ui.Modal):
                         ).minutes
                     expires_at = datetime.now(timezone.utc) + timedelta(minutes=minutes)
                 elif self.action_type == ActionType.BAN and self.duration != "default":
-                    minutes = parse_duration_text(self.duration).minutes
+                    minutes = parse_duration_text(
+                        self.duration,
+                        max_minutes=MAX_BAN_DURATION_MINUTES,
+                    ).minutes
                     expires_at = datetime.now(timezone.utc) + timedelta(minutes=minutes)
 
                 await _archive_source_message(

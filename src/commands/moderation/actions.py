@@ -37,6 +37,7 @@ from src.modules.moderation.bot_services import (
 )
 from src.modules.moderation.bot_rbac import ensure_bot_permission, has_bot_permission
 from src.modules.moderation.durations import (
+    MAX_BAN_DURATION_MINUTES,
     configured_duration_choices,
     resolve_configured_duration_selection,
 )
@@ -576,6 +577,7 @@ async def ban(
                 default_minutes=settings.default_ban_minutes,
                 presets_minutes=settings.ban_duration_presets,
                 allow_permanent=True,
+                max_minutes=MAX_BAN_DURATION_MINUTES,
             )
         except ValueError as error:
             await interaction.followup.send(str(error), ephemeral=True)

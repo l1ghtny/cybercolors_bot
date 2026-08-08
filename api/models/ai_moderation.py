@@ -5,6 +5,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator
 
 from api.models.moderation_cases import ModerationActorModel
+from src.modules.moderation.durations import MAX_BAN_DURATION_MINUTES
 
 AISuggestionStatusFilter = Literal[
     "pending",
@@ -78,7 +79,7 @@ class AIModerationDecisionListModel(BaseModel):
 
 class AIApproveSuggestionModel(BaseModel):
     override_action: AIActionType | None = None
-    duration_minutes: int | None = Field(default=None, ge=1, le=525600)
+    duration_minutes: int | None = Field(default=None, ge=1, le=MAX_BAN_DURATION_MINUTES)
     rule_ids: list[str] | None = None
     reason: str | None = Field(default=None, max_length=1000)
 
@@ -93,7 +94,7 @@ class AIApproveSuggestionModel(BaseModel):
 
 class AITweakSuggestionModel(BaseModel):
     action: AIActionType
-    duration_minutes: int | None = Field(default=None, ge=1, le=525600)
+    duration_minutes: int | None = Field(default=None, ge=1, le=MAX_BAN_DURATION_MINUTES)
     rule_ids: list[str] | None = None
     reason: str | None = Field(default=None, max_length=1000)
 
