@@ -5,7 +5,7 @@ from sqlalchemy.orm import selectinload
 
 from sqlmodel import select
 
-from src.db.models import User
+from src.db.models import Birthday, Server, User
 from src.modules.logs_setup import logger
 from src.db.database import get_async_session
 from src.modules.observability.bot_metrics import (
@@ -15,6 +15,33 @@ from src.modules.observability.bot_metrics import (
 )
 
 logger = logger.logging.getLogger("bot")
+
+
+def birthday_is_today(
+    birthday: Birthday,
+    *,
+    now: datetime.datetime | None = None,
+) -> bool:
+    """Return whether the birthday is active in the member's configured timezone."""
+    if not birthday.timezone:
+        return False
+    try:
+        from zoneinfo import ZoneInfo
+
+        timezone = ZoneInfo(birthday.timezone)
+    except (KeyError, ValueError):
+        logger.warning(
+            "Treating birthday role as stale because user ID %s has invalid timezone %r",
+            birthday.user_id,
+            birthday.timezone,
+        )
+        return False
+
+    current_time = now or datetime.datetime.now(datetime.timezone.utc)
+    if current_time.tzinfo is None:
+        current_time = current_time.replace(tzinfo=datetime.timezone.utc)
+    local_date = current_time.astimezone(timezone).date()
+    return (local_date.month, local_date.day) == (birthday.month, birthday.day)
 
 
 def birthday_role_age(
@@ -156,3 +183,99 @@ async def check_roles(
             )
         if update_pending_metric:
             BIRTHDAY_ROLE_CLEANUP_PENDING.set(pending_cleanups)
+
+
+async def reconcile_untracked_birthday_roles(
+    client,
+    *,
+    guild_ids: set[int] | None = None,
+) -> None:
+    """Remove stale birthday roles that predate per-membership tracking.
+
+    Older cleanup runs could clear the global timestamp after removing a role
+    from only one guild. Those remaining Discord roles have no database marker,
+    so the normal timestamp-based cleanup cannot discover them. Reconcile the
+    configured role's actual holders while preserving roles for birthdays that
+    are still active today and memberships that still have a pending timestamp.
+    """
+    if guild_ids is not None and not guild_ids:
+        return
+
+    async with get_async_session() as session:
+        server_query = select(Server).where(Server.birthday_role_id.isnot(None))
+        if guild_ids is not None:
+            server_query = server_query.where(Server.server_id.in_(list(guild_ids)))
+        server_result = await session.exec(server_query)
+
+        for server in server_result.all():
+            guild = client.get_guild(server.server_id)
+            if guild is None:
+                logger.warning(
+                    "Could not reconcile untracked birthday roles because server ID %s is unavailable",
+                    server.server_id,
+                )
+                continue
+
+            role = discord.utils.get(guild.roles, id=server.birthday_role_id)
+            if role is None:
+                logger.warning(
+                    "Could not reconcile untracked birthday roles because role ID %s is unavailable in server ID %s",
+                    server.birthday_role_id,
+                    server.server_id,
+                )
+                continue
+
+            role_members = list(role.members)
+            if not role_members:
+                continue
+
+            holder_ids = [member.id for member in role_members]
+            birthday_result = await session.exec(
+                select(Birthday).where(Birthday.user_id.in_(holder_ids))
+            )
+            birthdays = {birthday.user_id: birthday for birthday in birthday_result.all()}
+            tracked_result = await session.exec(
+                select(User.user_id).where(
+                    User.server_id == server.server_id,
+                    User.user_id.in_(holder_ids),
+                    User.birthday_role_added_at.isnot(None),
+                )
+            )
+            tracked_holder_ids = set(tracked_result.all())
+
+            for member in role_members:
+                if member.id in tracked_holder_ids:
+                    continue
+                birthday = birthdays.get(member.id)
+                if birthday is not None and birthday_is_today(birthday):
+                    continue
+
+                try:
+                    await member.remove_roles(
+                        role,
+                        reason="Removing stale birthday role left without cleanup state",
+                    )
+                except (discord.Forbidden, discord.HTTPException) as error:
+                    BIRTHDAY_ROLE_REMOVALS.labels(outcome="discord_error").inc()
+                    BIRTHDAY_ROLE_CLEANUP_MEMBERSHIPS.labels(
+                        outcome="retry_pending"
+                    ).inc()
+                    logger.warning(
+                        "Could not reconcile stale birthday role ID %s from user ID %s in server ID %s: %s",
+                        role.id,
+                        member.id,
+                        server.server_id,
+                        error,
+                    )
+                    continue
+
+                BIRTHDAY_ROLE_REMOVALS.labels(outcome="removed").inc()
+                BIRTHDAY_ROLE_CLEANUP_MEMBERSHIPS.labels(
+                    outcome="reconciled"
+                ).inc()
+                logger.info(
+                    "Reconciled stale birthday role %s from user ID %s in server ID %s",
+                    role.name,
+                    member.id,
+                    server.server_id,
+                )

@@ -91,7 +91,10 @@ from src.modules.birthdays_module.user_validation.user_validate_time import user
 from src.commands.birthdays.add_new_birthday import add_birthday, change_birthday
 from src.commands.birthdays.show_birthday_list import send_birthday_list
 from src.modules.birthdays_module.hourly_check.check_birthday_redone import check_birthday_new
-from src.modules.birthdays_module.hourly_check.check_roles import check_roles
+from src.modules.birthdays_module.hourly_check.check_roles import (
+    check_roles,
+    reconcile_untracked_birthday_roles,
+)
 from src.modules.birthdays_module.hourly_check.check_time import check_time
 from src.modules.birthdays_module.user_validation.flag_users_who_left import flag_user
 from src.modules.birthdays_module.user_validation.validation_main import main_validation_process
@@ -724,6 +727,7 @@ async def birthday_check(interaction: discord.Interaction):
     guild_ids = {interaction.guild.id}
     await check_birthday_new(client, guild_ids=guild_ids)
     await check_roles(client, guild_ids=guild_ids, update_pending_metric=False)
+    await reconcile_untracked_birthday_roles(client, guild_ids=guild_ids)
     await interaction.followup.send('OK')
 
 
@@ -900,6 +904,10 @@ async def birthday():
     with birthday_hourly_monitor():
         await check_birthday_new(client, guild_ids=set(PRIMARY_GUILD_IDS))
         await check_roles(client, guild_ids=set(PRIMARY_GUILD_IDS))
+        await reconcile_untracked_birthday_roles(
+            client,
+            guild_ids=set(PRIMARY_GUILD_IDS),
+        )
 
 
 @tasks.loop(time=users_time)

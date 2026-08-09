@@ -254,6 +254,11 @@ def test_birthday_processing_retries_failed_role_without_resending_greeting(monk
     current_time = datetime.datetime(2026, 8, 7, 12, 0, tzinfo=datetime.timezone.utc)
     monkeypatch.setattr(
         check_birthday_redone,
+        "utcnow_utc_tz",
+        lambda: current_time,
+    )
+    monkeypatch.setattr(
+        check_birthday_redone,
         "get_user_current_time",
         lambda timezone_name: current_time,
     )
@@ -293,6 +298,99 @@ def test_birthday_role_age_treats_legacy_naive_timestamp_as_utc():
     now = datetime.datetime(2026, 7, 31, 16, 0, tzinfo=datetime.timezone.utc)
 
     assert check_roles.birthday_role_age(role_added_at, now=now) == datetime.timedelta(days=1)
+
+
+def test_birthday_is_today_uses_members_configured_timezone():
+    birthday = SimpleNamespace(
+        user_id=42,
+        day=9,
+        month=8,
+        timezone="Pacific/Kiritimati",
+    )
+    now = datetime.datetime(2026, 8, 8, 12, 30, tzinfo=datetime.timezone.utc)
+
+    assert check_roles.birthday_is_today(birthday, now=now)
+
+
+def test_reconcile_untracked_birthday_roles_removes_only_stale_holders(monkeypatch):
+    class FakeMember:
+        def __init__(self, user_id):
+            self.id = user_id
+            self.removed_roles = []
+
+        async def remove_roles(self, role, *, reason=None):
+            self.removed_roles.append((role, reason))
+
+    stale_member = FakeMember(1)
+    active_member = FakeMember(2)
+    tracked_member = FakeMember(3)
+    missing_birthday_member = FakeMember(4)
+    role = SimpleNamespace(
+        id=456,
+        name="birthday",
+        members=[stale_member, active_member, tracked_member, missing_birthday_member],
+    )
+    server = SimpleNamespace(server_id=123, birthday_role_id=role.id)
+    guild = SimpleNamespace(roles=[role])
+    birthdays = [
+        SimpleNamespace(user_id=1, day=8, month=8, timezone="UTC"),
+        SimpleNamespace(user_id=2, day=9, month=8, timezone="UTC"),
+        SimpleNamespace(user_id=3, day=8, month=8, timezone="UTC"),
+    ]
+
+    class FakeSession:
+        def __init__(self):
+            self.results = [
+                SimpleNamespace(all=lambda: [server]),
+                SimpleNamespace(all=lambda: birthdays),
+                SimpleNamespace(all=lambda: [tracked_member.id]),
+            ]
+
+        async def exec(self, statement):
+            return self.results.pop(0)
+
+    session = FakeSession()
+
+    class FakeSessionContext:
+        async def __aenter__(self):
+            return session
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+    monkeypatch.setattr(check_roles, "get_async_session", lambda: FakeSessionContext())
+    monkeypatch.setattr(
+        check_roles.datetime,
+        "datetime",
+        type(
+            "FixedDatetime",
+            (datetime.datetime,),
+            {
+                "now": classmethod(
+                    lambda cls, tz=None: cls(
+                        2026,
+                        8,
+                        9,
+                        12,
+                        0,
+                        tzinfo=datetime.timezone.utc,
+                    ).astimezone(tz)
+                )
+            },
+        ),
+    )
+
+    asyncio.run(
+        check_roles.reconcile_untracked_birthday_roles(
+            SimpleNamespace(get_guild=lambda guild_id: guild),
+            guild_ids={server.server_id},
+        )
+    )
+
+    assert len(stale_member.removed_roles) == 1
+    assert active_member.removed_roles == []
+    assert tracked_member.removed_roles == []
+    assert len(missing_birthday_member.removed_roles) == 1
 
 
 def test_birthday_role_check_skips_invalid_timestamp_and_processes_next_record(monkeypatch):
