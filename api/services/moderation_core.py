@@ -37,17 +37,11 @@ from src.db.models import (
     Server,
     User,
 )
+from src.modules.moderation.action_resolution import moderation_action_is_reverted
 
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def moderation_action_is_reverted(action_type: ActionType | str, is_active: bool) -> bool:
-    if is_active:
-        return False
-    normalized = action_type.value if hasattr(action_type, "value") else str(action_type)
-    return normalized in {ActionType.WARN.value, ActionType.MUTE.value, ActionType.BAN.value}
 
 
 SYSTEM_ACTOR = ModerationActorModel(
@@ -313,7 +307,12 @@ async def _to_action_summary(
         created_at=action.created_at,
         expires_at=action.expires_at,
         is_active=action.is_active,
-        is_reverted=moderation_action_is_reverted(action.action_type, action.is_active),
+        is_reverted=moderation_action_is_reverted(
+            action.action_type,
+            action.is_active,
+            getattr(action, "resolution_type", None),
+        ),
+        resolution_type=getattr(action, "resolution_type", None),
         rules=_rule_refs_from_action(action),
     )
 
@@ -481,7 +480,12 @@ def to_moderation_history(result: Sequence[ModerationAction]) -> list[Moderation
                 source_created_at_note=import_metadata["source_created_at_note"],
                 expires_at=action.expires_at,
                 is_active=action.is_active,
-                is_reverted=moderation_action_is_reverted(action.action_type, action.is_active),
+                is_reverted=moderation_action_is_reverted(
+                    action.action_type,
+                    action.is_active,
+                    getattr(action, "resolution_type", None),
+                ),
+                resolution_type=getattr(action, "resolution_type", None),
             )
         )
     return payload

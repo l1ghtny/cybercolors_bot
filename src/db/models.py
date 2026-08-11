@@ -985,6 +985,10 @@ class ModerationAction(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow_utc_tz)
     expires_at: Optional[datetime] = None  # For temporary mutes/bans
     is_active: bool = True  # To mark if a ban/mute has been cancelled
+    resolution_type: Optional[str] = Field(
+        default=None,
+        sa_column=Column(String(length=32), nullable=True),
+    )
 
     global_user_target: GlobalUser = Relationship(
         back_populates="targeted_by_mod_action",

@@ -203,7 +203,12 @@ async def _action_events(session: AsyncSession, server_id: int, limit: int) -> l
                     "case_id": str(action.case_id) if action.case_id else None,
                     "rule_id": str(action.rule_id) if action.rule_id else None,
                     "is_active": action.is_active,
-                    "is_reverted": moderation_action_is_reverted(action.action_type, action.is_active),
+                    "is_reverted": moderation_action_is_reverted(
+                        action.action_type,
+                        action.is_active,
+                        action.resolution_type,
+                    ),
+                    "resolution_type": action.resolution_type,
                 },
             )
         )

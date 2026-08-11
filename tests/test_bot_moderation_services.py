@@ -50,6 +50,10 @@ from src.modules.moderation.bot_services import (
     rule_label,
     validate_target_for_moderation,
 )
+from src.modules.moderation.action_resolution import (
+    ACTION_RESOLUTION_REVERTED,
+    ACTION_RESOLUTION_SUPERSEDED,
+)
 from src.modules.moderation.moderation_helpers import handle_message_deletion
 from src.modules.moderation.mod_log import build_unmute_log_embed
 
@@ -874,6 +878,7 @@ async def _mute_effect_scenario(added_roles: list[dict]) -> None:
         previous = await session.get(ModerationAction, prior_action_id)
         current = await session.get(ModerationAction, created.id)
         assert previous.is_active is False
+        assert previous.resolution_type == ACTION_RESOLUTION_SUPERSEDED
         assert current.is_active is True
 
     assert added_roles == [{"server_id": server_id, "user_id": target_id, "role_id": mute_role_id}]
@@ -1556,7 +1561,9 @@ async def _revert_ban_action_scenario(unbanned_users: list[dict]) -> None:
             stored = await session.get(ModerationAction, action_id)
             assert stored.is_active is False
             assert stored.expires_at is not None
+            assert stored.resolution_type == ACTION_RESOLUTION_REVERTED
         assert read.is_active is False
+        assert read.resolution_type == ACTION_RESOLUTION_REVERTED
         assert discord_changed is True
     finally:
         action_service.unban_guild_member = original_unban
@@ -1620,7 +1627,9 @@ async def _revert_mute_action_scenario(removed_roles: list[dict]) -> None:
         async with get_async_session() as session:
             stored = await session.get(ModerationAction, action_id)
             assert stored.is_active is False
+            assert stored.resolution_type == ACTION_RESOLUTION_REVERTED
         assert read.is_active is False
+        assert read.resolution_type == ACTION_RESOLUTION_REVERTED
         assert discord_changed is True
     finally:
         action_service.fetch_guild_member = original_fetch_member
@@ -1670,7 +1679,9 @@ async def _revert_warn_action_scenario() -> None:
         stored = await session.get(ModerationAction, action_id)
         assert stored.is_active is False
         assert stored.expires_at is not None
+        assert stored.resolution_type == ACTION_RESOLUTION_REVERTED
     assert read.is_active is False
+    assert read.resolution_type == ACTION_RESOLUTION_REVERTED
     assert discord_changed is False
     await engine.dispose()
 

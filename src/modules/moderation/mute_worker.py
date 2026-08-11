@@ -4,6 +4,7 @@ from src.db.database import get_async_session
 from src.db.models import ServerModerationSettings
 from src.modules.logs_setup import logger
 from src.modules.localization.service import get_server_locale, tr
+from src.modules.moderation.action_resolution import ACTION_RESOLUTION_EXPIRED
 from src.modules.moderation.mod_log import build_unmute_log_embed, send_mod_log_message
 from src.modules.moderation.mute_management import get_expired_active_mutes
 
@@ -43,6 +44,7 @@ async def process_expired_mutes(
             settings = await session.get(ServerModerationSettings, action.server_id)
             if not settings or not settings.mute_role_id:
                 action.is_active = False
+                action.resolution_type = ACTION_RESOLUTION_EXPIRED
                 session.add(action)
                 processed += 1
                 continue
@@ -50,6 +52,7 @@ async def process_expired_mutes(
             mute_role = guild.get_role(settings.mute_role_id)
             if mute_role is None:
                 action.is_active = False
+                action.resolution_type = ACTION_RESOLUTION_EXPIRED
                 session.add(action)
                 processed += 1
                 continue
@@ -78,6 +81,7 @@ async def process_expired_mutes(
                 removed_role = False
 
             action.is_active = False
+            action.resolution_type = ACTION_RESOLUTION_EXPIRED
             session.add(action)
             processed += 1
 

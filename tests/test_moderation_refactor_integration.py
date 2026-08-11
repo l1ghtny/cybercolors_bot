@@ -370,6 +370,8 @@ async def _scenario_monitoring_cross_refs_and_profile_rule_stats() -> None:
         stored_action = await session.get(ModerationAction, UUID(created_action.id))
         assert stored_action is not None
         stored_action.commentary = "Escalated after repeated moderator review"
+        stored_action.is_active = False
+        stored_action.resolution_type = "reverted"
         session.add(stored_action)
         await session.flush()
 
@@ -383,7 +385,11 @@ async def _scenario_monitoring_cross_refs_and_profile_rule_stats() -> None:
         action_summary = action_summaries[0]
         assert action_summary.id == created_action.id
         assert action_summary.commentary == "Escalated after repeated moderator review"
+        assert action_summary.resolution_type == "reverted"
+        assert action_summary.is_reverted is True
         assert action_summary.rules_count >= 1
+        assert action_summary.rules
+        assert action_summary.rules[0].title
         assert action_summary.case_id == moderation_case.id
 
         moderator_action_summaries = await list_action_summaries(
@@ -411,6 +417,8 @@ async def _scenario_monitoring_cross_refs_and_profile_rule_stats() -> None:
         assert per_user_actions
         assert per_user_actions[0].id == created_action.id
         assert per_user_actions[0].commentary == "Escalated after repeated moderator review"
+        assert per_user_actions[0].resolution_type == "reverted"
+        assert per_user_actions[0].rules
 
         action_details = await get_action_details(
             session=session,
@@ -419,6 +427,7 @@ async def _scenario_monitoring_cross_refs_and_profile_rule_stats() -> None:
         )
         assert action_details.id == created_action.id
         assert action_details.commentary == "Escalated after repeated moderator review"
+        assert action_details.resolution_type == "reverted"
         assert action_details.rules
 
         case_details = await get_case_details(
@@ -428,6 +437,10 @@ async def _scenario_monitoring_cross_refs_and_profile_rule_stats() -> None:
         )
         assert any(
             action.commentary == "Escalated after repeated moderator review"
+            for action in case_details.case.linked_actions
+        )
+        assert any(
+            action.resolution_type == "reverted"
             for action in case_details.case.linked_actions
         )
 

@@ -5,6 +5,7 @@ from src.db.database import get_async_session
 from src.db.models import GlobalUser, ServerModerationSettings
 from src.modules.logs_setup import logger
 from src.modules.localization.service import get_server_locale, tr
+from src.modules.moderation.action_resolution import ACTION_RESOLUTION_EXPIRED
 from src.modules.moderation.mod_log import build_action_revert_log_embed, send_mod_log_message
 from src.modules.moderation.mute_management import get_expired_active_bans
 
@@ -52,6 +53,7 @@ async def process_expired_bans(
                 continue
 
             action.is_active = False
+            action.resolution_type = ACTION_RESOLUTION_EXPIRED
             session.add(action)
             processed += 1
 

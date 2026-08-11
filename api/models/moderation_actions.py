@@ -117,6 +117,7 @@ class ModerationActionRead(BaseModel):
     expires_at: datetime | None = None
     is_active: bool
     is_reverted: bool = False
+    resolution_type: str | None = None
 
 
 class ModerationActionSummaryModel(BaseModel):
@@ -141,6 +142,8 @@ class ModerationActionSummaryModel(BaseModel):
     expires_at: datetime | None = None
     is_active: bool
     is_reverted: bool = False
+    resolution_type: str | None = None
+    rules: list[ModerationRuleRef] = Field(default_factory=list)
     rules_count: int = 0
     linked_messages_count: int = 0
     deleted_messages_count: int = 0

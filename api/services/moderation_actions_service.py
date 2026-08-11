@@ -22,6 +22,7 @@ from api.models.moderation_cases import (
     DeletedMessageAttachmentModel,
     DeletedMessageCreateModel,
     DeletedMessageReadModel,
+    ModerationRuleRef,
 )
 from api.services.discord_guilds import (
     add_guild_member_role,
@@ -44,6 +45,10 @@ from api.services.moderation_core import (
     utc_now,
     to_deleted_message_read,
     to_moderation_history,
+)
+from src.modules.moderation.action_resolution import (
+    ACTION_RESOLUTION_REVERTED,
+    ACTION_RESOLUTION_SUPERSEDED,
 )
 from api.services.moderation_import_metadata import action_import_metadata
 from api.services.moderation_action_numbers import allocate_moderation_action_number
@@ -524,11 +529,13 @@ def _to_action_summary(
     created_at: datetime,
     expires_at: datetime | None,
     is_active: bool,
+    resolution_type: str | None,
     target_username: str | None,
     moderator_username: str | None,
     rules_count: int,
     linked_messages_count: int,
     deleted_messages_count: int,
+    rules: list[ModerationRuleRef],
     import_metadata: dict | None = None,
 ) -> ModerationActionSummaryModel:
     import_metadata = import_metadata or {}
@@ -553,7 +560,9 @@ def _to_action_summary(
         source_created_at_note=import_metadata.get("source_created_at_note"),
         expires_at=expires_at,
         is_active=is_active,
-        is_reverted=moderation_action_is_reverted(action_type, is_active),
+        is_reverted=moderation_action_is_reverted(action_type, is_active, resolution_type),
+        resolution_type=resolution_type,
+        rules=rules,
         rules_count=rules_count,
         linked_messages_count=linked_messages_count,
         deleted_messages_count=deleted_messages_count,
@@ -584,6 +593,46 @@ async def _import_metadata_for_action_ids(
         lightweight_action = type("ImportedActionProxy", (), {"import_source_items": source_items})()
         result[action_id] = action_import_metadata(lightweight_action)
     return result
+
+
+async def _rules_for_action_ids(
+    session: AsyncSession,
+    action_ids: list[UUID],
+) -> dict[UUID, list[ModerationRuleRef]]:
+    if not action_ids:
+        return {}
+    citations = (
+        await session.exec(
+            select(ModerationActionRuleCitation)
+            .where(ModerationActionRuleCitation.action_id.in_(action_ids))
+            .options(selectinload(ModerationActionRuleCitation.rule))
+            .order_by(
+                ModerationActionRuleCitation.cited_at.asc(),
+                ModerationActionRuleCitation.id.asc(),
+            )
+        )
+    ).all()
+    rules_by_action_id: dict[UUID, list[ModerationRuleRef]] = {}
+    for citation in citations:
+        if citation.rule_id is not None and citation.rule is not None:
+            rule = ModerationRuleRef(
+                id=str(citation.rule.id),
+                code=citation.rule.code,
+                title=citation.rule.title,
+                deleted=False,
+            )
+        else:
+            title = (citation.rule_title_snapshot or "Rule").strip() or "Rule"
+            if "(deleted)" not in title.lower():
+                title = f"{title} (deleted)"
+            rule = ModerationRuleRef(
+                id=None,
+                code=citation.rule_code_snapshot,
+                title=title,
+                deleted=True,
+            )
+        rules_by_action_id.setdefault(citation.action_id, []).append(rule)
+    return rules_by_action_id
 
 
 def build_action_log_components(
@@ -799,7 +848,12 @@ async def _prepare_discord_action_effects(
             detail="Mute role is not configured for this server",
         )
 
-    await deactivate_user_mutes(session=session, server_id=action.server_id, user_id=action.target_user_id)
+    await deactivate_user_mutes(
+        session=session,
+        server_id=action.server_id,
+        user_id=action.target_user_id,
+        resolution_type=ACTION_RESOLUTION_SUPERSEDED,
+    )
     return settings.mute_role_id
 
 
@@ -1029,6 +1083,7 @@ async def list_action_summaries(
             ModerationAction.created_at,
             ModerationAction.expires_at,
             ModerationAction.is_active,
+            ModerationAction.resolution_type,
             target_user.username.label("target_username"),
             moderator_user.username.label("moderator_username"),
             func.count(func.distinct(ModerationActionRuleCitation.id)).label("rules_count"),
@@ -1073,6 +1128,7 @@ async def list_action_summaries(
             ModerationAction.created_at,
             ModerationAction.expires_at,
             ModerationAction.is_active,
+            ModerationAction.resolution_type,
             target_user.username,
             moderator_user.username,
         )
@@ -1080,7 +1136,9 @@ async def list_action_summaries(
         .limit(limit)
     )
     rows = (await session.exec(statement)).all()
-    metadata_by_action_id = await _import_metadata_for_action_ids(session, [row[0] for row in rows])
+    action_ids = [row[0] for row in rows]
+    metadata_by_action_id = await _import_metadata_for_action_ids(session, action_ids)
+    rules_by_action_id = await _rules_for_action_ids(session, action_ids)
     return [
         _to_action_summary(
             action_id=row[0],
@@ -1096,11 +1154,13 @@ async def list_action_summaries(
             created_at=row[10],
             expires_at=row[11],
             is_active=row[12],
-            target_username=row[13],
-            moderator_username=row[14],
-            rules_count=int(row[15] or 0),
-            linked_messages_count=int(row[16] or 0),
-            deleted_messages_count=int(row[17] or 0),
+            resolution_type=row[13],
+            target_username=row[14],
+            moderator_username=row[15],
+            rules_count=int(row[16] or 0),
+            linked_messages_count=int(row[17] or 0),
+            deleted_messages_count=int(row[18] or 0),
+            rules=rules_by_action_id.get(row[0], []),
             import_metadata=metadata_by_action_id.get(row[0]),
         )
         for row in rows
@@ -1229,6 +1289,7 @@ async def revert_action(
 
     action.is_active = False
     action.expires_at = action.expires_at or utc_now()
+    action.resolution_type = ACTION_RESOLUTION_REVERTED
     session.add(action)
     await session.flush()
 

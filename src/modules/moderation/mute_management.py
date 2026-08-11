@@ -5,6 +5,10 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.db.models import ActionType, ModerationAction, Server, ServerModerationSettings
+from src.modules.moderation.action_resolution import (
+    ACTION_RESOLUTION_REVERTED,
+    ACTION_RESOLUTION_SUPERSEDED,
+)
 
 
 def utc_now() -> datetime:
@@ -55,12 +59,15 @@ async def deactivate_user_mutes(
     session: AsyncSession,
     server_id: int,
     user_id: int,
+    *,
+    resolution_type: str = ACTION_RESOLUTION_REVERTED,
 ) -> int:
     actions = await get_active_mute_actions_for_user(session=session, server_id=server_id, user_id=user_id)
     now = utc_now()
     for action in actions:
         action.is_active = False
         action.expires_at = action.expires_at or now
+        action.resolution_type = resolution_type
         session.add(action)
     await session.flush()
     return len(actions)
@@ -114,6 +121,7 @@ async def deactivate_user_bans(
     for action in actions:
         action.is_active = False
         action.expires_at = action.expires_at or now
+        action.resolution_type = ACTION_RESOLUTION_REVERTED
         session.add(action)
     await session.flush()
     return len(actions)

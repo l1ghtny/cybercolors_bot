@@ -9,7 +9,10 @@ from uuid import UUID
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from api.services.moderation_core import get_or_create_server_record, utc_now
+from api.services.moderation_core import (
+    get_or_create_server_record,
+    utc_now,
+)
 from api.services.moderation_action_numbers import allocate_moderation_action_number
 from api.services.moderation_import_metadata import unknown_source_date_note
 from src.db.models import (
@@ -25,6 +28,7 @@ from src.db.models import (
     ModerationImportSourceItem,
     ModerationRule,
 )
+from src.modules.moderation.action_resolution import infer_inactive_action_resolution
 
 IMPORT_SYSTEM_USER_ID = 0
 IMPORT_SYSTEM_USERNAME = "Imported moderation"
@@ -337,6 +341,11 @@ async def import_moderation_action(
         created_at=payload.created_at or utc_now(),
         expires_at=payload.expires_at,
         is_active=payload.is_active,
+        resolution_type=infer_inactive_action_resolution(
+            payload.action_type,
+            payload.is_active,
+            payload.expires_at,
+        ),
     )
     session.add(action)
     await session.flush()
