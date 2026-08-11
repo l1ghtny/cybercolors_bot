@@ -657,7 +657,11 @@ def test_birthday_read_uses_server_membership_role_timestamp():
         server_nickname=None,
         birthday_role_added_at=role_added_at,
     )
-    global_user = SimpleNamespace(username="member", avatar_hash=None)
+    global_user = SimpleNamespace(
+        username="member",
+        global_name=None,
+        avatar_hash=None,
+    )
     birthday = SimpleNamespace(
         day=7,
         month=8,

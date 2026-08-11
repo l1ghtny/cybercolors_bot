@@ -66,6 +66,7 @@ async def _upsert_member_user(
         global_user = GlobalUser(
             discord_id=user_id,
             username=username,
+            global_name=user_payload.get("global_name"),
             avatar_hash=user_payload.get("avatar"),
         )
         session.add(global_user)
@@ -73,6 +74,8 @@ async def _upsert_member_user(
     else:
         if username:
             global_user.username = username
+        if "global_name" in user_payload:
+            global_user.global_name = user_payload.get("global_name")
         if user_payload.get("avatar"):
             global_user.avatar_hash = user_payload.get("avatar")
         session.add(global_user)

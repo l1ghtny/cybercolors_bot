@@ -79,17 +79,20 @@ async def _ensure_server(session: AsyncSession, guild: discord.Guild) -> None:
 async def _ensure_user(session: AsyncSession, guild: discord.Guild, user: discord.abc.User) -> None:
     global_user = await session.get(GlobalUser, user.id)
     username = _discord_username(user)
+    global_name = getattr(user, "global_name", None)
     avatar_hash = _discord_avatar_hash(user)
     created_at = getattr(user, "created_at", None)
     if global_user is None:
         global_user = GlobalUser(
             discord_id=user.id,
             username=username,
+            global_name=global_name,
             avatar_hash=avatar_hash,
             joined_discord=created_at,
         )
     else:
         global_user.username = username
+        global_user.global_name = global_name
         global_user.avatar_hash = avatar_hash
         if created_at is not None and global_user.joined_discord is None:
             global_user.joined_discord = created_at
@@ -105,12 +108,12 @@ async def _ensure_user(session: AsyncSession, guild: discord.Guild, user: discor
         membership = User(
             server_id=guild.id,
             user_id=user.id,
-            server_nickname=member.display_name if member else None,
+            server_nickname=member.nick if member else None,
             joined_server_at=_as_utc(member.joined_at) if member and member.joined_at else None,
             is_member=member is not None,
         )
     elif member is not None:
-        membership.server_nickname = member.display_name
+        membership.server_nickname = member.nick
         membership.joined_server_at = _as_utc(member.joined_at) if member.joined_at else membership.joined_server_at
         membership.left_server_at = None
         membership.flagged_absent_at = None

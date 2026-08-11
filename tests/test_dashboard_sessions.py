@@ -121,7 +121,12 @@ def test_login_response_cannot_serialize_discord_tokens():
     payload = response.model_dump()
     assert payload == {
         "message": "Login successful",
-        "user": {"discord_id": "123", "username": "tester", "avatar_hash": None},
+        "user": {
+            "discord_id": "123",
+            "username": "tester",
+            "global_name": None,
+            "avatar_hash": None,
+        },
     }
     assert "access_token" not in payload
     assert "refresh_token" not in payload

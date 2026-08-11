@@ -47,9 +47,9 @@ async def _release_notes_scenario() -> None:
 
     assert len(manifest.releases) == 50
     assert manifest.releases[0].id == "2026-08-11-member-name-preference-v2"
-    assert manifest.releases[0].title.en == "Choose which member name appears first"
-    assert "does not hide the Discord @username" in manifest.releases[0].summary.en
-    assert "@имя пользователя" in manifest.releases[0].summary.ru
+    assert manifest.releases[0].title.en == "Member names now follow Discord consistently"
+    assert "server nickname first" in manifest.releases[0].summary.en
+    assert "глобальное имя" in manifest.releases[0].summary.ru
     assert manifest.releases[-1].id == "2026-07-14-bilingual-moderation-v2"
     assert all(release.title.en and release.title.ru for release in manifest.releases)
     assert all(release.feature.en and release.feature.ru for release in manifest.releases)

@@ -47,6 +47,7 @@ class UserActivitySummaryModel(BaseModel):
 class UserActivityLeaderboardItemModel(BaseModel):
     user_id: str
     username: str | None = None
+    global_name: str | None = None
     server_nickname: str | None = None
     display_name: str
     message_count: int
@@ -124,6 +125,7 @@ class TopRuleViolationModel(BaseModel):
 class UserProfileCardModel(BaseModel):
     user_id: str
     username: str | None = None
+    global_name: str | None = None
     server_nickname: str | None = None
     display_name: str
     avatar_hash: str | None = None

@@ -44,9 +44,17 @@ async def change_birthday(client, interaction, month, day):
             gu = result.first()
 
             if gu is None:
-                gu = GlobalUser(discord_id=user_id, username=interaction.user.global_name)
+                gu = GlobalUser(
+                    discord_id=user_id,
+                    username=interaction.user.name,
+                    global_name=interaction.user.global_name,
+                )
                 session.add(gu)
                 await session.flush()
+            else:
+                gu.username = interaction.user.name
+                gu.global_name = interaction.user.global_name
+                session.add(gu)
 
             membership_q = select(User).where(User.user_id == user_id, User.server_id == server_id)
             membership_res = await session.exec(membership_q)
@@ -56,15 +64,14 @@ async def change_birthday(client, interaction, month, day):
                 membership = User(
                     user_id=user_id,
                     server_id=server_id,
-                    nickname=interaction.user.global_name,
-                    server_nickname=interaction.user.display_name,
+                    server_nickname=interaction.user.nick,
                     joined_server_at=joined_server_at,
                     left_server_at=None,
                     is_member=True,
                 )
                 session.add(membership)
             else:
-                membership.server_nickname = interaction.user.display_name
+                membership.server_nickname = interaction.user.nick
                 if joined_server_at is not None and membership.joined_server_at is None:
                     membership.joined_server_at = joined_server_at
                 membership.is_member = True
@@ -116,9 +123,17 @@ async def add_birthday(client, interaction, month, day):
 
                 # Ensure GlobalUser exists
                 if gu is None:
-                    gu = GlobalUser(discord_id=user_id, username=interaction.user.global_name)
+                    gu = GlobalUser(
+                        discord_id=user_id,
+                        username=interaction.user.name,
+                        global_name=interaction.user.global_name,
+                    )
                     session.add(gu)
                     await session.flush()
+                else:
+                    gu.username = interaction.user.name
+                    gu.global_name = interaction.user.global_name
+                    session.add(gu)
 
                 # Ensure membership for this server exists
                 membership_q = select(User).where(User.user_id == user_id, User.server_id == server_id)
@@ -126,10 +141,10 @@ async def add_birthday(client, interaction, month, day):
                 membership = membership_res.first()
                 joined_server_at = _interaction_joined_server_at(interaction)
                 if membership is None:
-                    membership = User(user_id=user_id, server_id=server_id, nickname=interaction.user.global_name, server_nickname=interaction.user.display_name, joined_server_at=joined_server_at, left_server_at=None, is_member=True)
+                    membership = User(user_id=user_id, server_id=server_id, server_nickname=interaction.user.nick, joined_server_at=joined_server_at, left_server_at=None, is_member=True)
                     session.add(membership)
                 else:
-                    membership.server_nickname = interaction.user.display_name
+                    membership.server_nickname = interaction.user.nick
                     if joined_server_at is not None and membership.joined_server_at is None:
                         membership.joined_server_at = joined_server_at
                     membership.is_member = True

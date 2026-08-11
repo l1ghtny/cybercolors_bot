@@ -76,6 +76,8 @@ def test_query_server_members_filters_roles_and_paginates(monkeypatch):
     assert page.limit == 1
     assert [item.user_id for item in page.items] == ["2"]
     assert page.items[0].role_ids == ["20", "30"]
+    assert page.items[0].global_name == "Alpha"
+    assert page.items[0].display_name == "Moderator Alpha"
 
 
 def test_query_server_members_searches_nickname_username_and_id(monkeypatch):
@@ -96,6 +98,7 @@ def test_query_server_members_searches_nickname_username_and_id(monkeypatch):
     assert [item.user_id for item in nickname_page.items] == ["101"]
     assert [item.user_id for item in username_page.items] == ["202"]
     assert [item.user_id for item in id_page.items] == ["101"]
+    assert username_page.items[0].display_name == "Second-User"
 
 
 def test_query_server_members_sorts_by_name_and_join_date(monkeypatch):

@@ -92,10 +92,15 @@ async def add_new_day_month(user_id, day, month, interaction):
             if global_user is None:
                 global_user = GlobalUser(
                     discord_id=user_id,
-                    username=getattr(interaction.user, "global_name", None) or interaction.user.name,
+                    username=interaction.user.name,
+                    global_name=getattr(interaction.user, "global_name", None),
                 )
                 session.add(global_user)
                 await session.flush()
+            else:
+                global_user.username = interaction.user.name
+                global_user.global_name = getattr(interaction.user, "global_name", None)
+                session.add(global_user)
 
             if interaction.guild is not None:
                 membership = await session.exec(
@@ -106,10 +111,13 @@ async def add_new_day_month(user_id, day, month, interaction):
                     membership = User(
                         user_id=user_id,
                         server_id=interaction.guild.id,
-                        nickname=getattr(interaction.user, "global_name", None) or interaction.user.name,
-                        server_nickname=getattr(interaction.user, "display_name", None),
+                        server_nickname=getattr(interaction.user, "nick", None),
                         is_member=True,
                     )
+                    session.add(membership)
+                else:
+                    membership.server_nickname = getattr(interaction.user, "nick", None)
+                    membership.is_member = True
                     session.add(membership)
 
             birthday = await session.get(Birthday, user_id)

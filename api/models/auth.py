@@ -13,6 +13,7 @@ class AuthLoginRequestModel(BaseModel):
 class AuthUserModel(BaseModel):
     discord_id: str
     username: str | None = None
+    global_name: str | None = None
     avatar_hash: str | None = None
 
 

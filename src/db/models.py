@@ -195,6 +195,10 @@ class GlobalUser(SQLModel, table=True):
     # Global user (Discord user) — one row per person
     discord_id: int = Field(sa_column=Column(BigInteger, primary_key=True))
     username: Optional[str] = None
+    global_name: Optional[str] = Field(
+        default=None,
+        sa_column=Column(String(length=100), nullable=True),
+    )
     joined_discord: Optional[datetime] = Field(default=None, sa_column=Column(TIMESTAMP(timezone=True)))
     avatar_hash: Optional[str] = None
 

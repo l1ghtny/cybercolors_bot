@@ -37,6 +37,7 @@ class ServerUserModel(BaseModel):
     user_id: str
     display_name: str
     username: str | None = None
+    global_name: str | None = None
     server_nickname: str | None = None
     avatar_hash: str | None = None
     is_member: bool

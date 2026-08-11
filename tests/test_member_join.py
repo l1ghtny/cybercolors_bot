@@ -19,6 +19,7 @@ def _member(*, user_id: int, nickname: str, joined_at: datetime) -> discord.Memb
     member = Mock(spec=discord.Member)
     member.id = user_id
     member.name = f"user-{user_id}"
+    member.global_name = f"Global {user_id}"
     member.nick = nickname
     member.created_at = joined_at - timedelta(days=30)
     member.joined_at = joined_at
@@ -56,6 +57,8 @@ async def _join_and_rejoin_scenario() -> None:
             )
         ).first()
         assert global_user is not None
+        assert global_user.username == f"user-{user_id}"
+        assert global_user.global_name == f"Global {user_id}"
         assert membership is not None
         assert membership.server_nickname == "first nickname"
         assert membership.joined_server_at == first_joined_at

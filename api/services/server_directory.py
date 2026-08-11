@@ -36,6 +36,8 @@ logger = logging.getLogger(__name__)
 def _display_name(user: User, global_user: GlobalUser) -> str:
     if user.server_nickname:
         return user.server_nickname
+    if global_user.global_name:
+        return global_user.global_name
     if global_user.username:
         return global_user.username
     return str(user.user_id)
@@ -45,6 +47,7 @@ def _to_server_user(user: User, global_user: GlobalUser) -> ServerUserModel:
         user_id=str(user.user_id),
         display_name=_display_name(user, global_user),
         username=global_user.username,
+        global_name=global_user.global_name,
         server_nickname=user.server_nickname,
         avatar_hash=global_user.avatar_hash,
         is_member=user.is_member,
@@ -111,6 +114,7 @@ def _to_discord_server_user(member: dict) -> ServerUserModel | None:
         user_id=user_id,
         display_name=str(display_name),
         username=str(username) if username is not None else None,
+        global_name=str(global_name) if global_name is not None else None,
         server_nickname=str(server_nickname) if server_nickname is not None else None,
         avatar_hash=str(raw_user["avatar"]) if raw_user.get("avatar") else None,
         is_member=True,
@@ -259,11 +263,16 @@ async def query_server_users(
             or_(
                 cast(User.user_id, String).ilike(pattern),
                 User.server_nickname.ilike(pattern),
+                GlobalUser.global_name.ilike(pattern),
                 GlobalUser.username.ilike(pattern),
             )
         )
 
-    statement = statement.order_by(User.server_nickname, GlobalUser.username).limit(limit)
+    statement = statement.order_by(
+        User.server_nickname,
+        GlobalUser.global_name,
+        GlobalUser.username,
+    ).limit(limit)
     rows = (await session.exec(statement)).all()
     return [_to_server_user(user, global_user) for user, global_user in rows]
 

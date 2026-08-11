@@ -112,6 +112,9 @@ async def _hydrate_membership_from_discord(
         if username and global_user.username != username:
             global_user.username = username
             session.add(global_user)
+        if global_user.global_name != global_name:
+            global_user.global_name = global_name
+            session.add(global_user)
 
         joined_server_at = _parse_discord_datetime(member_payload.get("joined_at"))
         server_nickname = member_payload.get("nick")
@@ -194,6 +197,7 @@ async def build_user_profile_card(
     display_name = (
         discord_display_name
         or (membership.server_nickname if membership else None)
+        or global_user.global_name
         or global_user.username
         or str(user_id)
     )
@@ -391,6 +395,7 @@ async def build_user_profile_card(
     return UserProfileCardModel(
         user_id=str(user_id),
         username=global_user.username,
+        global_name=global_user.global_name,
         server_nickname=membership.server_nickname if membership else None,
         display_name=display_name,
         avatar_hash=global_user.avatar_hash,

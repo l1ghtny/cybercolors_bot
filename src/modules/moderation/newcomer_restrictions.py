@@ -70,7 +70,7 @@ async def handle_newcomer_role_granted(
             server_id=after.guild.id,
             user_id=after.id,
             username=str(after),
-            server_nickname=after.display_name,
+            server_nickname=after.nick,
         )
         await upsert_monitored_user(
             session=session,

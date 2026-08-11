@@ -93,6 +93,7 @@ class CelebrationMessageUpdateModel(BaseModel):
 class BirthdayActorModel(BaseModel):
     user_id: str
     username: str | None = None
+    global_name: str | None = None
     server_nickname: str | None = None
     display_name: str
     avatar_hash: str | None = None

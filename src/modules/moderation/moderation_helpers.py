@@ -78,6 +78,7 @@ async def ensure_message_foreign_keys(message: d.Message, session: AsyncSession)
         .values(
             discord_id=author.id,
             username=author.name,
+            global_name=getattr(author, "global_name", None),
             joined_discord=joined_discord,
             avatar_hash=avatar_url,
         )
@@ -85,6 +86,7 @@ async def ensure_message_foreign_keys(message: d.Message, session: AsyncSession)
             index_elements=[GlobalUser.discord_id],
             set_={
                 "username": author.name,
+                "global_name": getattr(author, "global_name", None),
                 "avatar_hash": avatar_url,
             },
         )
@@ -105,6 +107,7 @@ async def check_if_user_exists(user: d.Member | d.User, server: d.Guild, session
         new_user = GlobalUser(
             discord_id=user.id,
             username=user.name,
+            global_name=getattr(user, "global_name", None),
             joined_discord=joined_discord,
             avatar_hash=avatar_url,
         )
@@ -115,6 +118,10 @@ async def check_if_user_exists(user: d.Member | d.User, server: d.Guild, session
         changed = False
         if user_in_db.username != user.name:
             user_in_db.username = user.name
+            changed = True
+        global_name = getattr(user, "global_name", None)
+        if user_in_db.global_name != global_name:
+            user_in_db.global_name = global_name
             changed = True
         if user_in_db.avatar_hash != avatar_url:
             user_in_db.avatar_hash = avatar_url

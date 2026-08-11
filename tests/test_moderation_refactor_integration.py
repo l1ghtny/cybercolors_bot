@@ -177,6 +177,7 @@ async def _scenario_user_profile_hydrates_membership_dates() -> None:
             )
             assert global_name_profile.display_name == "Current global name"
             assert global_name_profile.username == "account-name"
+            assert global_name_profile.global_name == "Current global name"
             assert global_name_profile.server_nickname is None
             assert global_name_profile.nickname_history == []
 

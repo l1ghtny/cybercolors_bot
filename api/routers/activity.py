@@ -952,10 +952,17 @@ async def get_server_activity_leaderboard(
     user_ids = [user_id for user_id, _, _ in leaderboard_rows]
     global_user_rows = (
         await session.exec(
-            select(GlobalUser.discord_id, GlobalUser.username).where(GlobalUser.discord_id.in_(user_ids))
+            select(
+                GlobalUser.discord_id,
+                GlobalUser.username,
+                GlobalUser.global_name,
+            ).where(GlobalUser.discord_id.in_(user_ids))
         )
     ).all()
-    global_user_map = {int(discord_id): username for discord_id, username in global_user_rows}
+    global_user_map = {
+        int(discord_id): (username, global_name)
+        for discord_id, username, global_name in global_user_rows
+    }
 
     membership_rows = (
         await session.exec(
@@ -1011,13 +1018,14 @@ async def get_server_activity_leaderboard(
     result: list[UserActivityLeaderboardItemModel] = []
     for user_id, message_count, last_message_at in leaderboard_rows:
         user_key = int(user_id)
-        username = global_user_map.get(user_key)
+        username, global_name = global_user_map.get(user_key, (None, None))
         server_nickname = membership_map.get(user_key)
-        display_name = server_nickname or username or str(user_key)
+        display_name = server_nickname or global_name or username or str(user_key)
         result.append(
             UserActivityLeaderboardItemModel(
                 user_id=str(user_key),
                 username=username,
+                global_name=global_name,
                 server_nickname=server_nickname,
                 display_name=display_name,
                 message_count=int(message_count),

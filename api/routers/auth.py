@@ -350,12 +350,19 @@ async def login(
 
     discord_id = int(user_json["id"])
     username = user_json.get("username")
+    global_name = user_json.get("global_name")
     avatar = user_json.get("avatar")
     db_user = await session.get(GlobalUser, discord_id)
     if db_user is None:
-        db_user = GlobalUser(discord_id=discord_id, username=username, avatar_hash=avatar)
+        db_user = GlobalUser(
+            discord_id=discord_id,
+            username=username,
+            global_name=global_name,
+            avatar_hash=avatar,
+        )
     else:
         db_user.username = username
+        db_user.global_name = global_name
         db_user.avatar_hash = avatar
     session.add(db_user)
     await session.flush()
@@ -375,6 +382,7 @@ async def login(
         user=AuthUserModel(
             discord_id=str(discord_id),
             username=username,
+            global_name=global_name,
             avatar_hash=avatar,
         ),
     )
@@ -393,6 +401,7 @@ async def get_current_user(
     return AuthUserModel(
         discord_id=str(db_user.discord_id),
         username=db_user.username,
+        global_name=db_user.global_name,
         avatar_hash=db_user.avatar_hash,
     )
 

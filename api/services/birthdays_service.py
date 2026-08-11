@@ -19,6 +19,8 @@ MENTION_PLACEHOLDER = "user_mention"
 def display_name(user: User, global_user: GlobalUser) -> str:
     if user.server_nickname:
         return user.server_nickname
+    if global_user.global_name:
+        return global_user.global_name
     if global_user.username:
         return global_user.username
     return str(user.user_id)
@@ -28,6 +30,7 @@ def to_birthday_read(user: User, global_user: GlobalUser, birthday: Birthday) ->
     return BirthdayReadModel(
         user_id=str(user.user_id),
         username=global_user.username,
+        global_name=global_user.global_name,
         server_nickname=user.server_nickname,
         display_name=display_name(user, global_user),
         avatar_hash=global_user.avatar_hash,
@@ -60,7 +63,10 @@ def to_celebration_message_read(
     membership: User | None,
 ) -> CelebrationMessageReadModel:
     username = global_user.username if global_user else None
-    resolved_display_name = membership.server_nickname if membership and membership.server_nickname else username
+    global_name = global_user.global_name if global_user else None
+    resolved_display_name = (
+        membership.server_nickname if membership and membership.server_nickname else global_name or username
+    )
     if not resolved_display_name:
         resolved_display_name = str(message.added_by_user_id)
 
@@ -74,6 +80,7 @@ def to_celebration_message_read(
         added_by=BirthdayActorModel(
             user_id=str(message.added_by_user_id),
             username=username,
+            global_name=global_name,
             server_nickname=membership.server_nickname if membership else None,
             display_name=resolved_display_name,
             avatar_hash=global_user.avatar_hash if global_user else None,
@@ -168,6 +175,7 @@ async def list_server_birthday_users(session: AsyncSession, server_id: int) -> l
             ServerBirthdayUserModel(
                 user_id=str(user.user_id),
                 username=global_user.username,
+                global_name=global_user.global_name,
                 server_nickname=user.server_nickname,
                 display_name=display_name(user, global_user),
                 avatar_hash=global_user.avatar_hash,

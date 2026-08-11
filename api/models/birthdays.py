@@ -54,6 +54,7 @@ class BirthdayCreateModel(BirthdayWriteModel):
 class BirthdayReadModel(BaseModel):
     user_id: str
     username: str | None = None
+    global_name: str | None = None
     server_nickname: str | None = None
     display_name: str
     avatar_hash: str | None = None
@@ -66,6 +67,7 @@ class BirthdayReadModel(BaseModel):
 class ServerBirthdayUserModel(BaseModel):
     user_id: str
     username: str | None = None
+    global_name: str | None = None
     server_nickname: str | None = None
     display_name: str
     avatar_hash: str | None = None
