@@ -19,6 +19,7 @@ class ReleaseNoteReadModel(BaseModel):
     published_at: datetime
     title: LocalizedReleaseTextModel
     summary: LocalizedReleaseTextModel
+    change_type: Literal["added", "fixed", "improved"]
     surface: Literal["dashboard", "bot", "both"]
     feature: LocalizedReleaseTextModel
     action: ReleaseNoteActionModel | None = None

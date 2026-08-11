@@ -33,6 +33,7 @@ async def _release_notes_scenario() -> None:
                 title_ru="Черновик",
                 summary_en="Not published.",
                 summary_ru="Ещё не опубликовано.",
+                change_type="improved",
                 surface="dashboard",
                 feature_en="Testing",
                 feature_ru="Тестирование",
@@ -44,11 +45,16 @@ async def _release_notes_scenario() -> None:
 
         manifest = await list_published_release_notes(session, limit=100)
 
-    assert len(manifest.releases) == 37
+    assert len(manifest.releases) == 50
     assert manifest.releases[0].id == "2026-08-11-member-name-preference-v2"
     assert manifest.releases[-1].id == "2026-07-14-bilingual-moderation-v2"
     assert all(release.title.en and release.title.ru for release in manifest.releases)
     assert all(release.feature.en and release.feature.ru for release in manifest.releases)
+    assert {release.change_type for release in manifest.releases} == {
+        "added",
+        "fixed",
+        "improved",
+    }
     assert {release.surface for release in manifest.releases} == {
         "dashboard",
         "bot",
@@ -62,6 +68,15 @@ async def _release_notes_scenario() -> None:
         for release in manifest.releases
     )
     assert all(release.id != "unpublished-future-note" for release in manifest.releases)
+    assert all(release.id != "2026-08-06-bot-profiles-v2" for release in manifest.releases)
+    assert {
+        release.id
+        for release in manifest.releases
+        if release.feature.en == "Discord command · /warns"
+    } == {
+        "2026-08-06-warns-command",
+        "2026-08-11-warns-legacy-reasons",
+    }
 
     await engine.dispose()
 

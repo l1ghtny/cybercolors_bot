@@ -25,6 +25,7 @@ def to_release_note_read_model(note: ProductReleaseNote) -> ReleaseNoteReadModel
         published_at=note.published_at,
         title=LocalizedReleaseTextModel(en=note.title_en, ru=note.title_ru),
         summary=LocalizedReleaseTextModel(en=note.summary_en, ru=note.summary_ru),
+        change_type=note.change_type,
         surface=note.surface,
         feature=LocalizedReleaseTextModel(en=note.feature_en, ru=note.feature_ru),
         action=action,

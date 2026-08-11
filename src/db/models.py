@@ -40,6 +40,10 @@ class ProductReleaseNote(SQLModel, table=True):
     title_ru: str = Field(sa_column=Column(String(length=200), nullable=False))
     summary_en: str = Field(sa_column=Column(Text, nullable=False))
     summary_ru: str = Field(sa_column=Column(Text, nullable=False))
+    change_type: str = Field(
+        default="improved",
+        sa_column=Column(String(length=16), nullable=False),
+    )
     surface: str = Field(
         default="both",
         sa_column=Column(String(length=16), nullable=False),
