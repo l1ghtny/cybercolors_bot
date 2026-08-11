@@ -28,6 +28,7 @@ class ModerationActionSummaryModel(BaseModel):
     target_user: "ModerationActorModel"
     moderator: "ModerationActorModel"
     reason: str
+    commentary: str | None = None
     created_at: datetime
     expires_at: datetime | None = None
     is_active: bool

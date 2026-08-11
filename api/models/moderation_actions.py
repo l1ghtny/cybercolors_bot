@@ -129,6 +129,7 @@ class ModerationActionSummaryModel(BaseModel):
     moderator_user_id: str
     moderator_username: str
     reason: str
+    commentary: str | None = None
     case_id: str | None = None
     case_title: str | None = None
     created_at: datetime

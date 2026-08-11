@@ -36,6 +36,7 @@ from src.db.models import (
     CaseStatus,
     GlobalUser,
     MessageLog,
+    ModerationAction,
     ModerationActionRuleCitation,
     ModerationCase,
     ModerationCaseRuleCitation,
@@ -366,6 +367,11 @@ async def _scenario_monitoring_cross_refs_and_profile_rule_stats() -> None:
             ),
             actor_user_id=moderator_id,
         )
+        stored_action = await session.get(ModerationAction, UUID(created_action.id))
+        assert stored_action is not None
+        stored_action.commentary = "Escalated after repeated moderator review"
+        session.add(stored_action)
+        await session.flush()
 
         action_summaries = await list_action_summaries(
             session=session,
@@ -376,6 +382,7 @@ async def _scenario_monitoring_cross_refs_and_profile_rule_stats() -> None:
         assert action_summaries
         action_summary = action_summaries[0]
         assert action_summary.id == created_action.id
+        assert action_summary.commentary == "Escalated after repeated moderator review"
         assert action_summary.rules_count >= 1
         assert action_summary.case_id == moderation_case.id
 
@@ -403,6 +410,7 @@ async def _scenario_monitoring_cross_refs_and_profile_rule_stats() -> None:
         )
         assert per_user_actions
         assert per_user_actions[0].id == created_action.id
+        assert per_user_actions[0].commentary == "Escalated after repeated moderator review"
 
         action_details = await get_action_details(
             session=session,
@@ -410,7 +418,18 @@ async def _scenario_monitoring_cross_refs_and_profile_rule_stats() -> None:
             action_id=UUID(created_action.id),
         )
         assert action_details.id == created_action.id
+        assert action_details.commentary == "Escalated after repeated moderator review"
         assert action_details.rules
+
+        case_details = await get_case_details(
+            session=session,
+            server_id=server_id,
+            case_id=UUID(moderation_case.id),
+        )
+        assert any(
+            action.commentary == "Escalated after repeated moderator review"
+            for action in case_details.case.linked_actions
+        )
 
         case_summaries = await list_cases(
             session=session,

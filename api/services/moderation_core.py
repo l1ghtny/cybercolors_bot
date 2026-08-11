@@ -309,6 +309,7 @@ async def _to_action_summary(
         target_user=await build_actor(session, action.server_id, action.target_user_id),
         moderator=await build_actor(session, action.server_id, action.moderator_user_id),
         reason=action.reason,
+        commentary=action.commentary,
         created_at=action.created_at,
         expires_at=action.expires_at,
         is_active=action.is_active,
