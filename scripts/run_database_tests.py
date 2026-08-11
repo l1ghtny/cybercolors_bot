@@ -21,19 +21,22 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.db.config import (  # noqa: E402
+    TEST_DATABASE_ENVIRONMENT_FLAG,
+    TEST_DATABASE_SCHEMA,
+)
 
 
 def _quoted_identifier(value: str) -> str:
     return f'"{value.replace(chr(34), chr(34) * 2)}"'
 
 
-def _test_schema_name(source_name: str | None) -> str:
-    safe_source = "".join(
-        character if character.isalnum() or character == "_" else "_"
-        for character in (source_name or "postgres")
-    )
+def _test_schema_name() -> str:
     suffix = uuid4().hex[:10]
-    return f"{safe_source[:45]}_test_{suffix}"
+    return f"{TEST_DATABASE_SCHEMA}_{suffix}"
 
 
 async def _database_admin(database_url: URL, statement: str) -> None:
@@ -55,13 +58,19 @@ def main() -> int:
     if not source_url.drivername.startswith("postgresql"):
         raise SystemExit("DATABASE_URL must point to PostgreSQL")
 
-    test_schema = _test_schema_name(source_url.database)
+    test_schema = _test_schema_name()
     quoted_schema = _quoted_identifier(test_schema)
     test_environment = os.environ.copy()
     test_environment["DATABASE_URL"] = source_url.render_as_string(hide_password=False)
     test_environment["DB_SCHEMA"] = test_schema
+    test_environment[TEST_DATABASE_ENVIRONMENT_FLAG] = "1"
     test_environment.setdefault("DB_ECHO", "false")
-    alembic = shutil.which("alembic")
+    adjacent_alembic = Path(sys.executable).with_name("alembic")
+    alembic = (
+        str(adjacent_alembic)
+        if adjacent_alembic.is_file()
+        else shutil.which("alembic")
+    )
     if alembic is None:
         raise SystemExit("alembic executable was not found")
 

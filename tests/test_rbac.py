@@ -6,7 +6,6 @@ from fastapi import HTTPException, status
 
 from fastapi.routing import APIRoute
 from starlette.routing import Match
-from sqlmodel import SQLModel
 
 from api.api_main import app
 from api.dependencies.server_access import require_server_permission
@@ -33,7 +32,6 @@ async def _ensure_schema() -> None:
     await engine.dispose()
     async with engine.begin() as conn:
         await ensure_pgvector_or_skip(conn)
-        await conn.run_sync(SQLModel.metadata.create_all)
 
 
 def test_rbac_catalog_contains_presets_and_permission_keys():

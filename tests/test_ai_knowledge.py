@@ -6,7 +6,7 @@ from uuid import UUID
 from uuid import uuid4
 
 from starlette.routing import Match
-from sqlmodel import SQLModel, select
+from sqlmodel import select
 
 from api.api_main import app
 from api.models.ai_knowledge import AIKnowledgeSourceCreateModel, AIKnowledgeSourceUpdateModel
@@ -264,7 +264,6 @@ async def _knowledge_index_scenario() -> None:
     await engine.dispose()
     async with engine.begin() as conn:
         await ensure_pgvector_or_skip(conn)
-        await conn.run_sync(SQLModel.metadata.create_all)
 
     server_id = _make_discord_id()
     admin_id = _make_discord_id()
@@ -324,7 +323,6 @@ async def _knowledge_api_service_scenario() -> None:
     await engine.dispose()
     async with engine.begin() as conn:
         await ensure_pgvector_or_skip(conn)
-        await conn.run_sync(SQLModel.metadata.create_all)
 
     server_id = _make_discord_id()
     actor_id = _make_discord_id()
@@ -429,7 +427,6 @@ async def _manual_youtube_edit_reindex_scenario(monkeypatch) -> None:
     await engine.dispose()
     async with engine.begin() as conn:
         await ensure_pgvector_or_skip(conn)
-        await conn.run_sync(SQLModel.metadata.create_all)
 
     server_id = _make_discord_id()
     async with get_async_session() as session:
@@ -494,7 +491,6 @@ async def _knowledge_file_import_scenario() -> None:
     await engine.dispose()
     async with engine.begin() as conn:
         await ensure_pgvector_or_skip(conn)
-        await conn.run_sync(SQLModel.metadata.create_all)
 
     server_id = _make_discord_id()
     actor_id = _make_discord_id()
@@ -542,7 +538,6 @@ async def _knowledge_youtube_import_scenario(monkeypatch) -> None:
     await engine.dispose()
     async with engine.begin() as conn:
         await ensure_pgvector_or_skip(conn)
-        await conn.run_sync(SQLModel.metadata.create_all)
 
     server_id = _make_discord_id()
     actor_id = _make_discord_id()

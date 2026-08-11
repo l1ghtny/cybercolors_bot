@@ -4,15 +4,43 @@ from urllib.parse import quote_plus
 
 
 _POSTGRES_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+TEST_DATABASE_SCHEMA = "cybercolors_test"
+TEST_DATABASE_ENVIRONMENT_FLAG = "CYBERCOLORS_TESTING"
+
+
+def is_test_database_schema(schema: str | None) -> bool:
+    """Return whether *schema* belongs to the reserved test namespace."""
+    return bool(
+        schema
+        and (
+            schema == TEST_DATABASE_SCHEMA
+            or schema.startswith(f"{TEST_DATABASE_SCHEMA}_")
+        )
+    )
+
+
+def require_test_database_schema(schema: str | None) -> str:
+    """Fail closed when a test process is not isolated from normal data."""
+    if not is_test_database_schema(schema):
+        raise RuntimeError(
+            "Test database access requires DB_SCHEMA=cybercolors_test "
+            "or a cybercolors_test_* disposable schema; refusing to use the normal database schema."
+        )
+    return schema
 
 
 def get_database_schema() -> str | None:
     schema = (os.getenv("DB_SCHEMA") or "").strip()
     if not schema:
-        return None
-    if not _POSTGRES_IDENTIFIER_RE.fullmatch(schema):
-        raise ValueError("DB_SCHEMA must be a valid unquoted PostgreSQL identifier")
-    return schema
+        resolved_schema = None
+    else:
+        if not _POSTGRES_IDENTIFIER_RE.fullmatch(schema):
+            raise ValueError("DB_SCHEMA must be a valid unquoted PostgreSQL identifier")
+        resolved_schema = schema
+
+    if os.getenv(TEST_DATABASE_ENVIRONMENT_FLAG) == "1":
+        return require_test_database_schema(resolved_schema)
+    return resolved_schema
 
 
 def get_database_url() -> str:

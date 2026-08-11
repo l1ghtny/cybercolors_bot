@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlmodel import SQLModel, select
+from sqlmodel import select
 from starlette.routing import Match
 
 from api.api_main import app
@@ -113,7 +113,6 @@ async def _ai_moderation_api_scenario() -> None:
     await engine.dispose()
     async with engine.begin() as conn:
         await ensure_pgvector_or_skip(conn)
-        await conn.run_sync(SQLModel.metadata.create_all)
     server_id = _make_discord_id()
     moderator_id = _make_discord_id()
     target_id = _make_discord_id()
