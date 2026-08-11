@@ -40,6 +40,24 @@ class ProductReleaseNote(SQLModel, table=True):
     title_ru: str = Field(sa_column=Column(String(length=200), nullable=False))
     summary_en: str = Field(sa_column=Column(Text, nullable=False))
     summary_ru: str = Field(sa_column=Column(Text, nullable=False))
+    surface: str = Field(
+        default="both",
+        sa_column=Column(String(length=16), nullable=False),
+    )
+    feature_en: str = Field(sa_column=Column(String(length=100), nullable=False))
+    feature_ru: str = Field(sa_column=Column(String(length=100), nullable=False))
+    action_label_en: Optional[str] = Field(
+        default=None,
+        sa_column=Column(String(length=120), nullable=True),
+    )
+    action_label_ru: Optional[str] = Field(
+        default=None,
+        sa_column=Column(String(length=120), nullable=True),
+    )
+    action_path: Optional[str] = Field(
+        default=None,
+        sa_column=Column(String(length=300), nullable=True),
+    )
     changes: list[dict[str, str]] = Field(
         default_factory=list,
         sa_column=Column(JSON, nullable=False),

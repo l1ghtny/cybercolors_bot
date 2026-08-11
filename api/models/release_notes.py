@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -8,11 +9,19 @@ class LocalizedReleaseTextModel(BaseModel):
     ru: str
 
 
+class ReleaseNoteActionModel(BaseModel):
+    label: LocalizedReleaseTextModel
+    path: str
+
+
 class ReleaseNoteReadModel(BaseModel):
     id: str
     published_at: datetime
     title: LocalizedReleaseTextModel
     summary: LocalizedReleaseTextModel
+    surface: Literal["dashboard", "bot", "both"]
+    feature: LocalizedReleaseTextModel
+    action: ReleaseNoteActionModel | None = None
     changes: list[LocalizedReleaseTextModel] = Field(default_factory=list)
 
 
