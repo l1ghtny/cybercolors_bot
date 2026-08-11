@@ -9,7 +9,6 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.db.models import ActionType, ModerationAction, ModerationActionRuleCitation
-from src.modules.localization.service import tr
 from src.modules.moderation.rule_labels import format_rule_label
 
 
@@ -19,6 +18,41 @@ class PublicWarning:
 
     created_at: datetime
     rule_labels: tuple[str, ...]
+    reason: str | None
+
+
+def _public_text_variants(value: str) -> set[str]:
+    normalized = " ".join(
+        value.casefold()
+        .replace("\ufe0f", "")
+        .replace("\u20e3", "")
+        .replace(":", " ")
+        .split()
+    )
+    variants = {normalized} if normalized else set()
+    for prefix in ("rule ", "правило "):
+        if normalized.startswith(prefix):
+            variants.add(normalized[len(prefix) :].strip())
+    return variants
+
+
+def _public_reason(action: ModerationAction, rule_labels: tuple[str, ...]) -> str | None:
+    reason = (action.reason or "").strip()
+    commentary = (action.commentary or "").strip()
+    if commentary:
+        legacy_suffix = f"\nCommentary: {commentary}"
+        if reason.endswith(legacy_suffix):
+            reason = reason[: -len(legacy_suffix)].rstrip()
+    if not reason:
+        return None
+
+    reason_variants = _public_text_variants(reason)
+    rule_variants = {
+        variant
+        for label in rule_labels
+        for variant in _public_text_variants(label)
+    }
+    return None if reason_variants & rule_variants else reason
 
 
 def _public_rule_labels(action: ModerationAction, locale: str | None) -> tuple[str, ...]:
@@ -48,7 +82,7 @@ def _public_rule_labels(action: ModerationAction, locale: str | None) -> tuple[s
                 localize_numeric_code=True,
             ),
         )
-    return (tr(locale, "warns.rule_unavailable"),)
+    return ()
 
 
 async def list_active_public_warnings(
@@ -87,10 +121,14 @@ async def list_active_public_warnings(
             .limit(limit)
         )
     ).all()
-    return [
-        PublicWarning(
-            created_at=action.created_at,
-            rule_labels=_public_rule_labels(action, locale),
+    warnings = []
+    for action in actions:
+        rule_labels = _public_rule_labels(action, locale)
+        warnings.append(
+            PublicWarning(
+                created_at=action.created_at,
+                rule_labels=rule_labels,
+                reason=_public_reason(action, rule_labels),
+            )
         )
-        for action in actions
-    ], total
+    return warnings, total

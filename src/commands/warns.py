@@ -12,6 +12,7 @@ from src.modules.moderation.public_warnings import PublicWarning, list_active_pu
 
 WARN_EMBED_COLOR = discord.Color.from_rgb(242, 153, 74)
 PUBLIC_WARNING_LIMIT = 10
+PUBLIC_WARNING_REASON_LIMIT = 600
 
 
 def _avatar_url(user: discord.abc.User) -> str | None:
@@ -24,6 +25,12 @@ def _warning_timestamp(value: datetime) -> str:
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return f"{discord.utils.format_dt(value, style='D')} ({discord.utils.format_dt(value, style='R')})"
+
+
+def _truncate_reason(value: str) -> str:
+    if len(value) <= PUBLIC_WARNING_REASON_LIMIT:
+        return value
+    return f"{value[: PUBLIC_WARNING_REASON_LIMIT - 3]}..."
 
 
 def build_public_warns_embed(
@@ -51,13 +58,20 @@ def build_public_warns_embed(
         )
     else:
         for index, warning in enumerate(warnings, start=1):
-            rules = "\n".join(f"• {label}" for label in warning.rule_labels)
+            sections = []
+            if warning.rule_labels:
+                rules = "\n".join(f"• {label}" for label in warning.rule_labels)
+                sections.append(f"**{tr(locale, 'warns.rule_label')}:**\n{rules}")
+            if warning.reason:
+                sections.append(
+                    f"**{tr(locale, 'warns.reason_label')}:**\n{_truncate_reason(warning.reason)}"
+                )
+            sections.append(
+                f"**{tr(locale, 'warns.issued_label')}:** {_warning_timestamp(warning.created_at)}"
+            )
             embed.add_field(
                 name=tr(locale, "warns.item_title", number=index),
-                value=(
-                    f"**{tr(locale, 'warns.rule_label')}:**\n{rules}\n"
-                    f"**{tr(locale, 'warns.issued_label')}:** {_warning_timestamp(warning.created_at)}"
-                ),
+                value="\n".join(sections),
                 inline=False,
             )
         if total > len(warnings):

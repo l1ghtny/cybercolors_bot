@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from src.commands.warns import WARN_EMBED_COLOR, build_public_warns_embed
 from src.modules.moderation.public_warnings import (
     PublicWarning,
+    _public_reason,
     _public_rule_labels,
     list_active_public_warnings,
 )
@@ -22,10 +23,10 @@ def _member(user_id: int, name: str):
 
 
 def test_public_warning_contract_cannot_expose_internal_moderation_details():
-    assert {field.name for field in fields(PublicWarning)} == {"created_at", "rule_labels"}
+    assert {field.name for field in fields(PublicWarning)} == {"created_at", "rule_labels", "reason"}
 
 
-def test_public_rule_labels_use_citation_snapshots_without_reason_or_commentary():
+def test_public_warning_projection_uses_citation_snapshots_and_member_facing_reason():
     action = SimpleNamespace(
         rule=None,
         rule_citations=[
@@ -37,17 +38,29 @@ def test_public_rule_labels_use_citation_snapshots_without_reason_or_commentary(
                 rule_title_snapshot="Be respectful",
             )
         ],
-        reason="Private reason",
+        reason="Member-facing reason",
         commentary="Private moderator note",
     )
 
-    assert _public_rule_labels(action, "en") == ("Rule 1️⃣: Be respectful",)
+    rule_labels = _public_rule_labels(action, "en")
+    assert rule_labels == ("Rule 1️⃣: Be respectful",)
+    assert _public_reason(action, rule_labels) == "Member-facing reason"
+
+
+def test_public_warning_projection_omits_reason_that_duplicates_localized_rule():
+    action = SimpleNamespace(
+        reason="1 Be respectful",
+        commentary=None,
+    )
+
+    assert _public_reason(action, ("Правило 1️⃣: Be respectful",)) is None
 
 
 def test_public_warns_embed_matches_member_card_style_without_private_fields():
     warning = PublicWarning(
         created_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
         rule_labels=("Rule 1️⃣: Be respectful",),
+        reason="Repeated harassment after a prior reminder",
     )
 
     embed = build_public_warns_embed(
@@ -65,12 +78,33 @@ def test_public_warns_embed_matches_member_card_style_without_private_fields():
     assert embed.color == WARN_EMBED_COLOR
     assert embed.thumbnail.url == "https://cdn.example/456.png"
     assert "Rule 1️⃣: Be respectful" in embed.fields[0].value
+    assert "Repeated harassment after a prior reminder" in embed.fields[0].value
     assert "<t:" in embed.fields[0].value
     assert embed.footer.text == "Requested by Requester"
-    assert "Private reason" not in serialized
     assert "commentary" not in serialized.lower()
     assert "moderator" not in serialized.lower()
     assert "dashboard" not in serialized.lower()
+
+
+def test_public_warns_embed_hides_rule_section_for_legacy_warning():
+    warning = PublicWarning(
+        created_at=datetime(2023, 2, 19, tzinfo=timezone.utc),
+        rule_labels=(),
+        reason="Imported rule 3 reference",
+    )
+
+    embed = build_public_warns_embed(
+        target=_member(456, "Цель"),
+        requester=_member(789, "Автор"),
+        warnings=[warning],
+        total=1,
+        locale="ru",
+    )
+
+    value = embed.fields[0].value
+    assert "**Причина:**\nImported rule 3 reference" in value
+    assert "**Правило:**" not in value
+    assert "Правило недоступно" not in value
 
 
 def test_public_warns_embed_localizes_empty_state():
@@ -118,7 +152,7 @@ def test_public_warning_query_returns_only_public_projection():
         created_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
         rule=None,
         rule_citations=[],
-        reason="Hidden reason",
+        reason="Imported rule 7\nCommentary: Hidden note",
         commentary="Hidden note",
     )
     session = _Session(action)
@@ -137,7 +171,8 @@ def test_public_warning_query_returns_only_public_projection():
     assert warnings == [
         PublicWarning(
             created_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
-            rule_labels=("Rule unavailable",),
+            rule_labels=(),
+            reason="Imported rule 7",
         )
     ]
     assert len(session.statements) == 2

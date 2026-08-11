@@ -893,7 +893,7 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         ],
         workflow=[
             "Loads active warning actions for the selected member or the requester.",
-            "Shows public rule labels and issue dates without reasons, commentary, moderators, cases, or dashboard links.",
+            "Shows member-facing reasons, available public rule labels, and issue dates without commentary, moderators, cases, or dashboard links.",
             "Posts the localized warning card publicly and suppresses mention notifications.",
         ],
     ),
@@ -1608,7 +1608,7 @@ RU_COMMAND_TEXT: dict[str, dict[str, list[str] | str]] = {
         "summary": "Показать активные предупреждения участника без закрытых данных модерации.",
         "workflow": [
             "Загружает активные предупреждения выбранного участника; если участник не указан, показывает предупреждения автора команды.",
-            "Показывает только названия правил и даты выдачи — без причин, комментариев, данных модератора, дел и ссылок на панель управления.",
+            "Показывает причины, доступные названия правил и даты выдачи — без внутренних комментариев, данных о модераторах, дел и ссылок на панель управления.",
             "Публикует локализованную карточку и не отправляет уведомления упомянутым участникам.",
         ],
     },
