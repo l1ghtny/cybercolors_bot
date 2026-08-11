@@ -99,24 +99,23 @@ async def _hydrate_membership_from_discord(
     user_id: int,
     global_user: GlobalUser,
     membership: User | None,
-) -> User | None:
-    if membership and membership.is_member and membership.joined_server_at is not None:
-        return membership
-
+) -> tuple[User | None, str | None]:
     try:
         member_payload = await fetch_guild_member(server_id, user_id)
     except HTTPException:
-        return membership
+        return membership, None
 
     if member_payload:
         discord_user = member_payload.get("user") if isinstance(member_payload.get("user"), dict) else {}
-        username = discord_user.get("global_name") or discord_user.get("username")
+        username = discord_user.get("username")
+        global_name = discord_user.get("global_name")
         if username and global_user.username != username:
             global_user.username = username
             session.add(global_user)
 
         joined_server_at = _parse_discord_datetime(member_payload.get("joined_at"))
-        server_nickname = member_payload.get("nick") or username
+        server_nickname = member_payload.get("nick")
+        display_name = server_nickname or global_name or username
         if membership is None:
             membership = User(
                 user_id=user_id,
@@ -129,8 +128,7 @@ async def _hydrate_membership_from_discord(
             )
             session.add(membership)
         else:
-            if server_nickname:
-                membership.server_nickname = server_nickname
+            membership.server_nickname = server_nickname
             if joined_server_at is not None:
                 membership.joined_server_at = joined_server_at
             membership.left_server_at = None
@@ -138,7 +136,7 @@ async def _hydrate_membership_from_discord(
             membership.is_member = True
             session.add(membership)
         await session.flush()
-        return membership
+        return membership, display_name
 
     if membership is not None:
         if membership.is_member or (membership.left_server_at is None and membership.flagged_absent_at is None):
@@ -150,10 +148,10 @@ async def _hydrate_membership_from_discord(
                 membership.left_server_at = membership.flagged_absent_at
             session.add(membership)
             await session.flush()
-        return membership
+        return membership, None
 
     if not await _has_server_profile_evidence(session, server_id, user_id):
-        return None
+        return None, None
 
     detected_at = _utc_now()
     membership = User(
@@ -167,7 +165,7 @@ async def _hydrate_membership_from_discord(
     )
     session.add(membership)
     await session.flush()
-    return membership
+    return membership, None
 
 async def build_user_profile_card(
     session: AsyncSession,
@@ -186,8 +184,19 @@ async def build_user_profile_card(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     membership = (await session.exec(select(User).where(User.server_id == server_id, User.user_id == user_id))).first()
-    membership = await _hydrate_membership_from_discord(session, server_id, user_id, global_user, membership)
-    display_name = membership.server_nickname if membership and membership.server_nickname else (global_user.username or str(user_id))
+    membership, discord_display_name = await _hydrate_membership_from_discord(
+        session,
+        server_id,
+        user_id,
+        global_user,
+        membership,
+    )
+    display_name = (
+        discord_display_name
+        or (membership.server_nickname if membership else None)
+        or global_user.username
+        or str(user_id)
+    )
     birthday = await session.get(Birthday, user_id)
 
     activity_totals = (

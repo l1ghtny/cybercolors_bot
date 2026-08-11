@@ -107,6 +107,7 @@ async def _scenario_user_profile_hydrates_membership_dates() -> None:
 
     server_id = _make_discord_id()
     member_id = _make_discord_id()
+    global_name_only_id = _make_discord_id()
     absent_id = _make_discord_id()
     joined_at = datetime(2026, 6, 1, 12, 34, 56, tzinfo=timezone.utc)
 
@@ -118,6 +119,16 @@ async def _scenario_user_profile_hydrates_membership_dates() -> None:
                 "nick": "server-nick",
                 "user": {"id": str(member_id), "username": "member-user", "global_name": "Member User"},
             }
+        if request_user_id == global_name_only_id:
+            return {
+                "joined_at": "2026-06-01T12:34:56.000000+00:00",
+                "nick": None,
+                "user": {
+                    "id": str(global_name_only_id),
+                    "username": "account-name",
+                    "global_name": "Current global name",
+                },
+            }
         if request_user_id == absent_id:
             return None
         raise AssertionError(f"unexpected user id {request_user_id}")
@@ -128,8 +139,18 @@ async def _scenario_user_profile_hydrates_membership_dates() -> None:
         async with get_async_session() as session:
             session.add(Server(server_id=server_id, server_name="hydration-server", bot_active=True))
             session.add(GlobalUser(discord_id=member_id, username="old-member"))
+            session.add(GlobalUser(discord_id=global_name_only_id, username="old-account-name"))
             session.add(GlobalUser(discord_id=absent_id, username="absent-user"))
             await session.flush()
+            session.add(
+                User(
+                    user_id=global_name_only_id,
+                    server_id=server_id,
+                    server_nickname="stale-server-nickname",
+                    joined_server_at=joined_at,
+                    is_member=True,
+                )
+            )
             session.add(
                 MessageLog(
                     message_id=_make_discord_id(),
@@ -147,6 +168,16 @@ async def _scenario_user_profile_hydrates_membership_dates() -> None:
             assert member_profile.server_nickname == "server-nick"
             assert member_profile.joined_server_at == joined_at
             assert member_profile.left_server_at is None
+
+            global_name_profile = await build_user_profile_card(
+                session=session,
+                server_id=server_id,
+                user_id=global_name_only_id,
+            )
+            assert global_name_profile.display_name == "Current global name"
+            assert global_name_profile.username == "account-name"
+            assert global_name_profile.server_nickname is None
+            assert global_name_profile.nickname_history == []
 
             absent_profile = await build_user_profile_card(session=session, server_id=server_id, user_id=absent_id)
             assert absent_profile.is_member is False
