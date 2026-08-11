@@ -14,6 +14,7 @@ from api.routers.birthdays import birthdays
 from api.routers.bot_commands import bot_commands
 from api.routers.moderation import moderation
 from api.routers.replies import replies
+from api.routers.release_notes import release_notes
 from api.routers.servers import servers
 from api.routers.server_settings import server_settings
 
@@ -67,4 +68,5 @@ app.include_router(bot_commands)
 app.include_router(servers)
 app.include_router(server_settings)
 app.include_router(replies)
+app.include_router(release_notes)
 app.include_router(moderation)

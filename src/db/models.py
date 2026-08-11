@@ -26,6 +26,31 @@ def uuid7_primary_key_field():
 
 # --- Main Models ---
 
+
+class ProductReleaseNote(SQLModel, table=True):
+    """A product-wide release note shown in the dashboard."""
+
+    __tablename__ = "product_release_notes"
+
+    id: str = Field(sa_column=Column(String(length=128), primary_key=True))
+    published_at: datetime = Field(
+        sa_column=Column(TIMESTAMP(timezone=True), nullable=False, index=True)
+    )
+    title_en: str = Field(sa_column=Column(String(length=200), nullable=False))
+    title_ru: str = Field(sa_column=Column(String(length=200), nullable=False))
+    summary_en: str = Field(sa_column=Column(Text, nullable=False))
+    summary_ru: str = Field(sa_column=Column(Text, nullable=False))
+    changes: list[dict[str, str]] = Field(
+        default_factory=list,
+        sa_column=Column(JSON, nullable=False),
+    )
+    is_published: bool = Field(default=True, nullable=False, index=True)
+    created_at: datetime = Field(
+        default_factory=utcnow_utc_tz,
+        sa_column=Column(TIMESTAMP(timezone=True), nullable=False),
+    )
+
+
 class Server(SQLModel, table=True):
     __tablename__ = "servers"
     server_id: int = Field(sa_column=Column(BigInteger, primary_key=True))
