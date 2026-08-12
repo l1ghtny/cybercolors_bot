@@ -4,7 +4,10 @@ from datetime import datetime, timezone
 from starlette.routing import Match
 
 from api.api_main import app
-from api.services.release_notes import list_published_release_notes
+from api.services.release_notes import (
+    list_public_product_updates,
+    list_published_release_notes,
+)
 from src.db.database import engine, get_async_session
 from src.db.models import ProductReleaseNote
 
@@ -19,6 +22,18 @@ def test_release_notes_route_is_available_without_server_context():
             return
 
     raise AssertionError("release notes route did not match")
+
+
+def test_public_product_updates_route_is_available_without_authentication():
+    scope = {"type": "http", "method": "GET", "path": "/release-notes/public"}
+
+    for route in app.routes:
+        match, _ = route.matches(scope)
+        if match == Match.FULL:
+            assert route.path == "/release-notes/public"
+            return
+
+    raise AssertionError("public product updates route did not match")
 
 
 async def _release_notes_scenario() -> None:
@@ -44,12 +59,18 @@ async def _release_notes_scenario() -> None:
         await session.commit()
 
         manifest = await list_published_release_notes(session, limit=100)
+        public_manifest = await list_public_product_updates(session, limit=50)
 
-    assert len(manifest.releases) == 50
-    assert manifest.releases[0].id == "2026-08-11-member-name-preference-v2"
-    assert manifest.releases[0].title.en == "Member names now follow Discord consistently"
-    assert "server nickname first" in manifest.releases[0].summary.en
-    assert "глобальное имя" in manifest.releases[0].summary.ru
+    assert len(manifest.releases) == 51
+    assert manifest.releases[0].id == "2026-08-12-public-product-updates"
+    member_identity_release = next(
+        release
+        for release in manifest.releases
+        if release.id == "2026-08-11-member-name-preference-v2"
+    )
+    assert member_identity_release.title.en == "Member names now follow Discord consistently"
+    assert "server nickname first" in member_identity_release.summary.en
+    assert "глобальное имя" in member_identity_release.summary.ru
     assert manifest.releases[-1].id == "2026-07-14-bilingual-moderation-v2"
     assert all(release.title.en and release.title.ru for release in manifest.releases)
     assert all(release.feature.en and release.feature.ru for release in manifest.releases)
@@ -80,6 +101,30 @@ async def _release_notes_scenario() -> None:
         "2026-08-06-warns-command",
         "2026-08-11-warns-legacy-reasons",
     }
+
+    assert len(public_manifest.updates) == 7
+    assert public_manifest.updates[0].slug == "public-product-updates"
+    assert public_manifest.updates[0].title.en == "See what we're building in Modral"
+    assert public_manifest.updates[0].title.ru == "Следите за развитием Modral"
+    assert {
+        update.slug
+        for update in public_manifest.updates
+    } == {
+        "public-product-updates",
+        "members-can-review-active-warnings",
+        "scheduled-discord-posts",
+        "meaning-based-automatic-replies",
+        "discord-command-access",
+        "private-moderation-case-evidence",
+        "batch-ai-moderation-review",
+    }
+    assert all(update.title.en and update.title.ru for update in public_manifest.updates)
+    assert all(update.summary.en and update.summary.ru for update in public_manifest.updates)
+    assert any(
+        update.action
+        and update.action.url == "/docs/moderation/cases-and-evidence"
+        for update in public_manifest.updates
+    )
 
     await engine.dispose()
 

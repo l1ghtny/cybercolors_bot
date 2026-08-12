@@ -28,7 +28,7 @@ def uuid7_primary_key_field():
 
 
 class ProductReleaseNote(SQLModel, table=True):
-    """A product-wide release note shown in the dashboard."""
+    """A product release note, optionally curated for the public website."""
 
     __tablename__ = "product_release_notes"
 
@@ -67,6 +67,43 @@ class ProductReleaseNote(SQLModel, table=True):
         sa_column=Column(JSON, nullable=False),
     )
     is_published: bool = Field(default=True, nullable=False, index=True)
+    is_public: bool = Field(default=False, nullable=False, index=True)
+    public_slug: Optional[str] = Field(
+        default=None,
+        sa_column=Column(String(length=128), nullable=True, unique=True),
+    )
+    public_title_en: Optional[str] = Field(
+        default=None,
+        sa_column=Column(String(length=200), nullable=True),
+    )
+    public_title_ru: Optional[str] = Field(
+        default=None,
+        sa_column=Column(String(length=200), nullable=True),
+    )
+    public_summary_en: Optional[str] = Field(
+        default=None,
+        sa_column=Column(Text, nullable=True),
+    )
+    public_summary_ru: Optional[str] = Field(
+        default=None,
+        sa_column=Column(Text, nullable=True),
+    )
+    public_action_label_en: Optional[str] = Field(
+        default=None,
+        sa_column=Column(String(length=120), nullable=True),
+    )
+    public_action_label_ru: Optional[str] = Field(
+        default=None,
+        sa_column=Column(String(length=120), nullable=True),
+    )
+    public_action_url: Optional[str] = Field(
+        default=None,
+        sa_column=Column(String(length=500), nullable=True),
+    )
+    public_image_url: Optional[str] = Field(
+        default=None,
+        sa_column=Column(String(length=500), nullable=True),
+    )
     created_at: datetime = Field(
         default_factory=utcnow_utc_tz,
         sa_column=Column(TIMESTAMP(timezone=True), nullable=False),

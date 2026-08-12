@@ -28,3 +28,25 @@ class ReleaseNoteReadModel(BaseModel):
 
 class ReleaseNotesManifestModel(BaseModel):
     releases: list[ReleaseNoteReadModel] = Field(default_factory=list)
+
+
+class PublicProductUpdateActionModel(BaseModel):
+    label: LocalizedReleaseTextModel
+    url: str
+
+
+class PublicProductUpdateReadModel(BaseModel):
+    id: str
+    slug: str
+    published_at: datetime
+    title: LocalizedReleaseTextModel
+    summary: LocalizedReleaseTextModel
+    change_type: Literal["added", "fixed", "improved"]
+    surface: Literal["dashboard", "bot", "both"]
+    feature: LocalizedReleaseTextModel
+    action: PublicProductUpdateActionModel | None = None
+    image_url: str | None = None
+
+
+class PublicProductUpdatesManifestModel(BaseModel):
+    updates: list[PublicProductUpdateReadModel] = Field(default_factory=list)

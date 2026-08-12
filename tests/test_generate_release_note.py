@@ -23,6 +23,15 @@ def _note() -> dict:
         "changes": [
             {"en": "One concrete change.", "ru": "Одно конкретное изменение."},
         ],
+        "public_slug": None,
+        "public_title_en": None,
+        "public_title_ru": None,
+        "public_summary_en": None,
+        "public_summary_ru": None,
+        "public_action_label_en": None,
+        "public_action_label_ru": None,
+        "public_action_url": None,
+        "public_image_url": None,
     }
 
 
@@ -40,6 +49,7 @@ def test_build_migration_creates_reversible_bilingual_release_note() -> None:
     assert "/dashboard/{server_id}/users" in migration
     assert "op.inline_literal" in migration
     assert "sa.JSON()" in migration
+    assert "is_public=False" in migration
     assert "table.delete().where(table.c.id == NOTE_ID)" in migration
 
 
@@ -52,4 +62,31 @@ def test_validate_note_rejects_partial_or_unsafe_actions() -> None:
     note = _note()
     note["action_path"] = "https://example.com"
     with pytest.raises(ValueError, match="must stay under"):
+        validate_note(note)
+
+
+def test_public_release_copy_is_optional_but_complete_and_safe() -> None:
+    note = _note()
+    note.update(
+        public_slug="member-profiles",
+        public_title_en="Clear public title",
+        public_title_ru="Понятный публичный заголовок",
+        public_summary_en="A concise public outcome.",
+        public_summary_ru="Краткое описание результата.",
+        public_action_label_en="Read the docs",
+        public_action_label_ru="Открыть документацию",
+        public_action_url="/docs/moderation/actions",
+    )
+
+    validate_note(note)
+    migration = build_migration(
+        revision="abc123def456",
+        down_revision="previous1234",
+        note=note,
+    )
+    assert "is_public=True" in migration
+    assert "public_slug='member-profiles'" in migration
+
+    note["public_action_url"] = "https://example.com/releases"
+    with pytest.raises(ValueError, match="modral.app or root-relative"):
         validate_note(note)

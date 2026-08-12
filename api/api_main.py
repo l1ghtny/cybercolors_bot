@@ -35,6 +35,8 @@ origins = [
     "http://127.0.0.1:5173",
     "http://localhost:8080",
     "http://127.0.0.1:8080",
+    "https://modral.app",
+    "https://www.modral.app",
     "https://id-preview--ee4421b9-d859-42bd-b506-4c32a5dc1982.lovable.app",
     "https://preview--bot-pal-dash.lovable.app",
     *_csv_env("CORS_ALLOWED_ORIGINS"),

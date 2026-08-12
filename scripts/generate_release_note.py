@@ -56,6 +56,45 @@ def validate_note(note: dict) -> None:
         if not path.startswith("/dashboard/{server_id}/"):
             raise ValueError("action_path must stay under /dashboard/{server_id}/")
 
+    public_required = (
+        "public_slug",
+        "public_title_en",
+        "public_title_ru",
+        "public_summary_en",
+        "public_summary_ru",
+    )
+    public_action = (
+        "public_action_label_en",
+        "public_action_label_ru",
+        "public_action_url",
+    )
+    public_values = tuple(note.get(key) for key in (*public_required, *public_action))
+    public_values += (note.get("public_image_url"),)
+    if any(public_values):
+        if not all(note.get(key) for key in public_required):
+            raise ValueError("public updates require a slug and bilingual title and summary")
+        public_slug = _nonempty(note["public_slug"], "public_slug", 128)
+        if not SLUG_RE.fullmatch(public_slug):
+            raise ValueError("public_slug must contain lowercase letters, numbers, and single hyphens")
+        _nonempty(note["public_title_en"], "public_title_en", 200)
+        _nonempty(note["public_title_ru"], "public_title_ru", 200)
+        _nonempty(note["public_summary_en"], "public_summary_en")
+        _nonempty(note["public_summary_ru"], "public_summary_ru")
+        public_action_values = tuple(note.get(key) for key in public_action)
+        if any(public_action_values) and not all(public_action_values):
+            raise ValueError("public action translations and URL must be supplied together")
+        if note.get("public_action_url"):
+            public_url = _nonempty(note["public_action_url"], "public_action_url", 500)
+            if not (
+                public_url.startswith("/")
+                or public_url.startswith("https://modral.app/")
+            ):
+                raise ValueError("public_action_url must be a modral.app or root-relative URL")
+        if note.get("public_image_url"):
+            image_url = _nonempty(note["public_image_url"], "public_image_url", 500)
+            if not image_url.startswith("https://"):
+                raise ValueError("public_image_url must use HTTPS")
+
 
 def build_migration(*, revision: str, down_revision: str, note: dict) -> str:
     validate_note(note)
@@ -101,6 +140,16 @@ def _release_notes_table() -> sa.TableClause:
         sa.column("action_path", sa.String),
         sa.column("changes", sa.JSON),
         sa.column("is_published", sa.Boolean),
+        sa.column("is_public", sa.Boolean),
+        sa.column("public_slug", sa.String),
+        sa.column("public_title_en", sa.String),
+        sa.column("public_title_ru", sa.String),
+        sa.column("public_summary_en", sa.Text),
+        sa.column("public_summary_ru", sa.Text),
+        sa.column("public_action_label_en", sa.String),
+        sa.column("public_action_label_ru", sa.String),
+        sa.column("public_action_url", sa.String),
+        sa.column("public_image_url", sa.String),
     )
 
 
@@ -130,6 +179,16 @@ def upgrade() -> None:
                 sa.JSON(),
             ),
             is_published=True,
+            is_public={bool(note.get("public_slug"))!r},
+            public_slug={note.get("public_slug")!r},
+            public_title_en={note.get("public_title_en")!r},
+            public_title_ru={note.get("public_title_ru")!r},
+            public_summary_en={note.get("public_summary_en")!r},
+            public_summary_ru={note.get("public_summary_ru")!r},
+            public_action_label_en={note.get("public_action_label_en")!r},
+            public_action_label_ru={note.get("public_action_label_ru")!r},
+            public_action_url={note.get("public_action_url")!r},
+            public_image_url={note.get("public_image_url")!r},
         )
     )
 
@@ -176,6 +235,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--action-label-en")
     parser.add_argument("--action-label-ru")
     parser.add_argument("--action-path")
+    parser.add_argument("--public-slug")
+    parser.add_argument("--public-title-en")
+    parser.add_argument("--public-title-ru")
+    parser.add_argument("--public-summary-en")
+    parser.add_argument("--public-summary-ru")
+    parser.add_argument("--public-action-label-en")
+    parser.add_argument("--public-action-label-ru")
+    parser.add_argument("--public-action-url")
+    parser.add_argument("--public-image-url")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args(argv)
 
@@ -203,6 +271,15 @@ def main(argv: list[str] | None = None) -> int:
         "action_label_en": args.action_label_en,
         "action_label_ru": args.action_label_ru,
         "action_path": args.action_path,
+        "public_slug": args.public_slug,
+        "public_title_en": args.public_title_en,
+        "public_title_ru": args.public_title_ru,
+        "public_summary_en": args.public_summary_en,
+        "public_summary_ru": args.public_summary_ru,
+        "public_action_label_en": args.public_action_label_en,
+        "public_action_label_ru": args.public_action_label_ru,
+        "public_action_url": args.public_action_url,
+        "public_image_url": args.public_image_url,
         "changes": [
             {"en": english, "ru": russian}
             for english, russian in zip(args.change_en, args.change_ru, strict=True)
