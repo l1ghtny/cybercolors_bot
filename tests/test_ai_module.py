@@ -1222,6 +1222,7 @@ def test_default_tool_registry_exposes_initial_database_tools():
         "most_active",
         "least_active",
     ]
+    assert specs["get_server_activity"]["parameters"]["properties"]["rank_user_id"]["type"] == "integer"
     assert specs["get_available_commands"]["requires_requester_context"] is True
     assert "aggregate member message counts" in specs["get_server_activity"]["description"]
 
@@ -1525,6 +1526,66 @@ def test_server_activity_tool_rejects_targeted_other_member_for_public_requester
     assert result["privacy_restricted"] is True
     assert result["activity_detail_access"] == "aggregate_leaderboards_or_self_only"
     assert result["members"] == []
+
+
+def test_server_activity_tool_uses_backend_rank_without_single_member_filter(monkeypatch):
+    import src.modules.ai.tools as tools_module
+
+    captured = {}
+
+    async def fake_leaderboard(**kwargs):
+        captured.update(kwargs)
+        return [
+            SimpleNamespace(
+                user_id="456",
+                username="member",
+                server_nickname=None,
+                display_name="Member",
+                message_count=68,
+                rank=16,
+                ranking_member_count=53,
+                last_message_at=datetime(2026, 8, 16, 16, 40, tzinfo=timezone.utc),
+                channels=[],
+            )
+        ]
+
+    monkeypatch.setattr(tools_module, "get_server_activity_leaderboard", fake_leaderboard)
+
+    result = asyncio.run(
+        tools_module._server_activity_tool(
+            session="session",
+            server_id=123,
+            requester_user_id=456,
+            requester_role_ids=[],
+            requester_permission_names=[],
+            requester_is_owner=False,
+            requester_is_administrator=False,
+            requester_locale="en",
+            guidance_mode="personalized",
+            requester_visible_channel_ids=[789],
+            date_from="2026-08-10",
+            date_to="2026-08-16",
+            include_user_ids=[456],
+            rank_user_id=456,
+        )
+    )
+
+    assert captured["rank_user_id"] == 456
+    assert captured["include_user_ids"] is None
+    assert captured["include_channel_ids"] is None
+    assert result["rank_user_id"] == "456"
+    assert result["requester_channel_scope_applied"] is False
+    assert result["members"] == [
+        {
+            "user_id": "456",
+            "username": "member",
+            "server_nickname": None,
+            "display_name": "Member",
+            "message_count": 68,
+            "rank": 16,
+            "ranking_member_count": 53,
+        }
+    ]
 
 
 def test_server_activity_public_leaderboard_omits_member_detail(monkeypatch):

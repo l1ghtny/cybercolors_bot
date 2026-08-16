@@ -51,6 +51,8 @@ class UserActivityLeaderboardItemModel(BaseModel):
     server_nickname: str | None = None
     display_name: str
     message_count: int
+    rank: int | None = None
+    ranking_member_count: int | None = None
     last_message_at: datetime
     channels: list[UserActivityChannelCountModel] = Field(default_factory=list)
     warn_count: int = 0

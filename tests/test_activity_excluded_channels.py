@@ -1,11 +1,17 @@
 import pytest
 from pydantic import ValidationError
+from sqlalchemy.dialects import postgresql
+from sqlmodel import select
 
 from api.models.moderation_settings import ServerModerationSettingsUpdateModel
 from api.routers.activity import (
+    _build_activity_filters,
+    _rank_leaderboard_rows,
     _resolve_effective_activity_excluded_channel_ids,
+    _select_ranked_member,
     _sort_leaderboard_rows,
 )
+from src.db.models import MessageLog
 
 
 def test_moderation_settings_update_normalizes_activity_excluded_channel_ids():
@@ -74,3 +80,59 @@ def test_leaderboard_can_order_least_active_before_applying_limit():
 
     assert [row[0] for row in ordered[:2]] == [102, 103]
     assert rows[0][0] == 101
+
+
+def test_leaderboard_assigns_competition_ranks_from_full_population():
+    rows = [
+        (101, 900, None),
+        (102, 67, None),
+        (103, 67, None),
+        (104, 40, None),
+    ]
+
+    ranks = _rank_leaderboard_rows(rows, "most_active")
+
+    assert ranks == {101: 1, 102: 2, 103: 2, 104: 4}
+
+
+def test_leaderboard_assigns_least_active_ranks_from_full_population():
+    rows = [
+        (101, 1, None),
+        (102, 1, None),
+        (103, 4, None),
+    ]
+
+    ranks = _rank_leaderboard_rows(rows, "least_active")
+
+    assert ranks == {101: 1, 102: 1, 103: 3}
+
+
+def test_ranked_member_is_selected_only_after_ranking_full_population():
+    rows = [
+        (101, 900, None),
+        (102, 68, None),
+        (103, 67, None),
+        (104, 40, None),
+    ]
+
+    selected, ranks, population = _select_ranked_member(rows, "most_active", 103)
+
+    assert selected == [(103, 67, None)]
+    assert ranks[103] == 3
+    assert population == 4
+
+
+def test_live_activity_filters_out_buckets_already_covered_by_historical_import():
+    conditions = _build_activity_filters(server_id=123)
+    compiled = str(
+        select(MessageLog.user_id)
+        .where(*conditions)
+        .compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})
+    )
+
+    assert "NOT (EXISTS" in compiled
+    assert "FROM historical_user_activity_daily" in compiled
+    assert "historical_user_activity_daily.server_id = message_log.server_id" in compiled
+    assert "historical_user_activity_daily.user_id = message_log.user_id" in compiled
+    assert "historical_user_activity_daily.channel_id = message_log.channel_id" in compiled
+    assert "historical_user_activity_daily.activity_date = CAST(timezone('UTC', message_log.created_at) AS DATE)" in compiled

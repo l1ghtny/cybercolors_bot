@@ -158,6 +158,8 @@ ACTIVITY_TOOL_GUIDANCE = (
     "within a date, user, role, or channel filter. Public aggregate statistics and leaderboards are allowed. "
     "For least-active or fewest-message rankings, pass sort=least_active; do not reverse or reinterpret a "
     "most-active sample. This ranking includes only members who posted in the selected period. "
+    "For 'what place am I?' or another member's position, pass rank_user_id and do not pass include_user_ids; "
+    "report the returned rank directly and never infer rank from a one-member result. "
     "Do not infer or reveal another member's per-channel activity or exact last-message time when the tool omits it; "
     "explain briefly that detailed activity is private. Do not guess activity from member profiles or conversation context."
 )

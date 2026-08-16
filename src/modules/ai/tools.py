@@ -296,10 +296,15 @@ async def _server_activity_tool(
     include_channel_ids: list[int] | None = None,
     exclude_channel_ids: list[int] | None = None,
     sort: Literal["most_active", "least_active"] = "most_active",
+    rank_user_id: int | None = None,
     limit: int = 10,
     channels_limit: int = 5,
 ) -> dict[str, Any]:
     del requester_locale, guidance_mode
+    if rank_user_id is not None:
+        # Ranking requires the complete comparison population. A model may still
+        # supply include_user_ids out of habit; ignore it instead of returning a false rank of 1.
+        include_user_ids = None
     parsed_date_from = _activity_date(date_from, "date_from")
     parsed_date_to = _activity_date(date_to, "date_to")
     requested_user_ids = {int(user_id) for user_id in include_user_ids or []}
@@ -385,10 +390,11 @@ async def _server_activity_tool(
         limit=min(max(int(limit), 1), 25),
         all_users=False,
         sort=sort,
+        rank_user_id=rank_user_id,
         date_from=parsed_date_from,
         date_to=parsed_date_to,
         channels_limit=min(max(int(channels_limit), 1), 10),
-        include_user_ids=_activity_ids(include_user_ids),
+        include_user_ids=None if rank_user_id is not None else _activity_ids(include_user_ids),
         exclude_user_ids=_activity_ids(exclude_user_ids),
         include_role_ids=_activity_ids(include_role_ids),
         exclude_role_ids=_activity_ids(exclude_role_ids),
@@ -420,6 +426,10 @@ async def _server_activity_tool(
             "display_name": row.display_name,
             "message_count": row.message_count,
         }
+        if getattr(row, "rank", None) is not None:
+            member["rank"] = row.rank
+        if getattr(row, "ranking_member_count", None) is not None:
+            member["ranking_member_count"] = row.ranking_member_count
         if targeted_detail_allowed:
             member["last_message_at"] = row.last_message_at.isoformat()
             member["channels"] = [
@@ -437,6 +447,7 @@ async def _server_activity_tool(
         "date_from": parsed_date_from.isoformat() if parsed_date_from else None,
         "date_to": parsed_date_to.isoformat() if parsed_date_to else None,
         "sort": sort,
+        "rank_user_id": str(rank_user_id) if rank_user_id is not None else None,
         "server_channel_exclusions_applied": (
             configured_channel_exclusions_applied
             or response.headers.get("X-Activity-Server-Excludes-Applied") == "true"
@@ -549,7 +560,9 @@ def build_default_tool_registry() -> AIToolRegistry:
                 "limited to channels the requester can currently view in Discord. "
                 "Exclusions win; user and role include filters are combined with OR; configured server channel "
                 "exclusions always apply. Use sort=least_active for members with the fewest messages among those "
-                "who posted during the selected period; never reverse a most-active result to approximate it."
+                "who posted during the selected period; never reverse a most-active result to approximate it. "
+                "For a member's position in a ranking, use rank_user_id without include_user_ids; the result then "
+                "contains the backend-calculated rank and ranking population size."
             ),
             parameters={
                 "type": "object",
@@ -599,6 +612,13 @@ def build_default_tool_registry() -> AIToolRegistry:
                         "description": (
                             "Order by most or fewest messages. least_active covers members with at least one "
                             "recorded message in the selected period."
+                        ),
+                    },
+                    "rank_user_id": {
+                        "type": "integer",
+                        "description": (
+                            "Calculate this member's position against the full filtered population and return only "
+                            "that member. Use this, without include_user_ids, for questions such as 'what place am I?'"
                         ),
                     },
                     "limit": {"type": "integer", "minimum": 1, "maximum": 25},

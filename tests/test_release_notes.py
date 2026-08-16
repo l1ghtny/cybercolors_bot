@@ -1,6 +1,7 @@
 import asyncio
 from datetime import datetime, timezone
 
+from sqlmodel import delete
 from starlette.routing import Match
 
 from api.api_main import app
@@ -40,6 +41,12 @@ async def _release_notes_scenario() -> None:
     await engine.dispose()
 
     async with get_async_session() as session:
+        await session.exec(
+            delete(ProductReleaseNote).where(
+                ProductReleaseNote.id == "unpublished-future-note"
+            )
+        )
+        await session.commit()
         session.add(
             ProductReleaseNote(
                 id="unpublished-future-note",
@@ -61,8 +68,8 @@ async def _release_notes_scenario() -> None:
         manifest = await list_published_release_notes(session, limit=100)
         public_manifest = await list_public_product_updates(session, limit=50)
 
-    assert len(manifest.releases) == 52
-    assert manifest.releases[0].id == "2026-08-16-least-active-member-ranking"
+    assert len(manifest.releases) == 53
+    assert manifest.releases[0].id == "2026-08-16-accurate-member-activity-ranks"
     member_identity_release = next(
         release
         for release in manifest.releases

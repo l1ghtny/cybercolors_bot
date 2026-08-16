@@ -8,6 +8,7 @@ from time import monotonic
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+import sqlalchemy as sa
 from sqlalchemy import func
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -310,7 +311,20 @@ def _build_activity_filters(
     include_channel_ids: set[int] | None = None,
     exclude_channel_ids: set[int] | None = None,
 ) -> list:
-    conditions = [MessageLog.server_id == server_id]
+    message_activity_date = sa.cast(
+        func.timezone("UTC", MessageLog.created_at),
+        sa.Date,
+    )
+    historical_bucket_exists = sa.exists().where(
+        HistoricalUserActivityDaily.server_id == MessageLog.server_id,
+        HistoricalUserActivityDaily.user_id == MessageLog.user_id,
+        HistoricalUserActivityDaily.channel_id == MessageLog.channel_id,
+        HistoricalUserActivityDaily.activity_date == message_activity_date,
+    )
+    conditions = [
+        MessageLog.server_id == server_id,
+        ~historical_bucket_exists,
+    ]
     if user_id is not None:
         conditions.append(MessageLog.user_id == user_id)
     if include_user_ids is not None:
@@ -401,6 +415,39 @@ def _sort_leaderboard_rows(
             key=lambda item: (item[1], _activity_sort_timestamp(item[2]), item[0]),
         )
     return rows
+
+
+def _rank_leaderboard_rows(
+    rows: list[tuple[int, int, datetime | None]],
+    sort: Literal["most_active", "least_active"],
+) -> dict[int, int]:
+    """Return competition ranks for an already filtered leaderboard population."""
+    ordered_rows = _sort_leaderboard_rows(rows, sort)
+    ranks: dict[int, int] = {}
+    previous_count: int | None = None
+    current_rank = 0
+    for position, (user_id, message_count, _) in enumerate(ordered_rows, start=1):
+        normalized_count = int(message_count)
+        if normalized_count != previous_count:
+            current_rank = position
+            previous_count = normalized_count
+        ranks[int(user_id)] = current_rank
+    return ranks
+
+
+def _select_ranked_member(
+    rows: list[tuple[int, int, datetime | None]],
+    sort: Literal["most_active", "least_active"],
+    rank_user_id: int | None,
+) -> tuple[list[tuple[int, int, datetime | None]], dict[int, int], int | None]:
+    ranks = _rank_leaderboard_rows(rows, sort)
+    if rank_user_id is None:
+        return rows, ranks, None
+    return (
+        [row for row in rows if int(row[0]) == int(rank_user_id)],
+        ranks,
+        len(rows),
+    )
 
 
 async def _get_or_create_server_record(server_id: int, session: AsyncSession) -> Server:
@@ -850,6 +897,13 @@ async def get_server_activity_leaderboard(
             "with recorded activity in the selected period."
         ),
     ),
+    rank_user_id: int | None = Query(
+        default=None,
+        ge=1,
+        description=(
+            "Return only this member after calculating their rank against the complete filtered population."
+        ),
+    ),
     date_from: date | None = Query(default=None, description="Inclusive UTC date (YYYY-MM-DD)."),
     date_to: date | None = Query(default=None, description="Inclusive UTC date (YYYY-MM-DD)."),
     channels_limit: int = Query(default=5, ge=1, le=20, description="Max channels per user in breakdown."),
@@ -888,6 +942,7 @@ async def get_server_activity_leaderboard(
     refresh_channels: bool = Query(default=False, description="Bypass server channel cache for this request."),
     session: AsyncSession = Depends(get_session),
 ):
+    del refresh_channels
     period_start, period_end_exclusive, period_start_out, period_end_out = _resolve_period_bounds(
         date_from,
         date_to,
@@ -898,6 +953,11 @@ async def get_server_activity_leaderboard(
     exclude_role_ids_set = _parse_id_set_filter(exclude_role_ids, "exclude_role_ids")
     include_channel_ids_set = _parse_id_set_filter(include_channel_ids, "include_channel_ids")
     exclude_channel_ids_set = _parse_id_set_filter(exclude_channel_ids, "exclude_channel_ids")
+    if rank_user_id is not None and include_user_ids_set is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="rank_user_id cannot be combined with include_user_ids",
+        )
     server_excluded_channel_ids = await _fetch_server_activity_excluded_channel_ids(
         session=session,
         server_id=server_id,
@@ -914,8 +974,9 @@ async def get_server_activity_leaderboard(
         server_excludes_applied=server_excludes_applied,
     )
 
-    active_channel_ids = await _get_server_rendered_text_channel_ids(server_id, refresh=refresh_channels)
-    effective_include_channel_ids = _intersect_optional_sets(active_channel_ids, include_channel_ids_set)
+    # Stored activity remains valid after a thread is archived or a channel is removed.
+    # Only explicit request filters and configured server exclusions should narrow aggregate totals.
+    effective_include_channel_ids = include_channel_ids_set
     if effective_include_channel_ids is not None and not effective_include_channel_ids:
         return []
 
@@ -932,7 +993,7 @@ async def get_server_activity_leaderboard(
         exclude_channel_ids=effective_exclude_channel_ids,
     )
     leaderboard_rows = _sort_leaderboard_rows(leaderboard_rows, sort)
-    requested_limit = None if all_users else limit
+    requested_limit = None if all_users or rank_user_id is not None else limit
     if not role_filters_requested and requested_limit is not None:
         leaderboard_rows = leaderboard_rows[:requested_limit]
 
@@ -966,6 +1027,15 @@ async def get_server_activity_leaderboard(
             (int(user_id), int(message_count), last_message_at)
             for user_id, message_count, last_message_at in leaderboard_rows
         ]
+
+    if not leaderboard_rows:
+        return []
+
+    leaderboard_rows, ranks_by_user_id, ranking_member_count = _select_ranked_member(
+        leaderboard_rows,
+        sort,
+        rank_user_id,
+    )
 
     if not leaderboard_rows:
         return []
@@ -1050,6 +1120,8 @@ async def get_server_activity_leaderboard(
                 server_nickname=server_nickname,
                 display_name=display_name,
                 message_count=int(message_count),
+                rank=ranks_by_user_id.get(user_key),
+                ranking_member_count=ranking_member_count,
                 last_message_at=_as_utc(last_message_at) or _utc_now(),
                 channels=channels_by_user.get(user_key, []),
                 warn_count=len(warnings_by_user.get(user_key, [])),
