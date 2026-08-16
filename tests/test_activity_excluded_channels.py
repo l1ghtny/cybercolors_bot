@@ -2,7 +2,10 @@ import pytest
 from pydantic import ValidationError
 
 from api.models.moderation_settings import ServerModerationSettingsUpdateModel
-from api.routers.activity import _resolve_effective_activity_excluded_channel_ids
+from api.routers.activity import (
+    _resolve_effective_activity_excluded_channel_ids,
+    _sort_leaderboard_rows,
+)
 
 
 def test_moderation_settings_update_normalizes_activity_excluded_channel_ids():
@@ -58,3 +61,16 @@ def test_leaderboard_ignore_server_excludes_bypasses_server_excludes():
 
     assert effective_excludes is None
     assert applied is False
+
+
+def test_leaderboard_can_order_least_active_before_applying_limit():
+    rows = [
+        (101, 900, None),
+        (102, 12, None),
+        (103, 45, None),
+    ]
+
+    ordered = _sort_leaderboard_rows(rows, "least_active")
+
+    assert [row[0] for row in ordered[:2]] == [102, 103]
+    assert rows[0][0] == 101

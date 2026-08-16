@@ -1218,6 +1218,10 @@ def test_default_tool_registry_exposes_initial_database_tools():
     assert "requester-aware member context" in specs["get_member_profile"]["description"]
     assert specs["get_server_activity"]["requires_admin_context"] is False
     assert specs["get_server_activity"]["requires_requester_context"] is True
+    assert specs["get_server_activity"]["parameters"]["properties"]["sort"]["enum"] == [
+        "most_active",
+        "least_active",
+    ]
     assert specs["get_available_commands"]["requires_requester_context"] is True
     assert "aggregate member message counts" in specs["get_server_activity"]["description"]
 
@@ -1449,6 +1453,7 @@ def test_server_activity_tool_reuses_dashboard_filters_and_omits_moderation_data
             include_user_ids=[777],
             exclude_role_ids=[888],
             include_channel_ids=[789],
+            sort="least_active",
             limit=5,
             channels_limit=3,
         )
@@ -1460,7 +1465,9 @@ def test_server_activity_tool_reuses_dashboard_filters_and_omits_moderation_data
     assert captured["include_user_ids"] == ["777"]
     assert captured["exclude_role_ids"] == ["888"]
     assert captured["include_channel_ids"] == ["789"]
+    assert captured["sort"] == "least_active"
     assert captured["ignore_server_excludes"] is False
+    assert result["sort"] == "least_active"
     assert result["server_channel_exclusions_applied"] is True
     assert result["members"] == [
         {

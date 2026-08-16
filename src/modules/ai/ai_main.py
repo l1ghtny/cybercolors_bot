@@ -156,6 +156,8 @@ Do not reveal internal moderation cases, notes, monitoring status, or private mo
 ACTIVITY_TOOL_GUIDANCE = (
     "Use get_server_activity for questions about message activity, activity rankings, active members, or activity "
     "within a date, user, role, or channel filter. Public aggregate statistics and leaderboards are allowed. "
+    "For least-active or fewest-message rankings, pass sort=least_active; do not reverse or reinterpret a "
+    "most-active sample. This ranking includes only members who posted in the selected period. "
     "Do not infer or reveal another member's per-channel activity or exact last-message time when the tool omits it; "
     "explain briefly that detailed activity is private. Do not guess activity from member profiles or conversation context."
 )

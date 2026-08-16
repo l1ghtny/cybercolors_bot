@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Literal
 from uuid import UUID
 
 from fastapi import Response
@@ -295,6 +295,7 @@ async def _server_activity_tool(
     exclude_role_ids: list[int] | None = None,
     include_channel_ids: list[int] | None = None,
     exclude_channel_ids: list[int] | None = None,
+    sort: Literal["most_active", "least_active"] = "most_active",
     limit: int = 10,
     channels_limit: int = 5,
 ) -> dict[str, Any]:
@@ -383,6 +384,7 @@ async def _server_activity_tool(
         response=response,
         limit=min(max(int(limit), 1), 25),
         all_users=False,
+        sort=sort,
         date_from=parsed_date_from,
         date_to=parsed_date_to,
         channels_limit=min(max(int(channels_limit), 1), 10),
@@ -434,6 +436,7 @@ async def _server_activity_tool(
     return {
         "date_from": parsed_date_from.isoformat() if parsed_date_from else None,
         "date_to": parsed_date_to.isoformat() if parsed_date_to else None,
+        "sort": sort,
         "server_channel_exclusions_applied": (
             configured_channel_exclusions_applied
             or response.headers.get("X-Activity-Server-Excludes-Applied") == "true"
@@ -545,7 +548,8 @@ def build_default_tool_registry() -> AIToolRegistry:
                 "counts are returned only for a targeted self lookup or to staff with activity.view, and are always "
                 "limited to channels the requester can currently view in Discord. "
                 "Exclusions win; user and role include filters are combined with OR; configured server channel "
-                "exclusions always apply."
+                "exclusions always apply. Use sort=least_active for members with the fewest messages among those "
+                "who posted during the selected period; never reverse a most-active result to approximate it."
             ),
             parameters={
                 "type": "object",
@@ -588,6 +592,14 @@ def build_default_tool_registry() -> AIToolRegistry:
                         "type": "array",
                         "items": {"type": "integer"},
                         "maxItems": 50,
+                    },
+                    "sort": {
+                        "type": "string",
+                        "enum": ["most_active", "least_active"],
+                        "description": (
+                            "Order by most or fewest messages. least_active covers members with at least one "
+                            "recorded message in the selected period."
+                        ),
                     },
                     "limit": {"type": "integer", "minimum": 1, "maximum": 25},
                     "channels_limit": {"type": "integer", "minimum": 1, "maximum": 10},

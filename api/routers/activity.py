@@ -5,6 +5,7 @@ import logging
 import os
 from dataclasses import dataclass
 from time import monotonic
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import func
@@ -388,6 +389,18 @@ def _merge_leaderboard_rows(*row_sets: list[tuple[int, int, datetime | None]]) -
         ((user_id, message_count, last_message_at) for user_id, (message_count, last_message_at) in merged.items()),
         key=lambda item: (-item[1], -_activity_sort_timestamp(item[2]), item[0]),
     )
+
+
+def _sort_leaderboard_rows(
+    rows: list[tuple[int, int, datetime | None]],
+    sort: Literal["most_active", "least_active"],
+) -> list[tuple[int, int, datetime | None]]:
+    if sort == "least_active":
+        return sorted(
+            rows,
+            key=lambda item: (item[1], _activity_sort_timestamp(item[2]), item[0]),
+        )
+    return rows
 
 
 async def _get_or_create_server_record(server_id: int, session: AsyncSession) -> Server:
@@ -830,6 +843,13 @@ async def get_server_activity_leaderboard(
     response: Response,
     limit: int = Query(default=50, ge=1, le=10000),
     all_users: bool = Query(default=False, description="Return every matching user instead of applying limit."),
+    sort: Literal["most_active", "least_active"] = Query(
+        default="most_active",
+        description=(
+            "Order matching members by most or least messages. Least active includes only members "
+            "with recorded activity in the selected period."
+        ),
+    ),
     date_from: date | None = Query(default=None, description="Inclusive UTC date (YYYY-MM-DD)."),
     date_to: date | None = Query(default=None, description="Inclusive UTC date (YYYY-MM-DD)."),
     channels_limit: int = Query(default=5, ge=1, le=20, description="Max channels per user in breakdown."),
@@ -911,6 +931,7 @@ async def get_server_activity_leaderboard(
         include_channel_ids=effective_include_channel_ids,
         exclude_channel_ids=effective_exclude_channel_ids,
     )
+    leaderboard_rows = _sort_leaderboard_rows(leaderboard_rows, sort)
     requested_limit = None if all_users else limit
     if not role_filters_requested and requested_limit is not None:
         leaderboard_rows = leaderboard_rows[:requested_limit]

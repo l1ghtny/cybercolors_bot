@@ -61,8 +61,8 @@ async def _release_notes_scenario() -> None:
         manifest = await list_published_release_notes(session, limit=100)
         public_manifest = await list_public_product_updates(session, limit=50)
 
-    assert len(manifest.releases) == 51
-    assert manifest.releases[0].id == "2026-08-12-public-product-updates"
+    assert len(manifest.releases) == 52
+    assert manifest.releases[0].id == "2026-08-16-least-active-member-ranking"
     member_identity_release = next(
         release
         for release in manifest.releases
