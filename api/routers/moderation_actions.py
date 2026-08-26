@@ -15,6 +15,7 @@ from api.dependencies.server_access import require_server_dashboard_access, requ
 from api.services.dashboard_access_service import assert_dashboard_access
 from api.services.rbac_service import assert_user_has_permission
 from api.models.moderation_actions import (
+    ModerationActionCommentaryUpdate,
     ModerationActionLinkedMessageReadModel,
     ModerationActionMessageLinkCreate,
     ModerationActionMessageLinkResultModel,
@@ -47,6 +48,7 @@ from api.services.moderation_actions_service import (
     link_message_to_action as link_message_to_action_service,
     link_existing_deleted_message_to_action as link_existing_deleted_message_to_action_service,
     revert_action as revert_action_service,
+    update_action_commentary as update_action_commentary_service,
 )
 from src.db.database import get_session
 from src.db.models import ModerationAction
@@ -352,6 +354,26 @@ async def revert_moderation_action(
         reason=body.reason,
     )
     return ModerationActionRevertRead(action=action, discord_changed=discord_changed)
+
+
+@moderation_actions_router.patch(
+    "/actions/{server_id}/{action_id}/commentary",
+    response_model=ModerationActionRead,
+)
+async def update_moderation_action_commentary(
+    server_id: int,
+    action_id: UUID,
+    body: ModerationActionCommentaryUpdate,
+    session: AsyncSession = Depends(get_session),
+    current_user_id: int = Depends(require_server_permission("moderation.actions.edit_commentary")),
+):
+    return await update_action_commentary_service(
+        session=session,
+        server_id=server_id,
+        action_id=action_id,
+        moderator_user_id=current_user_id,
+        commentary=body.commentary,
+    )
 
 
 

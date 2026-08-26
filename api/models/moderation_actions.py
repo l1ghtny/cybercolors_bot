@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from api.models.moderation_cases import ModerationRuleRef
 from src.db.models import ActionType
@@ -151,6 +151,18 @@ class ModerationActionSummaryModel(BaseModel):
 
 class ModerationActionRevertRequest(BaseModel):
     reason: str | None = None
+
+
+class ModerationActionCommentaryUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    commentary: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("commentary")
+    @classmethod
+    def normalize_commentary(cls, value: str | None) -> str | None:
+        normalized = value.strip() if value else ""
+        return normalized or None
 
 
 class ModerationActionRevertRead(BaseModel):

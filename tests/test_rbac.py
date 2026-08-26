@@ -51,6 +51,7 @@ def test_rbac_catalog_contains_presets_and_permission_keys():
     assert "birthdays.records.manage" in permission_keys
     assert "moderation.cases.view" in permission_keys
     assert "moderation.cases.manage" in permission_keys
+    assert "moderation.actions.edit_commentary" in permission_keys
     assert "communications.send_as_bot" in permission_keys
     assert "maintenance.memberships.reconcile" in permission_keys
     for action_type in ActionType:
@@ -70,6 +71,7 @@ def test_rbac_catalog_contains_presets_and_permission_keys():
     moderator = next(preset for preset in catalog.presets if preset.key == "moderator")
     assert "birthdays.records.manage" in moderator.permission_keys
     assert "communications.send_as_bot" in moderator.permission_keys
+    assert "moderation.actions.edit_commentary" in moderator.permission_keys
     admin = next(preset for preset in catalog.presets if preset.key == "admin")
     assert "commands.visibility.manage" in admin.permission_keys
 
@@ -202,6 +204,9 @@ def test_settings_write_routes_use_feature_permissions():
         ("POST", "/servers/{server_id}/temp-voice/trigger-channel/create"): {"temp_voice.settings.edit"},
         ("GET", "/moderation/message-log/{server_id}"): {"moderation.actions.view"},
         ("GET", "/moderation/deleted-attachments/{server_id}"): {"moderation.actions.view"},
+        ("PATCH", "/moderation/actions/{server_id}/{action_id}/commentary"): {
+            "moderation.actions.edit_commentary"
+        },
         ("GET", "/moderation/cases/{server_id}"): {"moderation.cases.view"},
         ("GET", "/moderation/cases/{server_id}/{case_id}"): {"moderation.cases.view"},
         ("GET", "/moderation/cases/{server_id}/{case_id}/users"): {"moderation.cases.view"},

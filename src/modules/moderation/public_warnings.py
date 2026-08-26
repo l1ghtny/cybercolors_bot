@@ -10,6 +10,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.db.models import ActionType, ModerationAction, ModerationActionRuleCitation
 from src.modules.moderation.rule_labels import format_rule_label
+from src.modules.moderation.reason_visibility import strip_legacy_commentary_suffix
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,12 +38,7 @@ def _public_text_variants(value: str) -> set[str]:
 
 
 def _public_reason(action: ModerationAction, rule_labels: tuple[str, ...]) -> str | None:
-    reason = (action.reason or "").strip()
-    commentary = (action.commentary or "").strip()
-    if commentary:
-        legacy_suffix = f"\nCommentary: {commentary}"
-        if reason.endswith(legacy_suffix):
-            reason = reason[: -len(legacy_suffix)].rstrip()
+    reason = strip_legacy_commentary_suffix(action.reason)
     if not reason:
         return None
 

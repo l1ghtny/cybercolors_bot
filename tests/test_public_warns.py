@@ -175,6 +175,30 @@ def test_public_warning_query_returns_only_public_projection():
             reason="Imported rule 7",
         )
     ]
+
+
+def test_public_warning_hides_legacy_commentary_after_commentary_is_edited():
+    action = SimpleNamespace(
+        created_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        rule=None,
+        rule_citations=[],
+        reason="Imported rule 7\nCommentary: Old hidden note",
+        commentary="New hidden note",
+    )
+    session = _Session(action)
+
+    warnings, total = asyncio.run(
+        list_active_public_warnings(
+            session,
+            server_id=123,
+            user_id=456,
+            locale="en",
+            limit=10,
+        )
+    )
+
+    assert total == 1
+    assert warnings[0].reason == "Imported rule 7"
     assert len(session.statements) == 2
     query_text = str(session.statements[1]).lower()
     assert "moderation_actions.server_id" in query_text

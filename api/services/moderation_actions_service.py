@@ -84,6 +84,7 @@ from src.modules.moderation.moderation_helpers import (
 )
 from src.modules.moderation.mute_management import deactivate_user_mutes
 from src.modules.moderation.rule_labels import format_rule_label
+from src.modules.moderation.reason_visibility import strip_legacy_commentary_suffix
 
 logger = logging.getLogger("api.moderation")
 
@@ -163,16 +164,8 @@ def _format_user_for_log(user_id: int, username: str | None, locale: str | None 
     return f"<@{user_id}> ({_inline_code(username or tr(locale, 'modlog.unknown'))}, {_inline_code(user_id)})"
 
 
-def _reason_without_commentary_suffix(reason: str | None, commentary: str | None) -> str:
-    display_reason = (reason or "").strip()
-    display_commentary = (commentary or "").strip()
-    if not display_reason or not display_commentary:
-        return display_reason
-
-    legacy_suffix = f"\nCommentary: {display_commentary}"
-    if display_reason.endswith(legacy_suffix):
-        return display_reason[: -len(legacy_suffix)].rstrip()
-    return display_reason
+def _reason_without_commentary_suffix(reason: str | None, _commentary: str | None) -> str:
+    return strip_legacy_commentary_suffix(reason)
 
 
 def _rule_label_compare_values(label: str) -> set[str]:
@@ -366,6 +359,46 @@ def _build_action_revert_log_embed(
     ]
     return {
         "title": f"{tr(locale, 'modlog.title')}: {tr(locale, 'modlog.action_revert')}",
+        "url": action_url,
+        "color": 0x5865F2,
+        "fields": fields,
+        "footer": {"text": f"{tr(locale, 'modlog.action_number_label')}: #{action.action_number}"},
+        "timestamp": _format_dt(utc_now()),
+    }
+
+
+def _build_action_commentary_update_log_embed(
+    *,
+    action: ModerationAction,
+    moderator_user_id: int,
+    moderator_username: str | None,
+    previous_commentary: str | None,
+    locale: str | None = None,
+) -> dict:
+    action_url = _dashboard_action_url(action.server_id, action.id)
+    action_type = action.action_type.value if hasattr(action.action_type, "value") else str(action.action_type)
+    fields = [
+        _embed_field(
+            tr(locale, "modlog.moderator_label"),
+            _format_user_for_log(moderator_user_id, moderator_username, locale),
+            inline=True,
+        ),
+        _embed_field(
+            tr(locale, "modlog.original_action_label"),
+            _markdown_link(f"{action_type} #{action.action_number}", action_url),
+            inline=True,
+        ),
+        _embed_field(
+            tr(locale, "modlog.previous_commentary_label"),
+            previous_commentary or tr(locale, "modlog.none"),
+        ),
+        _embed_field(
+            tr(locale, "modlog.commentary_label"),
+            action.commentary or tr(locale, "modlog.none"),
+        ),
+    ]
+    return {
+        "title": tr(locale, "modlog.commentary_updated_title"),
         "url": action_url,
         "color": 0x5865F2,
         "fields": fields,
@@ -693,6 +726,42 @@ async def _send_action_to_mod_log(
     except Exception as error:
         logger.warning(
             "Failed to send moderation action log to channel %s for server %s: %s",
+            settings.mod_log_channel_id,
+            action.server_id,
+            error,
+        )
+
+
+async def _send_action_commentary_update_to_mod_log(
+    *,
+    session: AsyncSession,
+    action: ModerationAction,
+    moderator_user_id: int,
+    previous_commentary: str | None,
+) -> None:
+    settings = await session.get(ServerModerationSettings, action.server_id)
+    if not settings or not settings.mod_log_channel_id:
+        return
+
+    locale = await _get_server_locale(session=session, server_id=action.server_id)
+    moderator_username = await _resolve_username(session, moderator_user_id)
+    embed = _build_action_commentary_update_log_embed(
+        action=action,
+        moderator_user_id=moderator_user_id,
+        moderator_username=moderator_username,
+        previous_commentary=previous_commentary,
+        locale=locale,
+    )
+    try:
+        await call_with_server_profile(
+            create_channel_message,
+            channel_id=settings.mod_log_channel_id,
+            embeds=[embed],
+            server_id=action.server_id,
+        )
+    except Exception as error:
+        logger.warning(
+            "Failed to send moderation commentary update log to channel %s for server %s: %s",
             settings.mod_log_channel_id,
             action.server_id,
             error,
@@ -1186,6 +1255,36 @@ async def get_action_details(
     action = await _load_action_for_read(session=session, action_id=action_id)
     if action.server_id != server_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Moderation action not found")
+    return to_moderation_history([action])[0]
+
+
+async def update_action_commentary(
+    *,
+    session: AsyncSession,
+    server_id: int,
+    action_id: UUID,
+    moderator_user_id: int,
+    commentary: str | None,
+) -> ModerationActionRead:
+    action = await _load_action_for_read(session=session, action_id=action_id)
+    if action.server_id != server_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Moderation action not found")
+
+    normalized_commentary = (commentary or "").strip() or None
+    previous_commentary = action.commentary
+    if previous_commentary == normalized_commentary:
+        return to_moderation_history([action])[0]
+
+    action.commentary = normalized_commentary
+    session.add(action)
+    await session.flush()
+    await _send_action_commentary_update_to_mod_log(
+        session=session,
+        action=action,
+        moderator_user_id=moderator_user_id,
+        previous_commentary=previous_commentary,
+    )
+    action = await _load_action_for_read(session=session, action_id=action_id)
     return to_moderation_history([action])[0]
 
 
