@@ -238,6 +238,7 @@ async def _scenario_rule_citations_survive_hard_delete() -> None:
             actor_user_id=moderator_id,
         )
         assert action.case_id == moderation_case.id
+        assert action.reason == "warning reason"
         assert len(action.rules) == 1
         assert action.rules[0].id == str(rule.id)
 

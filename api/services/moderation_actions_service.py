@@ -949,7 +949,7 @@ async def create_action(
     )
     resolved_rule_id = resolved_rules[0].id if resolved_rules else None
 
-    if resolved_rules:
+    if resolved_rules and not resolved_reason:
         primary_rule = resolved_rules[0]
         base_reason = format_rule_label(primary_rule.code, primary_rule.title)
         resolved_reason = base_reason
