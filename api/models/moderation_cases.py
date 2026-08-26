@@ -207,6 +207,7 @@ class ModerationCaseRulesUpsertModel(BaseModel):
 class ModerationCaseActionCreateFromCaseModel(BaseModel):
     action_type: ActionType
     reason: str | None = None
+    commentary: str | None = None
     target_user_id: str | None = Field(default=None, pattern=r"^\d*$")
     rule_ids: list[str] | None = None
     expires_at: datetime | None = None

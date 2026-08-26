@@ -313,13 +313,15 @@ async def moderation_set_mute_defaults(
 @app_commands.checks.has_permissions(moderate_members=True)
 @app_commands.command(
     name="mute",
-    description="Apply role-based mute with rule + optional commentary.",
+    description="Apply a role-based mute with a rule and member-facing reason.",
 )
 @app_commands.choices(
     delete_messages=action_message_cleanup_choices(),
 )
 @app_commands.describe(
-    add_warn="Also create a warning for the same rule and commentary.",
+    reason="Explanation shown to the member in moderation notices.",
+    commentary="Private context shown only to moderators.",
+    add_warn="Also create a warning with the same rule, reason, and commentary.",
     delete_messages="Delete recent logged messages by this user.",
     delete_message_limit="Maximum messages to delete when delete_messages is set.",
     delete_message_channel="Only delete messages from this channel.",
@@ -328,6 +330,7 @@ async def mute(
     interaction: discord.Interaction,
     user: discord.Member,
     rule: str,
+    reason: str,
     duration: str | None = None,
     commentary: str | None = None,
     case: str | None = None,
@@ -404,6 +407,7 @@ async def mute(
         await interaction.followup.send("Mute duration is required.", ephemeral=True)
         return
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=effective_duration)
+    reason_text = reason.strip()
     commentary_text = commentary.strip() if commentary else None
     message_cleanup = build_message_cleanup_request(
         delete_messages=delete_messages,
@@ -435,7 +439,7 @@ async def mute(
                 action_type=ActionType.MUTE,
                 rule_id=selected_rule.id,
                 commentary=commentary_text,
-                reason=None,
+                reason=reason_text,
                 expires_at=expires_at,
                 case_id=case_id,
                 message_cleanup=message_cleanup,
@@ -448,7 +452,7 @@ async def mute(
                     action_type=ActionType.WARN,
                     rule_id=selected_rule.id,
                     commentary=commentary_text,
-                    reason=None,
+                    reason=reason_text,
                     case_id=case_id,
                 )
                 linked_warn = await create_action(

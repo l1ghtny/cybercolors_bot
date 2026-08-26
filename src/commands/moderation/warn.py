@@ -29,6 +29,8 @@ from src.modules.moderation.bot_rbac import ensure_bot_permission, has_bot_permi
 )
 @app_commands.choices(delete_messages=action_message_cleanup_choices())
 @app_commands.describe(
+    reason="Explanation shown to the member in moderation notices.",
+    commentary="Private context shown only to moderators.",
     delete_messages="Delete recent logged messages by this user.",
     delete_message_limit="Maximum messages to delete when delete_messages is set.",
     delete_message_channel="Only delete messages from this channel.",
@@ -37,13 +39,14 @@ async def warn(
     interaction: discord.Interaction,
     user: discord.Member,
     rule: str,
+    reason: str,
     commentary: str | None = None,
     case: str | None = None,
     delete_messages: app_commands.Choice[int] | None = None,
     delete_message_limit: app_commands.Range[int, 1, 100] | None = None,
     delete_message_channel: discord.TextChannel | None = None,
 ):
-    """Handles /warn: select a declared server rule, add optional commentary, and log action."""
+    """Handle /warn with a cited rule, member-facing reason, and private commentary."""
     if interaction.guild is None:
         await interaction.response.send_message(tr(None, "common.server_only"), ephemeral=True)
         return
@@ -73,6 +76,7 @@ async def warn(
         return
 
     selected_rule_label = rule_label(selected_rule, locale)
+    reason_text = reason.strip()
     commentary_text = commentary.strip() if commentary else None
     message_cleanup = build_message_cleanup_request(
         delete_messages=delete_messages,
@@ -108,7 +112,7 @@ async def warn(
                 action_type=ActionType.WARN,
                 rule_id=selected_rule.id,
                 commentary=commentary_text,
-                reason=None,
+                reason=reason_text,
                 case_id=case_id,
                 message_cleanup=message_cleanup,
             )

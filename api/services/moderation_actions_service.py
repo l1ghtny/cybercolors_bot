@@ -729,15 +729,26 @@ async def _send_action_dm_for_action(
 ) -> None:
     try:
         locale = await _get_server_locale(session=session, server_id=action.server_id)
+        rule_labels = [
+            _rule_label_from_parts(rule.code, rule.title, locale)
+            for rule in resolved_rules
+        ]
+        rule_labels = [label for label in rule_labels if label]
+        display_reason = _display_reason_for_log(
+            resolved_reason,
+            resolved_commentary,
+            rule_labels,
+        )
         message = tr(
             locale,
             f"action.dm_{action.action_type.value}_body",
             action_number=action_number,
             server_name=action.server_name,
-            rule_label=_rules_label(resolved_rules, fallback_reason=resolved_reason, locale=locale),
         )
-        if resolved_commentary:
-            message += tr(locale, "action.dm_commentary", commentary=resolved_commentary)
+        if rule_labels:
+            message += tr(locale, "action.dm_rule", rule_label="\n> ".join(rule_labels))
+        if display_reason:
+            message += tr(locale, "action.dm_reason", reason=display_reason)
         if action.expires_at is not None:
             message += tr(
                 locale,

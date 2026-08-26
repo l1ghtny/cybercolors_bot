@@ -275,6 +275,9 @@ def test_bot_command_catalog_exposes_moderation_command_details():
 
     warn_command = get_bot_command("mod.warn")
     assert warn_command is not None
+    warn_parameters = {parameter.name: parameter for parameter in warn_command.parameters}
+    assert warn_parameters["reason"].required is True
+    assert warn_parameters["commentary"].required is False
     assert {
         "delete_messages",
         "delete_message_limit",
@@ -284,6 +287,9 @@ def test_bot_command_catalog_exposes_moderation_command_details():
     for command_id in ("mod.mute", "mod.kick", "mod.ban"):
         command = get_bot_command(command_id)
         assert command is not None
+        parameters = {parameter.name: parameter for parameter in command.parameters}
+        assert parameters["reason"].required is True
+        assert parameters["commentary"].required is False
         assert {
             "delete_messages",
             "delete_message_limit",
@@ -293,6 +299,19 @@ def test_bot_command_catalog_exposes_moderation_command_details():
         assert add_warn.type == "boolean"
         assert add_warn.required is False
         assert add_warn.default == "false"
+
+    from src.commands.moderation.actions import ban, kick
+    from src.commands.moderation.mute import mute
+    from src.commands.moderation.warn import warn
+
+    for command in (warn, mute, kick, ban):
+        parameters = {parameter.name: parameter for parameter in command.parameters}
+        assert parameters["reason"].required is True
+        assert parameters["commentary"].required is False
+
+    message_action = get_bot_command("context.start_moderation_action")
+    assert message_action is not None
+    assert any(component.label == "Reason and commentary" for component in message_action.components)
 
     reply_command = get_bot_command("context.reply_as_modral")
     assert reply_command is not None
@@ -345,7 +364,7 @@ def test_bot_command_catalog_filters_by_discord_type():
     start_command = get_bot_command("context.start_moderation_action")
     assert start_command is not None
     assert {component.label for component in start_command.components}.issuperset(
-        {"Action type", "Rule", "Duration", "Moderator commentary"}
+        {"Action type", "Rule", "Duration", "Reason and commentary"}
     )
 
 

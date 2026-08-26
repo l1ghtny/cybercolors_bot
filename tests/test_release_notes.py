@@ -68,10 +68,16 @@ async def _release_notes_scenario() -> None:
         manifest = await list_published_release_notes(session, limit=100)
         public_manifest = await list_public_product_updates(session, limit=50)
 
-    assert len(manifest.releases) == 54
-    assert manifest.releases[0].id == "2026-08-26-preserve-moderation-action-reasons"
-    assert manifest.releases[0].title.en == "Action reasons are saved with cited rules"
-    assert manifest.releases[0].title.ru == "Причины действий сохраняются вместе с правилами"
+    assert len(manifest.releases) == 55
+    assert manifest.releases[0].id == "2026-08-26-moderation-reasons-and-private-commentary"
+    assert manifest.releases[0].title.en == "Moderation notices separate reasons from private commentary"
+    assert manifest.releases[0].title.ru == "Причины действий отделены от закрытых комментариев"
+    preserved_reason_release = next(
+        release
+        for release in manifest.releases
+        if release.id == "2026-08-26-preserve-moderation-action-reasons"
+    )
+    assert preserved_reason_release.title.en == "Action reasons are saved with cited rules"
     member_identity_release = next(
         release
         for release in manifest.releases

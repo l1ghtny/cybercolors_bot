@@ -340,6 +340,7 @@ async def _create_member_action(
     user: discord.Member | discord.User,
     action_type: ActionType,
     rule: str,
+    reason: str,
     commentary: str | None,
     case: str | None,
     expires_at: datetime | None = None,
@@ -374,6 +375,7 @@ async def _create_member_action(
         await interaction.followup.send(target_error, ephemeral=True)
         return None
 
+    reason_text = reason.strip()
     commentary_text = commentary.strip() if commentary else None
     selected_rule_label = rule_label(selected_rule, locale)
     logger.info(
@@ -401,7 +403,7 @@ async def _create_member_action(
                 action_type=action_type,
                 rule_id=selected_rule.id,
                 commentary=commentary_text,
-                reason=None,
+                reason=reason_text,
                 expires_at=expires_at,
                 case_id=case_id,
                 message_cleanup=message_cleanup,
@@ -420,7 +422,7 @@ async def _create_member_action(
                     action_type=ActionType.WARN,
                     rule_id=selected_rule.id,
                     commentary=commentary_text,
-                    reason=None,
+                    reason=reason_text,
                     case_id=case_id,
                 )
                 linked_warn = await create_action(
@@ -468,7 +470,9 @@ def _linked_warn_receipt_lines(
     delete_messages=action_message_cleanup_choices(),
 )
 @app_commands.describe(
-    add_warn="Also create a warning for the same rule and commentary.",
+    reason="Explanation shown to the member in moderation notices.",
+    commentary="Private context shown only to moderators.",
+    add_warn="Also create a warning with the same rule, reason, and commentary.",
     delete_messages="Delete recent logged messages by this user.",
     delete_message_limit="Maximum messages to delete when delete_messages is set.",
     delete_message_channel="Only delete messages from this channel.",
@@ -477,6 +481,7 @@ async def kick(
     interaction: discord.Interaction,
     user: discord.Member,
     rule: str,
+    reason: str,
     commentary: str | None = None,
     case: str | None = None,
     add_warn: bool = False,
@@ -501,6 +506,7 @@ async def kick(
         user=user,
         action_type=ActionType.KICK,
         rule=rule,
+        reason=reason,
         commentary=commentary,
         case=case,
         message_cleanup=message_cleanup,
@@ -542,7 +548,9 @@ async def kick(
     delete_messages=action_message_cleanup_choices(),
 )
 @app_commands.describe(
-    add_warn="Also create a warning for the same rule and commentary.",
+    reason="Explanation shown to the member in moderation notices.",
+    commentary="Private context shown only to moderators.",
+    add_warn="Also create a warning with the same rule, reason, and commentary.",
     delete_messages="Delete recent logged messages by this user.",
     delete_message_limit="Maximum messages to delete when delete_messages is set.",
     delete_message_channel="Only delete messages from this channel.",
@@ -551,6 +559,7 @@ async def ban(
     interaction: discord.Interaction,
     user: discord.User,
     rule: str,
+    reason: str,
     duration: str | None = None,
     commentary: str | None = None,
     case: str | None = None,
@@ -596,6 +605,7 @@ async def ban(
         user=user,
         action_type=ActionType.BAN,
         rule=rule,
+        reason=reason,
         commentary=commentary,
         case=case,
         expires_at=expires_at,

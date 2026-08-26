@@ -231,6 +231,7 @@ async def _scenario_rule_citations_survive_hard_delete() -> None:
             body=ModerationCaseActionCreateFromCaseModel(
                 action_type=ActionType.WARN,
                 reason="warning reason",
+                commentary="private moderator context",
                 target_user_id=str(target_id),
                 rule_ids=None,
                 expires_at=None,
@@ -239,6 +240,7 @@ async def _scenario_rule_citations_survive_hard_delete() -> None:
         )
         assert action.case_id == moderation_case.id
         assert action.reason == "warning reason"
+        assert action.commentary == "private moderator context"
         assert len(action.rules) == 1
         assert action.rules[0].id == str(rule.id)
 

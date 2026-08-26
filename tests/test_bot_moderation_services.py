@@ -116,12 +116,14 @@ def test_build_action_payload_uses_rule_id_without_bot_api_url(monkeypatch):
         action_type=ActionType.WARN,
         rule_id=rule_id,
         commentary="note",
-        reason=None,
+        reason="Member-facing reason",
     )
 
     assert payload.action_type == ActionType.WARN
     assert payload.rule_id == rule_id
     assert payload.rule_ids == []
+    assert payload.reason == "Member-facing reason"
+    assert payload.commentary == "note"
     assert payload.moderator_user_id == 111
     assert payload.target_user_joined_at.tzinfo is timezone.utc
 
@@ -165,6 +167,22 @@ def test_build_moderator_action_receipt_has_private_details(monkeypatch):
     )
     assert tr("ru", "action.private_receipt_title") in localized
     assert tr("ru", "action.public_notice_label") in localized
+
+
+def test_message_action_modal_separates_public_reason_from_private_commentary():
+    from src.commands.moderation.message_actions import StartActionDetailsModal
+
+    modal = StartActionDetailsModal(
+        source_message=SimpleNamespace(),
+        action_type=ActionType.WARN,
+        rule_id=str(uuid4()),
+        duration="default",
+        locale="en",
+    )
+
+    assert modal.reason.required is True
+    assert modal.commentary.required is False
+    assert modal.children == [modal.reason, modal.commentary]
 
 
 def test_build_action_log_message_links_dashboard_and_uses_rule_label(monkeypatch):
@@ -528,6 +546,7 @@ def test_member_action_add_warn_reuses_new_case_and_skips_duplicate_dm(monkeypat
             user=target,
             action_type=ActionType.BAN,
             rule=str(rule.id),
+            reason="Member-facing reason",
             commentary="same context",
             case=None,
             add_warn=True,
@@ -541,6 +560,7 @@ def test_member_action_add_warn_reuses_new_case_and_skips_duplicate_dm(monkeypat
     assert [apply_effects for _, apply_effects, _ in created_payloads] == [True, False]
     assert [explicit_case_id for _, _, explicit_case_id in created_payloads] == [None, case_id]
     assert created_payloads[0][0].commentary == created_payloads[1][0].commentary == "same context"
+    assert created_payloads[0][0].reason == created_payloads[1][0].reason == "Member-facing reason"
     session.commit.assert_awaited_once()
 
 
@@ -587,6 +607,7 @@ def test_kick_command_forwards_message_cleanup(monkeypatch):
             interaction=interaction,
             user=target,
             rule="rule-id",
+            reason="Member-facing reason",
             delete_messages=discord.app_commands.Choice(name="1 hour", value=60),
             delete_message_limit=12,
             delete_message_channel=channel,
@@ -597,6 +618,7 @@ def test_kick_command_forwards_message_cleanup(monkeypatch):
     assert cleanup.recent_period_minutes == 60
     assert cleanup.recent_limit == 12
     assert cleanup.channel_ids == ["789"]
+    assert action_kwargs["reason"] == "Member-facing reason"
     assert receipt_kwargs["extra_lines"]
     interaction.followup.send.assert_awaited_once()
 
@@ -698,6 +720,7 @@ def test_mute_add_warn_reuses_new_case_and_skips_duplicate_dm(monkeypatch):
             interaction,
             target,
             str(rule.id),
+            "Member-facing reason",
             commentary="same context",
             case=mute_module.CASE_NEW_VALUE,
             add_warn=True,
@@ -710,6 +733,7 @@ def test_mute_add_warn_reuses_new_case_and_skips_duplicate_dm(monkeypatch):
     assert warn_payload.action_type == ActionType.WARN
     assert warn_payload.rule_id == UUID(rule.id)
     assert warn_payload.commentary == "same context"
+    assert warn_payload.reason == "Member-facing reason"
     assert warn_payload.case_id == str(case_id)
     assert explicit_case_id == case_id
     assert apply_discord_effects is False
@@ -774,13 +798,13 @@ async def _create_bot_action_scenario(sent_messages: list[dict]) -> None:
             action_type=ActionType.WARN,
             rule_id=selected.id,
             commentary="moderator note",
-            reason=None,
+            reason="Repeated insults after a warning",
         )
         await session.commit()
 
         assert action.action_type == ActionType.WARN
         assert action.rule_id == rule_id
-        assert action.reason == "1 No insults"
+        assert action.reason == "Repeated insults after a warning"
         assert action.commentary == "moderator note"
         citation = (
             await session.exec(
@@ -797,7 +821,8 @@ async def _create_bot_action_scenario(sent_messages: list[dict]) -> None:
     assert sent_messages
     assert sent_messages[0]["user_id"] == target_id
     assert "No insults" in sent_messages[0]["content"]
-    assert "moderator note" in sent_messages[0]["content"]
+    assert "Repeated insults after a warning" in sent_messages[0]["content"]
+    assert "moderator note" not in sent_messages[0]["content"]
 
     await engine.dispose()
 
@@ -1232,7 +1257,7 @@ async def _all_action_dm_scenario(events: list[tuple[str, str]]) -> None:
             payload = ModerationActionCreate(
                 action_type=action_type,
                 moderator_user_id=100,
-                reason="Rule 9",
+                reason="Repeated harassment after a warning",
                 commentary="Moderator context",
                 expires_at=(
                     datetime(2026, 7, 20, tzinfo=timezone.utc)
@@ -1249,8 +1274,8 @@ async def _all_action_dm_scenario(events: list[tuple[str, str]]) -> None:
             await action_service._apply_discord_action_effects(
                 session=FakeSession(),
                 action=payload,
-                resolved_reason="Rule 9",
-                resolved_rules=[],
+                resolved_reason="Repeated harassment after a warning",
+                resolved_rules=[SimpleNamespace(code="9", title="No harassment")],
                 resolved_commentary="Moderator context",
                 action_number=action_number,
                 mute_role_id=400 if action_type == ActionType.MUTE else None,
@@ -1278,7 +1303,10 @@ def test_warn_mute_kick_and_ban_send_localized_user_dms() -> None:
         next(word for word in ("warned", "muted", "kicked", "banned") if word in message)
         for message in dm_messages
     ]
-    assert all("Rule 9" in message and "Moderator context" in message for message in dm_messages)
+    assert all("No harassment" in message for message in dm_messages)
+    assert all("Repeated harassment after a warning" in message for message in dm_messages)
+    assert all("Moderator context" not in message for message in dm_messages)
+    assert all("**Reason:**" in message and "**Rule:**" in message for message in dm_messages)
     assert "#1" in dm_messages[0]
     assert "#4" in dm_messages[3]
     assert "**Expires:**" in dm_messages[1]

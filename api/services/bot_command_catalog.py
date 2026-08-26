@@ -36,9 +36,10 @@ def _component(type_: str, label: str, description: str) -> BotCommandComponentM
 
 
 RULE_PARAM = _param("rule", "string", "Server moderation rule selected from active rules.", autocomplete=True)
+REASON_PARAM = _param("reason", "string", "Member-facing explanation included in moderation notices.")
 CASE_PARAM = _param("case", "string", "Existing open case, or a special create-new case option when available.", required=False, autocomplete=True)
 USER_PARAM = _param("user", "member", "Target Discord member.")
-COMMENTARY_PARAM = _param("commentary", "string", "Optional moderator context stored with the action.", required=False)
+COMMENTARY_PARAM = _param("commentary", "string", "Optional private context stored for moderators.", required=False)
 ACTION_ID_PARAM = _param(
     "action_id",
     "string",
@@ -96,7 +97,7 @@ DELETE_MESSAGE_CHANNEL_PARAM = _param(
 ADD_WARN_PARAM = _param(
     "add_warn",
     "boolean",
-    "Also create a warning with the same rule and moderator commentary.",
+    "Also create a warning with the same rule, reason, and moderator commentary.",
     required=False,
     default="false",
 )
@@ -142,6 +143,7 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         parameters=[
             USER_PARAM,
             RULE_PARAM,
+            REASON_PARAM,
             COMMENTARY_PARAM,
             CASE_PARAM,
             DELETE_MESSAGES_PARAM,
@@ -176,6 +178,7 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         parameters=[
             USER_PARAM,
             RULE_PARAM,
+            REASON_PARAM,
             _param("duration", "string", "Server-configured mute duration. Defaults to 12 hours unless changed in settings.", required=False),
             COMMENTARY_PARAM,
             CASE_PARAM,
@@ -229,6 +232,7 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         parameters=[
             USER_PARAM,
             RULE_PARAM,
+            REASON_PARAM,
             COMMENTARY_PARAM,
             CASE_PARAM,
             ADD_WARN_PARAM,
@@ -263,6 +267,7 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         parameters=[
             USER_PARAM,
             RULE_PARAM,
+            REASON_PARAM,
             _param("duration", "string", "Server-configured ban duration. Defaults to 30 days unless changed in settings.", required=False),
             COMMENTARY_PARAM,
             CASE_PARAM,
@@ -446,8 +451,8 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
             _component("select", "Action type", "Choose warn, mute, kick, or ban."),
             _component("select", "Rule", "Choose an active server rule to cite."),
             _component("select", "Duration", "Choose the default duration or a preset for mute and ban actions."),
-            _component("button", "Continue", "Open the final commentary dialog after the required choices are made."),
-            _component("modal", "Moderator commentary", "Optionally add moderator context before creating the action."),
+            _component("button", "Continue", "Open the final reason and commentary dialog after the required choices are made."),
+            _component("modal", "Reason and commentary", "Add the member-facing reason and optional private moderator context."),
         ],
         workflow=[
             "Available from a Discord message context menu when the server has active moderation rules.",
@@ -1111,7 +1116,7 @@ COMMANDS_BY_ID: dict[str, BotCommandDocModel] = {command.id: command for command
 AVAILABLE_BOT_COMMAND_LOCALES: tuple[str, ...] = ("en", "ru")
 
 RU_PARAMETER_DESCRIPTIONS: dict[str, str] = {
-    "add_warn": "Одновременно создать варн по тому же правилу и с тем же комментарием.",
+    "add_warn": "Одновременно создать варн по тому же правилу, с той же причиной и комментарием.",
     "action_id": "Номер действия из автодополнения; UUID также поддерживается.",
     "action_number": "Порядковый номер модераторского действия из автодополнения.",
     "auto_reconnect_on_mute": "Нужно ли автоматически возвращать пользователя в голосовой канал после мута.",
@@ -1121,7 +1126,7 @@ RU_PARAMETER_DESCRIPTIONS: dict[str, str] = {
     "channel_ids": "ID текстовых каналов через запятую; для них бот изменит slowmode.",
     "code": "Необязательный короткий код правила.",
     "color_hex": "Цвет роли в формате из шести hex-символов.",
-    "commentary": "Необязательный комментарий модератора, который сохранится вместе с действием.",
+    "commentary": "Необязательный закрытый комментарий, доступный только модераторам.",
     "default_minutes": "Длительность мута по умолчанию от 1 до 43200 минут.",
     "description": "Необязательное описание.",
     "day": "День месяца.",
@@ -1175,17 +1180,21 @@ RU_PARAMETER_DESCRIPTIONS_BY_COMMAND: dict[str, dict[str, str]] = {
     },
     "mod.warn": {
         "case": "Открытое дело из автодополнения; если доступно, можно сразу создать новое.",
+        "reason": "Причина действия, которую увидит пользователь.",
     },
     "mod.mute": {
         "case": "Открытое дело из автодополнения; если доступно, можно сразу создать новое.",
         "duration": "Готовая длительность мута; без выбора действует настройка сервера.",
+        "reason": "Причина действия, которую увидит пользователь.",
     },
     "mod.kick": {
         "case": "Открытое дело из автодополнения; если доступно, можно сразу создать новое.",
+        "reason": "Причина действия, которую увидит пользователь.",
     },
     "mod.ban": {
         "case": "Открытое дело из автодополнения; если доступно, можно сразу создать новое.",
         "duration": "Готовый срок бана из настроек сервера; без выбора действует срок по умолчанию.",
+        "reason": "Причина действия, которую увидит пользователь.",
     },
     "mod.unmute": {
         "reason": "Необязательная причина досрочного снятия мута.",
@@ -1309,8 +1318,8 @@ RU_COMPONENTS_BY_LABEL: dict[str, tuple[str, str]] = {
     "Action type": ("Тип действия", "Предупреждение, мут, исключение или бан."),
     "Rule": ("Правило", "Активное правило сервера, на которое ссылается модератор."),
     "Duration": ("Срок", "Стандартный срок или готовый вариант для мута и бана."),
-    "Continue": ("Продолжить", "Открывает форму комментария после выбора обязательных параметров."),
-    "Moderator commentary": ("Комментарий модератора", "Необязательный контекст перед созданием действия."),
+    "Continue": ("Продолжить", "Открывает форму причины и комментария после выбора обязательных параметров."),
+    "Reason and commentary": ("Причина и комментарий", "Публичная причина и закрытый контекст для модераторов."),
     "Open case": ("Открыть дело", "Кнопка-ссылка на дело в панели управления."),
     "Open in dashboard": ("Открыть в дашборде", "Кнопка-ссылка на модераторское действие в панели управления."),
     "Replies list": ("Список ответов", "Постраничный список Discord, когда ответы настроены."),

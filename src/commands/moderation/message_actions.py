@@ -302,7 +302,7 @@ async def link_message_to_action_context(
     )
 
 
-class StartActionCommentaryModal(discord.ui.Modal):
+class StartActionDetailsModal(discord.ui.Modal):
     def __init__(
         self,
         *,
@@ -318,13 +318,21 @@ class StartActionCommentaryModal(discord.ui.Modal):
         self.rule_id = rule_id
         self.duration = duration
         self.locale = locale
-        self.commentary = discord.ui.TextInput(
+        self.reason = discord.ui.TextInput(
             label=tr(locale, "action.reason_label"),
+            style=discord.TextStyle.paragraph,
+            required=True,
+            max_length=1000,
+            placeholder=tr(locale, "action.message_start_reason_placeholder"),
+        )
+        self.commentary = discord.ui.TextInput(
+            label=tr(locale, "modlog.commentary_label"),
             style=discord.TextStyle.paragraph,
             required=False,
             max_length=1000,
             placeholder=tr(locale, "action.message_start_commentary_placeholder"),
         )
+        self.add_item(self.reason)
         self.add_item(self.commentary)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
@@ -409,7 +417,7 @@ class StartActionCommentaryModal(discord.ui.Modal):
                     action_type=self.action_type,
                     rule_id=selected_rule.id,
                     commentary=str(self.commentary.value or "").strip() or None,
-                    reason=None,
+                    reason=str(self.reason.value).strip(),
                     expires_at=expires_at,
                 )
                 await link_message_to_action(
@@ -580,7 +588,7 @@ class StartActionFromMessageView(discord.ui.View):
             )
             return
         await interaction.response.send_modal(
-            StartActionCommentaryModal(
+            StartActionDetailsModal(
                 source_message=self.source_message,
                 action_type=self.action_type,
                 rule_id=self.rule_id,

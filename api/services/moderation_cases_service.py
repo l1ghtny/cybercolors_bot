@@ -976,6 +976,7 @@ async def create_action_from_case(
         action_type=body.action_type,
         moderator_user_id=actor_user_id,
         reason=body.reason or moderation_case.title,
+        commentary=body.commentary,
         rule_ids=resolved_rule_ids,
         expires_at=body.expires_at,
         target_user_id=target_user_id,
@@ -1042,5 +1043,4 @@ async def remove_action_from_case(
     await session.flush()
     await session.refresh(moderation_case)
     return await to_case_read(moderation_case, session)
-
 
