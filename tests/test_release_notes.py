@@ -68,10 +68,16 @@ async def _release_notes_scenario() -> None:
         manifest = await list_published_release_notes(session, limit=100)
         public_manifest = await list_public_product_updates(session, limit=50)
 
-    assert len(manifest.releases) == 56
-    assert manifest.releases[0].id == "2026-09-03-shared-member-notes-history"
-    assert manifest.releases[0].title.en == "Shared member notes and one moderation timeline"
-    assert manifest.releases[0].title.ru == "Общие заметки об участниках и единая история модерации"
+    assert len(manifest.releases) == 57
+    assert manifest.releases[0].id == "2026-09-03-readable-member-profile-layout"
+    assert manifest.releases[0].title.en == "Member profiles stay readable in narrower windows"
+    assert manifest.releases[0].title.ru == "Профили участников удобно читать даже в узких окнах"
+    shared_history_release = next(
+        release
+        for release in manifest.releases
+        if release.id == "2026-09-03-shared-member-notes-history"
+    )
+    assert shared_history_release.title.en == "Shared member notes and one moderation timeline"
     preserved_reason_release = next(
         release
         for release in manifest.releases
