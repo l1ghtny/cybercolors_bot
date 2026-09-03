@@ -843,6 +843,53 @@ BOT_COMMANDS: tuple[BotCommandDocModel, ...] = (
         workflow=["Loads recent action summaries and sends an ephemeral embed with dashboard links."],
     ),
     BotCommandDocModel(
+        id="mod.history",
+        name="history",
+        qualified_name="mod history",
+        invoke="/mod history",
+        category="moderation-actions",
+        summary="Show one private timeline of a user's moderation history.",
+        required_permissions=["moderate_members"],
+        parameters=[
+            _param("user", "user", "Discord user whose history should be shown.", required=False),
+            _param("user_id", "string", "Discord user ID for someone no longer on the server.", required=False),
+            _param("limit", "integer", "Number of recent events from 1 to 20.", required=False, default="10"),
+        ],
+        components=[_component("button", "Open in dashboard", "Open the full member timeline in the dashboard.")],
+        workflow=["Combines member notes, moderation actions, cases, and monitoring status changes in chronological order."],
+    ),
+    BotCommandDocModel(
+        id="mod.notes.add",
+        name="add",
+        qualified_name="mod notes add",
+        invoke="/mod notes add",
+        category="moderation-actions",
+        summary="Add a private note directly to a member's shared moderation history.",
+        required_permissions=["moderate_members"],
+        parameters=[
+            _param("note", "string", "Private note shared with the moderation team."),
+            _param("user", "user", "Discord user the note is about.", required=False),
+            _param("user_id", "string", "Discord user ID for someone no longer on the server.", required=False),
+        ],
+        workflow=["Stores an immutable, server-scoped note with the moderator and timestamp, without enabling monitoring or opening a case."],
+    ),
+    BotCommandDocModel(
+        id="mod.notes.list",
+        name="list",
+        qualified_name="mod notes list",
+        invoke="/mod notes list",
+        category="moderation-actions",
+        summary="List private shared notes about a member.",
+        required_permissions=["moderate_members"],
+        parameters=[
+            _param("user", "user", "Discord user whose notes should be shown.", required=False),
+            _param("user_id", "string", "Discord user ID for someone no longer on the server.", required=False),
+            _param("limit", "integer", "Number of recent notes from 1 to 20.", required=False, default="10"),
+        ],
+        components=[_component("button", "Open in dashboard", "Open the member's complete moderation history in the dashboard.")],
+        workflow=["Shows active member notes with their authors and timestamps in a private Discord response."],
+    ),
+    BotCommandDocModel(
         id="mod.profile",
         name="profile",
         qualified_name="mod profile",
@@ -1093,7 +1140,14 @@ COMMAND_RBAC_PERMISSIONS: dict[str, tuple[str, ...]] = {
     "mod.cases.link_action": ("moderation.cases.manage",),
     "mod.cases.unlink_action": ("moderation.cases.manage",),
     "mod.actions.list": ("moderation.actions.view",),
-    "mod.profile": ("moderation.actions.view", "moderation.cases.view"),
+    "mod.history": ("moderation.member_history.view",),
+    "mod.notes.add": ("moderation.member_notes.manage",),
+    "mod.notes.list": ("moderation.member_history.view",),
+    "mod.profile": (
+        "moderation.member_history.view",
+        "moderation.actions.view",
+        "moderation.cases.view",
+    ),
     "mod.actions.undo": ("moderation.actions.revert",),
     "birthdays_settings": ("birthdays.settings.edit",),
     "add_reply": ("replies.manage",),
@@ -1151,6 +1205,7 @@ RU_PARAMETER_DESCRIPTIONS: dict[str, str] = {
     "month": "Месяц.",
     "name": "Новое название.",
     "note": "Текст заметки.",
+    "user_id": "Discord ID пользователя.",
     "pause_public_responses": "Приостановить публичные ответы бота и ИИ на время локдауна.",
     "pause_role_mutations": "Приостановить обычную выдачу и снятие ролей на время локдауна.",
     "permissions": "Целое число прав Discord в виде строки.",
@@ -1240,6 +1295,21 @@ RU_PARAMETER_DESCRIPTIONS_BY_COMMAND: dict[str, dict[str, str]] = {
     "mod.actions.list": {
         "user": "Необязательный фильтр по участнику.",
         "limit": "Сколько недавних действий показать: от 1 до 10.",
+    },
+    "mod.history": {
+        "user": "Пользователь Discord, чью историю нужно показать.",
+        "user_id": "Discord ID пользователя, которого уже нет на сервере.",
+        "limit": "Сколько последних событий показать: от 1 до 20.",
+    },
+    "mod.notes.add": {
+        "note": "Закрытая заметка для команды модерации.",
+        "user": "Пользователь Discord, о котором нужно оставить заметку.",
+        "user_id": "Discord ID пользователя, которого уже нет на сервере.",
+    },
+    "mod.notes.list": {
+        "user": "Пользователь Discord, чьи заметки нужно показать.",
+        "user_id": "Discord ID пользователя, которого уже нет на сервере.",
+        "limit": "Сколько последних заметок показать: от 1 до 20.",
     },
     "mod.actions.undo": {
         "reason": "Необязательная причина отмены модераторского действия.",
@@ -1596,6 +1666,18 @@ RU_COMMAND_TEXT: dict[str, dict[str, list[str] | str]] = {
     "mod.actions.list": {
         "summary": "Показать недавние модераторские действия.",
         "workflow": ["Загружает недавние действия и отправляет приватную карточку со ссылками на панель управления."],
+    },
+    "mod.history": {
+        "summary": "Показать единую закрытую историю модерации пользователя.",
+        "workflow": ["Собирает заметки об участнике, действия модерации, дела и изменения статуса наблюдения в одну хронологию."],
+    },
+    "mod.notes.add": {
+        "summary": "Добавить закрытую заметку в общую историю участника.",
+        "workflow": ["Сохраняет заметку с именем модератора и временем, не включая наблюдение и не создавая дело."],
+    },
+    "mod.notes.list": {
+        "summary": "Показать общие заметки модераторов об участнике.",
+        "workflow": ["Показывает действующие заметки, их авторов и время создания в приватном ответе Discord."],
     },
     "mod.profile": {
         "summary": "Показать аккуратную карточку участника и краткую сводку по модерации.",

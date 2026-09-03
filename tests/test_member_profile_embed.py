@@ -19,6 +19,7 @@ def _profile(**overrides):
         "is_member": True,
         "monitored": True,
         "moderation_actions_count": 7,
+        "member_notes_count": 4,
         "open_cases_count": 2,
         "top_rules_violated": [SimpleNamespace(title="Be respectful", usage_count=3)],
         "recent_actions": [
@@ -64,7 +65,7 @@ def test_member_profile_embed_uses_avatar_dates_and_dashboard_links(monkeypatch)
     assert "👁 Monitored" in embed.description
     assert embed.fields[0].name == "Joined server"
     assert "<t:" in embed.fields[0].value
-    assert "**7** actions · **2** open cases" in embed.fields[2].value
+    assert "**7** actions · **4** notes · **2** open cases" in embed.fields[2].value
     assert "Be respectful × **3**" in embed.fields[3].value
     assert "[`warn` #42]" in embed.fields[4].value
     assert "https://dash.example/dashboard/123/moderation/actions/action-id" in embed.fields[4].value
@@ -83,7 +84,7 @@ def test_member_profile_embed_has_natural_russian_labels():
     assert "**Статус:** 🟢 На сервере" in embed.description
     assert embed.fields[0].name == "Присоединился к серверу"
     assert embed.fields[2].name == "Модерация"
-    assert embed.fields[2].value == "**Действий: 7** · **Открытых дел: 2**"
+    assert embed.fields[2].value == "**Действий: 7** · **Заметок: 4** · **Открытых дел: 2**"
     assert embed.footer.text == "Modral · Профиль участника"
 
 

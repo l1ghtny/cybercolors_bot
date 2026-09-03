@@ -1144,6 +1144,7 @@ async def list_action_summaries(
     limit: int = 500,
     action_types: set[ActionType] | None = None,
     is_active: bool | None = None,
+    before: datetime | None = None,
 ) -> list[ModerationActionSummaryModel]:
     target_user = aliased(GlobalUser)
     moderator_user = aliased(GlobalUser)
@@ -1192,6 +1193,8 @@ async def list_action_summaries(
         statement = statement.where(ModerationAction.action_type.in_(list(action_types)))
     if is_active is not None:
         statement = statement.where(ModerationAction.is_active == is_active)
+    if before is not None:
+        statement = statement.where(ModerationAction.created_at < before)
 
     statement = (
         statement.group_by(

@@ -68,10 +68,10 @@ async def _release_notes_scenario() -> None:
         manifest = await list_published_release_notes(session, limit=100)
         public_manifest = await list_public_product_updates(session, limit=50)
 
-    assert len(manifest.releases) == 55
-    assert manifest.releases[0].id == "2026-08-26-moderation-reasons-and-private-commentary"
-    assert manifest.releases[0].title.en == "Moderation notices separate reasons from private commentary"
-    assert manifest.releases[0].title.ru == "Причины действий отделены от закрытых комментариев"
+    assert len(manifest.releases) == 56
+    assert manifest.releases[0].id == "2026-09-03-shared-member-notes-history"
+    assert manifest.releases[0].title.en == "Shared member notes and one moderation timeline"
+    assert manifest.releases[0].title.ru == "Общие заметки об участниках и единая история модерации"
     preserved_reason_release = next(
         release
         for release in manifest.releases
@@ -117,10 +117,10 @@ async def _release_notes_scenario() -> None:
         "2026-08-11-warns-legacy-reasons",
     }
 
-    assert len(public_manifest.updates) == 7
-    assert public_manifest.updates[0].slug == "public-product-updates"
-    assert public_manifest.updates[0].title.en == "See what we're building in Modral"
-    assert public_manifest.updates[0].title.ru == "Следите за развитием Modral"
+    assert len(public_manifest.updates) == 8
+    assert public_manifest.updates[0].slug == "shared-member-notes-history"
+    assert public_manifest.updates[0].title.en == "Shared moderation memory for every member"
+    assert public_manifest.updates[0].title.ru == "Единая история модерации для каждого участника"
     assert {
         update.slug
         for update in public_manifest.updates
@@ -132,6 +132,7 @@ async def _release_notes_scenario() -> None:
         "discord-command-access",
         "private-moderation-case-evidence",
         "batch-ai-moderation-review",
+        "shared-member-notes-history",
     }
     assert all(update.title.en and update.title.ru for update in public_manifest.updates)
     assert all(update.summary.en and update.summary.ru for update in public_manifest.updates)

@@ -242,6 +242,9 @@ def test_requested_command_renames_are_registered_and_catalogued():
         "mod cases new",
         "mod actions undo",
         "cat",
+        "mod history",
+        "mod notes add",
+        "mod notes list",
     }
     retired_names = {
         "add_my_birthday",
@@ -278,6 +281,17 @@ def test_bot_command_catalog_exposes_moderation_command_details():
     warn_parameters = {parameter.name: parameter for parameter in warn_command.parameters}
     assert warn_parameters["reason"].required is True
     assert warn_parameters["commentary"].required is False
+
+    history_command = get_bot_command("mod.history")
+    assert history_command is not None
+    assert history_command.required_rbac_permissions == ["moderation.member_history.view"]
+    assert {parameter.name for parameter in history_command.parameters} == {"user", "user_id", "limit"}
+
+    note_command = get_bot_command("mod.notes.add")
+    assert note_command is not None
+    assert note_command.required_rbac_permissions == ["moderation.member_notes.manage"]
+    note_parameters = {parameter.name: parameter for parameter in note_command.parameters}
+    assert note_parameters["note"].required is True
     assert {
         "delete_messages",
         "delete_message_limit",
@@ -333,7 +347,7 @@ def test_bot_command_catalog_endpoint_returns_filterable_contract():
     response = client.get("/bot-commands", params={"category": "moderation-cases"})
     assert response.status_code == 200
     body = response.json()
-    assert body["version"] == "2026-08-06.2"
+    assert body["version"] == "2026-09-03.1"
     assert body["locale"] == "en"
     assert body["available_locales"] == ["en", "ru"]
     assert {command["category"] for command in body["commands"]} == {"moderation-cases"}

@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator
 
-from api.models.moderation_cases import ModerationRuleRef
+from api.models.moderation_cases import ModerationActorModel, ModerationRuleRef
 from src.db.models import CaseStatus
 
 
@@ -114,6 +114,62 @@ class MonitoredUserSummaryModel(BaseModel):
     comment_count: int
 
 
+class MemberNoteCreateModel(BaseModel):
+    note: str = Field(min_length=1, max_length=10000)
+
+    @field_validator("note")
+    @classmethod
+    def normalize_note(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("note cannot be empty")
+        return cleaned
+
+
+class MemberNoteDeleteModel(BaseModel):
+    reason: str = Field(min_length=1, max_length=1000)
+
+    @field_validator("reason")
+    @classmethod
+    def normalize_reason(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("reason cannot be empty")
+        return cleaned
+
+
+class MemberNoteReadModel(BaseModel):
+    id: str
+    server_id: str
+    user_id: str
+    note: str | None = None
+    created_at: datetime
+    author: ModerationActorModel | None = None
+    deleted_at: datetime | None = None
+    deleted_by: ModerationActorModel | None = None
+    deletion_reason: str | None = None
+
+
+class MemberHistoryEventModel(BaseModel):
+    id: str
+    event_type: str
+    occurred_at: datetime
+    actor: ModerationActorModel | None = None
+    reason: str | None = None
+    commentary: str | None = None
+    note: str | None = None
+    action_id: str | None = None
+    action_number: int | None = None
+    action_type: str | None = None
+    action_active: bool | None = None
+    action_resolution: str | None = None
+    case_id: str | None = None
+    case_title: str | None = None
+    case_status: str | None = None
+    monitoring_active: bool | None = None
+    source: str = "modral"
+
+
 class TopRuleViolationModel(BaseModel):
     rule: ModerationRuleRef | None = None
     count: int | None = None
@@ -140,6 +196,7 @@ class UserProfileCardModel(BaseModel):
     activity: UserActivitySummaryModel | None = None
     nickname_history: list[NicknameRecordModel]
     moderation_actions_count: int
+    member_notes_count: int = 0
     open_cases_count: int
     recent_actions: list[UserModerationActionSummaryModel]
     recent_cases: list[UserModerationCaseSummaryModel]

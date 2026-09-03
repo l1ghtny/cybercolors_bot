@@ -13,11 +13,39 @@ from src.db.models import (
     ServerSecuritySettings,
     User,
 )
-from src.modules.moderation.newcomer_release_worker import process_due_newcomer_releases
+from src.modules.moderation.newcomer_release_worker import _mark_released, process_due_newcomer_releases
 
 
 def _make_discord_id() -> int:
     return 9_300_000_000_000_000 + (uuid4().int % 100_000_000_000_000)
+
+
+def test_mark_released_records_an_automatic_reason_without_impersonating_a_moderator():
+    class RecordingSession:
+        def __init__(self):
+            self.items = []
+
+        def add(self, item):
+            self.items.append(item)
+
+    now = datetime.now(UTC).replace(microsecond=0)
+    monitored = MonitoredUser(
+        server_id=_make_discord_id(),
+        user_id=_make_discord_id(),
+        added_by_user_id=_make_discord_id(),
+        reason="Newcomer probation",
+        source="newcomer",
+        is_active=True,
+    )
+    session = RecordingSession()
+
+    _mark_released(session, monitored, now=now)
+
+    event = next(item for item in session.items if isinstance(item, MonitoredUserStatusEvent))
+    assert event.changed_by_user_id is None
+    assert event.reason == "Automatic newcomer probation completed"
+    assert event.from_is_active is True
+    assert event.to_is_active is False
 
 
 async def _insert_newcomer(*, lockdown_enabled: bool = False):
@@ -106,6 +134,8 @@ async def _release_worker_scenario(monkeypatch) -> None:
             )
         ).all()
         assert len(status_events) == 1
+        assert status_events[0].changed_by_user_id is None
+        assert status_events[0].reason == "Automatic newcomer probation completed"
 
     await engine.dispose()
 

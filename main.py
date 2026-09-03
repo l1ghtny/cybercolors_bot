@@ -51,6 +51,11 @@ from src.commands.moderation.actions import (
     unban,
 )
 from src.commands.moderation.profile import member_profile
+from src.commands.moderation.member_history import (
+    member_history,
+    member_note_add,
+    member_notes_list,
+)
 from src.commands.moderation.cases import (
     case_add_rule,
     case_add_user,
@@ -425,6 +430,11 @@ moderation_actions_group = app_commands.Group(
     description="Moderation action management",
     parent=moderation_group,
 )
+moderation_notes_group = app_commands.Group(
+    name="notes",
+    description="Shared private notes about members",
+    parent=moderation_group,
+)
 moderation_birthday_group = app_commands.Group(
     name="bday",
     description="Birthday moderation commands",
@@ -447,6 +457,7 @@ moderation_group.add_command(ban)
 moderation_group.add_command(unban)
 moderation_group.add_command(security_lockdown)
 moderation_group.add_command(member_profile)
+moderation_group.add_command(member_history)
 
 moderation_rules_group.add_command(rule_add)
 moderation_rules_group.add_command(rules_import_message)
@@ -486,6 +497,9 @@ moderation_cases_group.add_command(case_unlink_action)
 
 moderation_actions_group.add_command(actions_list)
 moderation_actions_group.add_command(action_revert)
+
+moderation_notes_group.add_command(member_note_add)
+moderation_notes_group.add_command(member_notes_list)
 
 temp_voice_group.add_command(temp_voice_rename)
 temp_voice_group.add_command(temp_voice_limit)

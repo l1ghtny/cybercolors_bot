@@ -18,6 +18,7 @@ review.
 | AI answer request/response logs | 30 days | Row is deleted. |
 | Monitored-user message/image/AI event content | 30 days | Content and attachment/jump metadata are erased. |
 | Monitored-user event metadata | 90 days | Row is deleted. |
+| Shared moderator notes | Until a moderator removes the note or the guild is deleted | Removal erases the note text immediately; the remover, timestamp, and removal reason remain in the moderation history. |
 | Bot outbound-message audit | 90 days | Row is deleted. |
 | Expired dashboard OAuth sessions | Session expiry | Row and encrypted Discord tokens are deleted. |
 
@@ -87,6 +88,9 @@ Before cutover:
 - Define closed moderation-case retention and delete expired R2 evidence
   objects and abandoned uploads; case attachments are not yet cleaned by the
   database retention worker.
+- Define configurable retention windows for shared moderator notes and other
+  long-lived moderation records; note text currently remains until explicit
+  removal or guild deletion.
 - Verify host access, Kubernetes Secret encryption at rest, audit logs, and
   incident-response ownership.
 - Document OpenAI and Cloudflare as subprocessors, data locations/transfers,

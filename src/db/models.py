@@ -1232,16 +1232,78 @@ class MonitoredUserStatusEvent(SQLModel, table=True):
 
     id: Optional[UUID] = uuid7_primary_key_field()
     monitored_user_id: UUID = Field(foreign_key="monitored_users.id", nullable=False, index=True)
-    changed_by_user_id: int = Field(sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=False))
+    changed_by_user_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(BigInteger, ForeignKey("global_users.discord_id"), nullable=True),
+    )
     from_is_active: Optional[bool] = Field(default=None, nullable=True)
     to_is_active: bool = Field(nullable=False)
+    reason: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     changed_at: datetime = Field(default_factory=utcnow_utc_tz, nullable=False, index=True)
 
     monitored_user: MonitoredUser = Relationship(back_populates="status_events")
-    changed_by: GlobalUser = Relationship(
+    changed_by: Optional[GlobalUser] = Relationship(
         back_populates="monitored_status_changes",
         sa_relationship_kwargs={'foreign_keys': '[MonitoredUserStatusEvent.changed_by_user_id]'}
     )
+
+
+class MemberNote(SQLModel, table=True):
+    """A private, server-scoped moderator note attached directly to a member."""
+
+    __tablename__ = "member_notes"
+    __table_args__ = (
+        sa.CheckConstraint(
+            "(deleted_at IS NULL AND note IS NOT NULL) OR "
+            "(deleted_at IS NOT NULL AND note IS NULL AND deletion_reason IS NOT NULL)",
+            name="ck_member_notes_content_lifecycle",
+        ),
+        Index("ix_member_notes_server_user_created", "server_id", "user_id", "created_at"),
+    )
+
+    id: Optional[UUID] = uuid7_primary_key_field()
+    server_id: int = Field(
+        sa_column=Column(
+            BigInteger,
+            ForeignKey("servers.server_id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        )
+    )
+    user_id: int = Field(
+        sa_column=Column(
+            BigInteger,
+            ForeignKey("global_users.discord_id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        )
+    )
+    author_user_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(
+            BigInteger,
+            ForeignKey("global_users.discord_id", ondelete="SET NULL"),
+            nullable=True,
+        ),
+    )
+    note: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    created_at: datetime = Field(
+        default_factory=utcnow_utc_tz,
+        sa_column=Column(TIMESTAMP(timezone=True), nullable=False, index=True),
+    )
+    deleted_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(TIMESTAMP(timezone=True), nullable=True, index=True),
+    )
+    deleted_by_user_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(
+            BigInteger,
+            ForeignKey("global_users.discord_id", ondelete="SET NULL"),
+            nullable=True,
+        ),
+    )
+    deletion_reason: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
 
 class MonitoredUserNotificationSettings(SQLModel, table=True):

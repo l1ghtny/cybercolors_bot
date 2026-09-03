@@ -106,6 +106,7 @@ def build_member_profile_embed(
             locale,
             "profile.moderation_summary",
             actions=profile.moderation_actions_count,
+            notes=getattr(profile, "member_notes_count", 0),
             cases=profile.open_cases_count,
         ),
         inline=False,
@@ -150,6 +151,8 @@ async def member_profile(interaction: discord.Interaction, user: discord.Member)
     if not await ensure_bot_permission(interaction, "moderation.actions.view", locale=locale):
         return
     if not await ensure_bot_permission(interaction, "moderation.cases.view", locale=locale):
+        return
+    if not await ensure_bot_permission(interaction, "moderation.member_history.view", locale=locale):
         return
 
     try:

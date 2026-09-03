@@ -55,9 +55,10 @@ def _mark_released(session: AsyncSession, item: MonitoredUser, *, now: datetime)
         session.add(
             MonitoredUserStatusEvent(
                 monitored_user_id=item.id,
-                changed_by_user_id=item.added_by_user_id,
+                changed_by_user_id=None,
                 from_is_active=True,
                 to_is_active=False,
+                reason="Automatic newcomer probation completed",
                 changed_at=now,
             )
         )

@@ -26,6 +26,7 @@ from src.db.models import (
     CaseStatus,
     GlobalUser,
     MessageLog,
+    MemberNote,
     ModerationAction,
     ModerationActionRuleCitation,
     ModerationCase,
@@ -264,6 +265,17 @@ async def build_user_profile_card(
             )
         )
     ).one()
+    member_notes_count = (
+        await session.exec(
+            select(func.count())
+            .select_from(MemberNote)
+            .where(
+                MemberNote.server_id == server_id,
+                MemberNote.user_id == user_id,
+                MemberNote.deleted_at.is_(None),
+            )
+        )
+    ).one()
 
     cases = (
         await session.exec(
@@ -412,6 +424,7 @@ async def build_user_profile_card(
         activity=activity_payload,
         nickname_history=[to_nickname_record(item) for item in nickname_history],
         moderation_actions_count=int(actions_count),
+        member_notes_count=int(member_notes_count),
         open_cases_count=int(open_cases_count),
         recent_actions=[
             UserModerationActionSummaryModel(

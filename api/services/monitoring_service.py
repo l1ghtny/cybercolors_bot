@@ -86,6 +86,7 @@ def _to_monitored_user_status_event_read(
         monitored_user_id=str(item.monitored_user_id),
         from_is_active=item.from_is_active,
         to_is_active=item.to_is_active,
+        reason=item.reason,
         changed_at=item.changed_at,
         changed_by=changed_by,
     )
@@ -109,9 +110,10 @@ async def _get_monitored_user_or_none(
 def _append_status_event(
     session: AsyncSession,
     monitored_user_id,
-    changed_by_user_id: int,
+    changed_by_user_id: int | None,
     from_is_active: bool | None,
     to_is_active: bool,
+    reason: str | None = None,
 ):
     session.add(
         MonitoredUserStatusEvent(
@@ -119,6 +121,7 @@ def _append_status_event(
             changed_by_user_id=changed_by_user_id,
             from_is_active=from_is_active,
             to_is_active=to_is_active,
+            reason=reason,
         )
     )
 
@@ -264,6 +267,7 @@ async def upsert_monitored_user(
                 changed_by_user_id=added_by_user_id,
                 from_is_active=previous_active,
                 to_is_active=True,
+                reason=existing.reason,
             )
         await session.flush()
         await session.refresh(existing)
@@ -286,6 +290,7 @@ async def upsert_monitored_user(
         changed_by_user_id=added_by_user_id,
         from_is_active=None,
         to_is_active=True,
+        reason=item.reason,
     )
     await session.flush()
     await session.refresh(item)
@@ -340,6 +345,7 @@ async def update_monitored_user(
             changed_by_user_id=updated_by_user_id,
             from_is_active=previous_active,
             to_is_active=is_active,
+            reason=reason if reason is not None else item.reason,
         )
     item.updated_at = utc_now()
     session.add(item)
@@ -444,7 +450,7 @@ async def list_monitored_user_status_events(
 
     payload: list[MonitoredUserStatusEventReadModel] = []
     for row in rows:
-        changed_by = await build_actor(session, server_id, row.changed_by_user_id)
+        changed_by = await build_optional_actor(session, server_id, row.changed_by_user_id)
         payload.append(_to_monitored_user_status_event_read(row, changed_by))
     return payload
 
@@ -575,6 +581,7 @@ async def add_monitored_user_from_case(
             changed_by_user_id=added_by_user_id,
             from_is_active=previous_active,
             to_is_active=True,
+            reason=existing.reason,
         )
         await session.flush()
         await session.refresh(existing)
@@ -598,6 +605,7 @@ async def add_monitored_user_from_case(
         changed_by_user_id=added_by_user_id,
         from_is_active=None,
         to_is_active=True,
+        reason=item.reason,
     )
     session.add(
         MonitoredUserComment(
@@ -982,4 +990,3 @@ async def maybe_auto_monitor_new_member(
         added_by_user_id=int(member.id),
         source="auto",
     )
-

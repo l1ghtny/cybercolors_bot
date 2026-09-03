@@ -8,8 +8,16 @@ from src.db.models import CaseStatus
 
 class MonitoredUserCreateModel(BaseModel):
     user_id: str = Field(pattern=r"^\d+$")
-    reason: str | None = Field(default=None, max_length=5000)
+    reason: str = Field(min_length=1, max_length=5000)
     added_by_user_id: str | None = Field(default=None, pattern=r"^\d*$")
+
+    @field_validator("reason")
+    @classmethod
+    def normalize_reason(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("reason cannot be empty")
+        return cleaned
 
 
 class MonitoredUserUpdateModel(BaseModel):
@@ -18,10 +26,20 @@ class MonitoredUserUpdateModel(BaseModel):
     snooze_minutes: int | None = Field(default=None, ge=0, le=10080)
     updated_by_user_id: str | None = Field(default=None, pattern=r"^\d*$")
 
+    @field_validator("reason")
+    @classmethod
+    def normalize_optional_reason(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
     @model_validator(mode="after")
     def validate_payload(self):
         if self.reason is None and self.is_active is None and self.snooze_minutes is None:
             raise ValueError("At least one of reason, is_active, or snooze_minutes must be provided")
+        if self.is_active is not None and self.reason is None:
+            raise ValueError("reason is required when changing monitoring status")
         return self
 
 
@@ -74,8 +92,9 @@ class MonitoredUserStatusEventReadModel(BaseModel):
     monitored_user_id: str
     from_is_active: bool | None = None
     to_is_active: bool
+    reason: str | None = None
     changed_at: datetime
-    changed_by: ModerationActorModel
+    changed_by: ModerationActorModel | None = None
 
 
 class UserCaseSummaryModel(BaseModel):

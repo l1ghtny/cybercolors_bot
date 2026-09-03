@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import List
 from uuid import UUID
 
@@ -6,7 +7,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.dependencies.current_user import get_optional_current_discord_user_id, resolve_actor_user_id
-from api.dependencies.server_access import require_server_dashboard_access
+from api.dependencies.server_access import require_server_dashboard_access, require_server_permission
 from api.models.monitoring import (
     MonitoredUserCommentCreateModel,
     MonitoredUserDetailsModel,
@@ -25,9 +26,19 @@ from api.models.monitoring import (
 from api.models.moderation_actions import ModerationActionSummaryModel
 from api.models.moderation_cases import ModerationCaseSummaryModel
 from api.models.user_profiles import (
+    MemberHistoryEventModel,
+    MemberNoteCreateModel,
+    MemberNoteDeleteModel,
+    MemberNoteReadModel,
     NicknameLogModel,
     NicknameRecordModel,
     UserProfileCardModel,
+)
+from api.services.member_history import (
+    create_member_note,
+    delete_member_note,
+    list_member_history,
+    list_member_notes,
 )
 from api.services.monitoring_service import (
     add_monitored_user_from_case,
@@ -130,6 +141,7 @@ async def get_user_profile_card(
     actions_limit: int = Query(default=10, ge=1, le=50),
     cases_limit: int = Query(default=10, ge=1, le=50),
     session: AsyncSession = Depends(get_session),
+    _: int = Depends(require_server_permission("moderation.member_history.view")),
 ):
     return await build_user_profile_card(
         session=session,
@@ -147,6 +159,7 @@ async def get_actions_for_user(
     user_id: int,
     limit: int = Query(default=200, ge=1, le=1000),
     session: AsyncSession = Depends(get_session),
+    _: int = Depends(require_server_permission("moderation.actions.view")),
 ):
     return await list_actions_for_user_service(session=session, server_id=server_id, user_id=user_id, limit=limit)
 
@@ -158,6 +171,7 @@ async def get_cases_for_user(
     status_filter: CaseStatus | None = Query(default=None, alias="status"),
     limit: int = Query(default=200, ge=1, le=1000),
     session: AsyncSession = Depends(get_session),
+    _: int = Depends(require_server_permission("moderation.cases.view")),
 ):
     return await list_cases_for_user_service(
         session=session,
@@ -169,12 +183,98 @@ async def get_cases_for_user(
 
 
 @moderation_users_router.get(
+    "/users/{server_id}/{user_id}/notes",
+    response_model=list[MemberNoteReadModel],
+)
+async def get_member_notes(
+    server_id: int,
+    user_id: int,
+    limit: int = Query(default=200, ge=1, le=1000),
+    include_deleted: bool = Query(default=False),
+    session: AsyncSession = Depends(get_session),
+    _: int = Depends(require_server_permission("moderation.member_history.view")),
+):
+    return await list_member_notes(
+        session=session,
+        server_id=server_id,
+        user_id=user_id,
+        limit=limit,
+        include_deleted=include_deleted,
+    )
+
+
+@moderation_users_router.post(
+    "/users/{server_id}/{user_id}/notes",
+    response_model=MemberNoteReadModel,
+    status_code=status.HTTP_201_CREATED,
+)
+async def post_member_note(
+    server_id: int,
+    user_id: int,
+    body: MemberNoteCreateModel,
+    session: AsyncSession = Depends(get_session),
+    current_user_id: int = Depends(require_server_permission("moderation.member_notes.manage")),
+):
+    return await create_member_note(
+        session=session,
+        server_id=server_id,
+        user_id=user_id,
+        author_user_id=current_user_id,
+        body=body,
+    )
+
+
+@moderation_users_router.delete(
+    "/users/{server_id}/{user_id}/notes/{note_id}",
+    response_model=MemberNoteReadModel,
+)
+async def remove_member_note(
+    server_id: int,
+    user_id: int,
+    note_id: UUID,
+    body: MemberNoteDeleteModel,
+    session: AsyncSession = Depends(get_session),
+    current_user_id: int = Depends(require_server_permission("moderation.member_notes.manage")),
+):
+    return await delete_member_note(
+        session=session,
+        server_id=server_id,
+        user_id=user_id,
+        note_id=note_id,
+        deleted_by_user_id=current_user_id,
+        reason=body.reason,
+    )
+
+
+@moderation_users_router.get(
+    "/users/{server_id}/{user_id}/history",
+    response_model=list[MemberHistoryEventModel],
+)
+async def get_member_history(
+    server_id: int,
+    user_id: int,
+    limit: int = Query(default=200, ge=1, le=500),
+    before: datetime | None = Query(default=None),
+    session: AsyncSession = Depends(get_session),
+    _: int = Depends(require_server_permission("moderation.member_history.view")),
+):
+    return await list_member_history(
+        session=session,
+        server_id=server_id,
+        user_id=user_id,
+        limit=limit,
+        before=before,
+    )
+
+
+@moderation_users_router.get(
     "/users/{server_id}/monitoring-settings",
     response_model=ServerMonitoringSettingsReadModel,
 )
 async def get_server_monitoring_settings(
     server_id: int,
     session: AsyncSession = Depends(get_session),
+    _: int = Depends(require_server_permission("moderation.monitoring.view")),
 ):
     settings = await get_or_create_server_monitoring_settings(session, server_id)
     return to_server_monitoring_settings_read_model(settings)
@@ -188,6 +288,7 @@ async def put_server_monitoring_settings(
     server_id: int,
     body: ServerMonitoringSettingsUpdateModel,
     session: AsyncSession = Depends(get_session),
+    _: int = Depends(require_server_permission("moderation.monitoring.rules.manage")),
 ):
     return await update_server_monitoring_settings(session=session, server_id=server_id, body=body)
 
@@ -198,6 +299,7 @@ async def get_monitored_users(
     include_counts: bool = Query(default=False),
     source: str | None = Query(default=None, pattern=r"^(manual|newcomer|auto)$"),
     session: AsyncSession = Depends(get_session),
+    _: int = Depends(require_server_permission("moderation.monitoring.view")),
 ):
     return await list_monitored_users_service(
         session=session,
@@ -216,6 +318,7 @@ async def get_monitored_user_details_by_id(
     server_id: int,
     user_id: int,
     session: AsyncSession = Depends(get_session),
+    _: int = Depends(require_server_permission("moderation.monitoring.view")),
 ):
     try:
         return await get_monitored_user_details(
@@ -237,6 +340,7 @@ async def add_monitored_user(
     body: MonitoredUserCreateModel,
     session: AsyncSession = Depends(get_session),
     current_user_id: int | None = Depends(get_optional_current_discord_user_id),
+    _: int = Depends(require_server_permission("moderation.monitoring.manage")),
 ):
     added_by_user_id = resolve_actor_user_id(body.added_by_user_id, current_user_id)
     return await upsert_monitored_user(
@@ -255,6 +359,7 @@ async def patch_monitored_user(
     body: MonitoredUserUpdateModel,
     session: AsyncSession = Depends(get_session),
     current_user_id: int | None = Depends(get_optional_current_discord_user_id),
+    _: int = Depends(require_server_permission("moderation.monitoring.manage")),
 ):
     updated_by_user_id = resolve_actor_user_id(body.updated_by_user_id, current_user_id)
     try:
@@ -282,6 +387,7 @@ async def add_monitored_user_from_case_route(
     body: MonitoredUserFromCaseModel = Body(default_factory=MonitoredUserFromCaseModel),
     session: AsyncSession = Depends(get_session),
     current_user_id: int | None = Depends(get_optional_current_discord_user_id),
+    _: int = Depends(require_server_permission("moderation.monitoring.manage")),
 ):
     added_by_user_id = resolve_actor_user_id(body.added_by_user_id, current_user_id)
     return await add_monitored_user_from_case(
@@ -304,6 +410,7 @@ async def add_monitored_user_from_case_legacy_route(
     body: MonitoredUserFromCaseModel,
     session: AsyncSession = Depends(get_session),
     current_user_id: int | None = Depends(get_optional_current_discord_user_id),
+    _: int = Depends(require_server_permission("moderation.monitoring.manage")),
 ):
     if body.user_id is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="user_id_required")
@@ -327,6 +434,7 @@ async def get_monitored_user_comments(
     user_id: int,
     limit: int = Query(default=200, ge=1, le=1000),
     session: AsyncSession = Depends(get_session),
+    _: int = Depends(require_server_permission("moderation.monitoring.view")),
 ):
     try:
         return await list_monitored_user_comments(
@@ -350,6 +458,7 @@ async def post_monitored_user_comment(
     body: MonitoredUserCommentCreateModel,
     session: AsyncSession = Depends(get_session),
     current_user_id: int | None = Depends(get_optional_current_discord_user_id),
+    _: int = Depends(require_server_permission("moderation.monitoring.manage")),
 ):
     author_user_id = resolve_actor_user_id(body.author_user_id, current_user_id)
     try:
@@ -373,6 +482,7 @@ async def get_monitored_user_status_history(
     user_id: int,
     limit: int = Query(default=200, ge=1, le=1000),
     session: AsyncSession = Depends(get_session),
+    _: int = Depends(require_server_permission("moderation.monitoring.view")),
 ):
     try:
         return await list_monitored_user_status_events(
@@ -393,6 +503,7 @@ async def get_monitored_user_notifications(
     server_id: int,
     user_id: int,
     session: AsyncSession = Depends(get_session),
+    _: int = Depends(require_server_permission("moderation.monitoring.view")),
 ):
     try:
         return await get_monitored_user_notification_settings(
@@ -413,6 +524,7 @@ async def put_monitored_user_notifications(
     user_id: int,
     body: MonitoredUserNotificationSettingsUpdateModel,
     session: AsyncSession = Depends(get_session),
+    _: int = Depends(require_server_permission("moderation.monitoring.manage")),
 ):
     try:
         return await update_monitored_user_notification_settings(
@@ -434,6 +546,7 @@ async def get_monitored_user_activity(
     user_id: int,
     limit: int = Query(default=200, ge=1, le=1000),
     session: AsyncSession = Depends(get_session),
+    _: int = Depends(require_server_permission("moderation.monitoring.view")),
 ):
     try:
         return await list_monitored_user_activity_events(
