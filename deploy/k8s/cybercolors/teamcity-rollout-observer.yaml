@@ -1,0 +1,26 @@
+# Argo Rollouts uses a namespace-wide Deployment informer. A watch restricted
+# with resourceNames cannot authorize that informer; mutation rights stay in
+# the existing, separately managed TeamCity role.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: teamcity-rollout-observer
+  namespace: cybercolors
+rules:
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: teamcity-rollout-observer
+  namespace: cybercolors
+subjects:
+  - kind: ServiceAccount
+    name: teamcity-metrics-deployer
+    namespace: gamedev
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: teamcity-rollout-observer

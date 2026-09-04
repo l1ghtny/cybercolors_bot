@@ -1,0 +1,33 @@
+name: YouTube dependency checks
+on:
+  pull_request:
+    paths:
+      - pyproject.toml
+      - uv.lock
+      - src/modules/ai/knowledge_imports.py
+      - src/modules/ai/youtube*.py
+      - tests/test_ai_knowledge.py
+      - tests/test_youtube*.py
+      - .github/workflows/youtube-dependencies.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://test:test@127.0.0.1:1/modral_test
+      DB_ECHO: "false"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          version: "0.11.30"
+          python-version: "3.14"
+      - run: uv sync --locked
+      - run: uv run --locked yt-dlp --version
+      - run: uv run --locked pytest -q tests/test_youtube_data.py tests/test_youtube_urls.py tests/test_indexer_image.py
+      - run: >-
+          uv run --locked pytest -q tests/test_ai_knowledge.py
+          -k 'youtube_audio_fallback or youtube_caption_selection or modal_transcription_provider or youtube_access_challenge'

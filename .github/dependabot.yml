@@ -1,0 +1,19 @@
+version: 2
+updates:
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: daily
+      time: "07:00"
+      timezone: Europe/Bratislava
+    allow:
+      - dependency-name: yt-dlp
+        dependency-type: all
+      - dependency-name: yt-dlp-ejs
+        dependency-type: all
+    groups:
+      youtube-downloader:
+        patterns:
+          - yt-dlp
+          - yt-dlp-ejs
+    open-pull-requests-limit: 2

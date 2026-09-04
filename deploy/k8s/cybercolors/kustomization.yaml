@@ -10,3 +10,4 @@ resources:
   - embeddings.yaml
   - servicemonitor.yaml
   - ingress.yaml
+  - teamcity-rollout-observer.yaml

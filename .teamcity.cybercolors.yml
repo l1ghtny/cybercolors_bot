@@ -425,10 +425,7 @@ jobs:
               chmod +x "$BIN_DIR/kubectl"
             fi
 
-            if ! kubectl argo rollouts version >/dev/null 2>&1; then
-              curl -fsSLo "$BIN_DIR/kubectl-argo-rollouts" "https://github.com/argoproj/argo-rollouts/releases/latest/download/kubectl-argo-rollouts-linux-amd64"
-              chmod +x "$BIN_DIR/kubectl-argo-rollouts"
-            fi
+
           }
 
           ensure_kubectl_tools
@@ -477,92 +474,9 @@ jobs:
           EMBEDDINGS_TAG="emb-$EMBEDDINGS_HASH"
           cd ..
 
-          current_argocd_backend_tag() {
-            kubectl -n argocd get application cybercolors \
-              -o jsonpath='{range .spec.source.kustomize.images[*]}{.}{"\n"}{end}' \
-              2>/dev/null \
-              | grep '^localhost:32000/cybercolors-backend:' \
-              | tail -n 1 \
-              | sed 's/.*://' \
-              || true
-          }
-
-          superseded_by_newer_deploy() {
-            local current_backend_tag
-            current_backend_tag="$(current_argocd_backend_tag)"
-            [[ "$current_backend_tag" =~ ^[0-9]+$ ]] && \
-              [ "$current_backend_tag" -gt "$BACKEND_TAG" ]
-          }
-
-          patch_argocd_images() {
-            kubectl -n argocd patch application cybercolors --type merge -p "{\"spec\":{\"source\":{\"kustomize\":{\"images\":[\"localhost:32000/cybercolors-backend:$BACKEND_TAG\",\"localhost:32000/cybercolors-frontend:$FRONTEND_TAG\",\"localhost:32000/cybercolors-indexer:$INDEXER_TAG\",\"localhost:32000/cybercolors-embeddings:$EMBEDDINGS_TAG\"]}}}}"
-            kubectl -n argocd annotate application cybercolors argocd.argoproj.io/refresh=hard --overwrite
-          }
-
-          kubectl apply -f cybercolors_bot/deploy/argocd/cybercolors-application.yaml
-          if superseded_by_newer_deploy; then
-            echo "Deploy $BACKEND_TAG is superseded by Argo backend tag $(current_argocd_backend_tag); skipping stale rollout."
-            exit 0
-          fi
-          patch_argocd_images
-
-          for i in $(seq 1 90); do
-            if kubectl -n cybercolors get rollout cybercolors-backend >/dev/null 2>&1 && \
-               kubectl -n cybercolors get rollout cybercolors-frontend >/dev/null 2>&1 && \
-               kubectl -n cybercolors get deployment cybercolors-bot >/dev/null 2>&1 && \
-               kubectl -n cybercolors get deployment modral-bot >/dev/null 2>&1 && \
-               kubectl -n cybercolors get deployment cybercolors-indexer-worker >/dev/null 2>&1 && \
-               kubectl -n cybercolors get deployment cybercolors-embeddings >/dev/null 2>&1 && \
-               kubectl -n cybercolors get deployment cybercolors-newcomer-release-worker >/dev/null 2>&1; then
-              break
-            fi
-            sleep 5
-          done
-
-          kubectl -n cybercolors set image deployment/cybercolors-embeddings embeddings="localhost:32000/cybercolors-embeddings:$EMBEDDINGS_TAG"
-          kubectl -n cybercolors rollout status deployment/cybercolors-embeddings --timeout=1800s
-
-          kubectl -n cybercolors set image deployment/cybercolors-bot bot="localhost:32000/cybercolors-backend:$BACKEND_TAG"
-          kubectl -n cybercolors set image deployment/modral-bot bot="localhost:32000/cybercolors-backend:$BACKEND_TAG"
-          kubectl -n cybercolors set image deployment/cybercolors-newcomer-release-worker worker="localhost:32000/cybercolors-backend:$BACKEND_TAG"
-          kubectl -n cybercolors set image deployment/cybercolors-indexer-worker worker="localhost:32000/cybercolors-indexer:$INDEXER_TAG"
-          kubectl -n cybercolors rollout status deployment/cybercolors-bot --timeout=900s
-          kubectl -n cybercolors rollout status deployment/modral-bot --timeout=900s
-          kubectl -n cybercolors rollout status deployment/cybercolors-newcomer-release-worker --timeout=900s
-          kubectl -n cybercolors rollout status deployment/cybercolors-indexer-worker --timeout=1800s
-
-          if superseded_by_newer_deploy; then
-            echo "Deploy $BACKEND_TAG was superseded by Argo backend tag $(current_argocd_backend_tag); leaving the newer rollout in place."
-            exit 0
-          fi
-          patch_argocd_images
-
-          for i in $(seq 1 90); do
-            BACKEND_IMAGE="$(kubectl -n cybercolors get deployment cybercolors-backend -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)"
-            FRONTEND_IMAGE="$(kubectl -n cybercolors get deployment cybercolors-frontend -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)"
-            EMBEDDINGS_IMAGE="$(kubectl -n cybercolors get deployment cybercolors-embeddings -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)"
-
-            if [ "$BACKEND_IMAGE" = "localhost:32000/cybercolors-backend:$BACKEND_TAG" ] && \
-               [ "$FRONTEND_IMAGE" = "localhost:32000/cybercolors-frontend:$FRONTEND_TAG" ] && \
-               [ "$EMBEDDINGS_IMAGE" = "localhost:32000/cybercolors-embeddings:$EMBEDDINGS_TAG" ]; then
-              break
-            fi
-
-            if [ "$i" = "90" ]; then
-              echo "Timed out waiting for Argo CD image overrides. backend=$BACKEND_IMAGE frontend=$FRONTEND_IMAGE embeddings=$EMBEDDINGS_IMAGE"
-              kubectl -n argocd get application cybercolors -o yaml || true
-              exit 1
-            fi
-
-            sleep 5
-          done
-
-          kubectl argo rollouts promote cybercolors-backend -n cybercolors --full || true
-          kubectl argo rollouts promote cybercolors-frontend -n cybercolors --full || true
-          kubectl argo rollouts status cybercolors-backend -n cybercolors --timeout 900s
-          kubectl argo rollouts status cybercolors-frontend -n cybercolors --timeout 900s
-
-          kubectl argo rollouts get rollout cybercolors-backend -n cybercolors
-          kubectl argo rollouts get rollout cybercolors-frontend -n cybercolors
-          kubectl -n cybercolors get pods -o wide
+          python3 cybercolors_bot/scripts/deploy_cybercolors.py \
+            --backend-tag "$BACKEND_TAG" \
+            --frontend-tag "$FRONTEND_TAG" \
+            --indexer-tag "$INDEXER_TAG" \
+            --embeddings-tag "$EMBEDDINGS_TAG"
         format-stderr-as-error: true
