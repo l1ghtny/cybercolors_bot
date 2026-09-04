@@ -10,6 +10,11 @@ rules:
   - apiGroups: [apps]
     resources: [deployments]
     verbs: [get, list, watch]
+  # kubectl patch --subresource=status first reads the status endpoint.
+  - apiGroups: [argoproj.io]
+    resources: [rollouts/status]
+    resourceNames: [cybercolors-backend, cybercolors-frontend]
+    verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
