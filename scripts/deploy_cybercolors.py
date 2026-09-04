@@ -140,8 +140,15 @@ def rollout_ready(kube, name, expected, desired):
             and status.get("updatedReplicas", 0) == count
             and status.get("availableReplicas", 0) >= count):
         return True
+    # A zero-weight pause can intentionally keep the canary scaled to zero.
+    # Waiting for a ready canary there would prevent promotion forever.
+    zero_weight_pause = (
+        replica_set.get("spec", {}).get("replicas") == 0
+        and status.get("canary", {}).get("weights", {}).get("canary", {}).get("weight") == 0
+    )
     if (status.get("phase") == "Paused" and not status.get("promoteFull")
-            and replica_set.get("status", {}).get("availableReplicas", 0) > 0):
+            and (replica_set.get("status", {}).get("availableReplicas", 0) > 0
+                 or zero_weight_pause)):
         require_ownership(kube, desired)
         # Equivalent to Argo's promote --full, but conditional on this exact
         # observed revision. A controller update or newer revision invalidates it.

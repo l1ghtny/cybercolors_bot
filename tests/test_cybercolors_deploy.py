@@ -180,6 +180,23 @@ def test_revision_changed_before_promotion_is_not_promoted():
     assert kube.patches == []
 
 
+@pytest.mark.parametrize("replicas,weight,promoted", [(0, 0, True), (1, 0, False), (0, 5, False)])
+def test_zero_weight_pause_can_promote_without_canary_pods(replicas, weight, promoted):
+    kube = FakeKube(DESIRED)
+    kube.rollout["status"].update(phase="Paused", stableRS="old",
+                                  canary={"weights": {"canary": {"weight": weight}}})
+    original_get = kube.get
+    def get(namespace, kind, name):
+        resource = original_get(namespace, kind, name)
+        if kind == "replicaset":
+            resource["spec"]["replicas"] = replicas
+            resource["status"]["availableReplicas"] = 0
+        return resource
+    kube.get = get
+    assert not release.rollout_ready(kube, "cybercolors-backend", "localhost:32000/cybercolors-backend:100", DESIRED)
+    assert bool(kube.patches) is promoted
+
+
 @pytest.mark.parametrize("state", ["manual_pause", "degraded"])
 def test_manual_pause_and_failed_rollout_are_not_bypassed(state):
     kube = FakeKube(DESIRED)
