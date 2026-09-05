@@ -76,3 +76,13 @@ In the dashboard checkout:
 npm test -- src/components/ai/KnowledgeSearchResults.test.tsx src/lib/knowledge-search.test.ts
 npm run build
 ```
+
+## Pilot rollout, 2026-09-05
+
+Reviewed backend commit `04ef55f` and dashboard commit `272889c` were deployed through TeamCity run 8350 (#247). All six pipeline jobs succeeded. The deployed identity and assistant-integration file hashes matched the reviewed backend snapshot. Migration `e1c7a4b9d620` follows the already-deployed `49703b66f5d6` migration.
+
+For guild `478278763239702538`, all nine linked accounts were refreshed successfully from Discord and 1,269 retained memberships were reconciled. The linked-account audit reports zero missing memberships, usernames, or aliases. Before refresh, one linked membership and one username were missing. No KB text or embeddings were changed.
+
+Production read-only checks resolved all nine linked usernames. Shared retrieval using the real embedding service returned the intended sources for `studiocolors` and `aronz`; the latter was retrieved by the identity branch alone. Neither query reported a degraded component. The pilot flag is now recorded in the deployment ConfigMap for API and bot activation. Final Discord answer quality remains for the user's real-world check. The release note remains an unpublished, non-public draft pending that check.
+
+Review validation: 25 identity/isolation tests passed (the optional scale benchmark was skipped); 91 other focused regressions passed; all three release-note tests passed. The identity fixture now uses the real Alembic migration chain, and release-history assertions account for the previously deployed YouTube fix. Dashboard: five tests and production build passed. Single Alembic head, offline migration rendering, and diff whitespace checks passed.
