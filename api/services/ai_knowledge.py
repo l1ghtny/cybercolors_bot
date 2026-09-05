@@ -17,7 +17,8 @@ from api.models.ai_knowledge import (
     AIKnowledgeSourceUpdateModel,
 )
 from src.db.models import AIKnowledgeChunk, AIKnowledgeIndexJob, AIKnowledgeSource, GlobalUser, Server, utcnow_utc_tz
-from src.modules.ai.knowledge import queue_knowledge_index_job, run_knowledge_index_job_once, search_server_knowledge
+from src.modules.ai.knowledge import queue_knowledge_index_job, run_knowledge_index_job_once
+from src.modules.ai.knowledge_retrieval import retrieve_server_knowledge
 from src.modules.ai.knowledge_errors import public_knowledge_error
 from src.modules.ai.knowledge_imports import KnowledgeImportError, store_knowledge_upload
 from src.modules.ai.youtube_urls import YouTubeUrlError, normalize_youtube_video_url
@@ -446,14 +447,15 @@ async def search_knowledge_sources(
     server_id: int,
     body: AIKnowledgeSearchRequestModel,
 ) -> AIKnowledgeSearchResponseModel:
-    results = await search_server_knowledge(
+    results = await retrieve_server_knowledge(
         session=session,
         server_id=server_id,
         query=body.query,
         visibility=body.visibility,
         limit=body.limit,
+        target_user_ids=[int(value) for value in body.target_user_ids],
     )
-    return AIKnowledgeSearchResponseModel(items=results)
+    return AIKnowledgeSearchResponseModel(**results)
 
 
 async def process_one_knowledge_job(session: AsyncSession, *, server_id: int) -> AIKnowledgeProcessOneResponseModel:

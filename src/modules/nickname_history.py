@@ -6,11 +6,26 @@ import discord
 from sqlmodel import select
 
 from src.db.database import get_async_session
-from src.db.models import PastNickname
+from src.db.models import GlobalUser, PastNickname
 from src.modules.moderation.moderation_helpers import (
     check_if_server_exists,
     check_if_user_exists,
 )
+
+
+async def refresh_user_account_names(before: discord.User, after: discord.User) -> bool:
+    """Refresh current names even when a server nickname masks the change."""
+    if before.name == after.name and before.global_name == after.global_name:
+        return False
+    async with get_async_session() as session:
+        user = await session.get(GlobalUser, after.id)
+        if user is None:
+            return False
+        user.username = after.name
+        user.global_name = after.global_name
+        session.add(user)
+        await session.commit()
+    return True
 
 
 def _member_display_name(member: discord.Member | discord.User) -> str | None:

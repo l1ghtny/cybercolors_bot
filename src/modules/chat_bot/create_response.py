@@ -88,6 +88,8 @@ async def _create_ai_response(
         content=content,
         server_id=getattr(guild, "id", None),
         author_user_id=getattr(author, "id", None),
+        mentioned_user_ids=[int(user.id) for user in (getattr(message, "mentions", None) or [])
+                            if getattr(user, "id", None) is not None and not getattr(user, "bot", False)],
         author_role_ids=role_ids,
         author_permission_names=permission_names,
         author_visible_channel_ids=visible_channel_ids,

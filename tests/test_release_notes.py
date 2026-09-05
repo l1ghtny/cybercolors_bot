@@ -68,10 +68,12 @@ async def _release_notes_scenario() -> None:
         manifest = await list_published_release_notes(session, limit=100)
         public_manifest = await list_public_product_updates(session, limit=50)
 
-    assert len(manifest.releases) == 57
-    assert manifest.releases[0].id == "2026-09-03-readable-member-profile-layout"
-    assert manifest.releases[0].title.en == "Member profiles stay readable in narrower windows"
-    assert manifest.releases[0].title.ru == "Профили участников удобно читать даже в узких окнах"
+    assert len(manifest.releases) == 58
+    assert manifest.releases[0].id == "2026-09-04-youtube-audio-download-compatibility"
+    assert all(release.id != "2026-09-04-knowledge-discord-identities" for release in manifest.releases)
+    assert manifest.releases[1].id == "2026-09-03-readable-member-profile-layout"
+    assert manifest.releases[1].title.en == "Member profiles stay readable in narrower windows"
+    assert manifest.releases[1].title.ru == "Профили участников удобно читать даже в узких окнах"
     shared_history_release = next(
         release
         for release in manifest.releases

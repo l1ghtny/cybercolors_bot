@@ -201,6 +201,7 @@ class AssistantInput:
     conversation: list[AIMessage] = field(default_factory=list)
     images: list[AIImageInput] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    mentioned_user_ids: list[int] = field(default_factory=list)
 
 
 @dataclass(slots=True)

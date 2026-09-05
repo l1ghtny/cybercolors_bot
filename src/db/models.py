@@ -6,6 +6,7 @@ from datetime import UTC, date, datetime
 import sqlalchemy as sa
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import BigInteger, Column, ForeignKey, Index, JSON, String, TIMESTAMP, Text, UniqueConstraint
+from sqlalchemy.dialects.postgresql import TSQUERY, TSVECTOR
 from sqlmodel import Field, Relationship, SQLModel
 
 from src.modules.ai.tool_access import default_ai_companion_tool_names
@@ -890,6 +891,35 @@ class YouTubeChannelVideo(SQLModel, table=True):
     subscription: YouTubeChannelSubscription = Relationship(back_populates="videos")
     server: Server = Relationship(back_populates="youtube_channel_videos")
     knowledge_source: Optional[AIKnowledgeSource] = Relationship(back_populates="youtube_channel_video")
+
+
+class AIKnowledgeIdentityAlias(SQLModel, table=True):
+    """Current directory names projected into the lexical identity index."""
+
+    __tablename__ = "ai_knowledge_identity_aliases"
+    __table_args__ = (
+        sa.ForeignKeyConstraint(["server_id", "user_id"], ["users.server_id", "users.user_id"], ondelete="CASCADE"),
+        sa.CheckConstraint("alias_kind IN ('username', 'global_name', 'server_nickname')", name="ck_knowledge_identity_alias_kind"),
+        Index("ix_knowledge_identity_exact", "server_id", "normalized_alias"),
+        Index("ix_knowledge_identity_user", "user_id"),
+        Index("ix_knowledge_identity_search", "search_vector", postgresql_using="gin"),
+    )
+
+    server_id: int = Field(sa_column=Column(BigInteger, primary_key=True))
+    user_id: int = Field(sa_column=Column(BigInteger, primary_key=True))
+    alias_kind: str = Field(sa_column=Column(String(30), primary_key=True))
+    alias_text: str = Field(sa_column=Column(Text, nullable=False))
+    normalized_alias: str = Field(sa_column=Column(Text, nullable=False))
+    search_vector: Optional[str] = Field(default=None, sa_column=Column(
+        TSVECTOR, sa.Computed("to_tsvector('pg_catalog.simple', normalized_alias)", persisted=True), nullable=False,
+    ))
+    alias_phrase: Optional[str] = Field(default=None, sa_column=Column(
+        TSQUERY, sa.Computed("phraseto_tsquery('pg_catalog.simple', normalized_alias)", persisted=True), nullable=False,
+    ))
+    normalization_version: int = Field(default=1, sa_column=Column(sa.Integer, nullable=False, server_default="1"))
+    indexed_at: datetime = Field(default_factory=utcnow_utc_tz, sa_column=Column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=sa.func.now(),
+    ))
 
 
 class AIKnowledgeChunk(SQLModel, table=True):

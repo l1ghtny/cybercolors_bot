@@ -16,6 +16,8 @@ from api.services.newcomer_probation import (
 from api.services.rbac_service import resolve_effective_permissions_for_member_context
 from src.modules.ai.context import get_active_rules_context, get_member_profile_context
 from src.modules.ai.knowledge import search_server_knowledge
+from src.modules.ai.knowledge_identities import identity_retrieval_enabled
+from src.modules.ai.knowledge_retrieval import retrieve_server_knowledge
 from src.modules.ai.models import AIToolSpec
 from src.modules.ai.youtube_channel_catalog import search_youtube_channel_catalog
 from src.db.models import ServerModerationSettings, ServerSecuritySettings
@@ -224,8 +226,16 @@ async def _server_knowledge_tool(
     query: str,
     limit: int = 5,
     source_id: str | None = None,
-) -> list[dict[str, Any]]:
+    target_user_ids: list[str] | None = None,
+) -> dict[str, Any] | list[dict[str, Any]]:
     normalized_source_id = str(UUID(source_id)) if source_id else None
+    if normalized_source_id is None and identity_retrieval_enabled(server_id):
+        if len(target_user_ids or []) > 8:
+            raise ValueError("At most 8 identity targets may be selected")
+        return await retrieve_server_knowledge(
+            session, server_id=server_id, query=query, limit=min(max(int(limit), 1), 8),
+            target_user_ids=[int(value) for value in target_user_ids or []],
+        )
     return await search_server_knowledge(
         session=session,
         server_id=server_id,
@@ -639,6 +649,9 @@ def build_default_tool_registry() -> AIToolRegistry:
                 "Search approved public server/admin knowledge chunks for answering server-specific questions. "
                 "Use this before answering questions about server staff, server policies, events, channels, "
                 "resources, imported files, or other admin-authored facts."
+                " Identity candidates show which account name matched; a name in prose can be incidental. "
+                "Ask which member is meant only when answering requires choosing between ambiguous candidates. "
+                "Use target_user_ids only for an explicitly selected or mentioned account; do not guess."
             ),
             parameters={
                 "type": "object",
@@ -652,6 +665,10 @@ def build_default_tool_registry() -> AIToolRegistry:
                             "Optional knowledge source ID returned by another tool. Use it to search only one "
                             "linked transcript or document."
                         ),
+                    },
+                    "target_user_ids": {
+                        "type": "array", "items": {"type": "string", "pattern": "^[0-9]+$"}, "maxItems": 8,
+                        "description": "Discord IDs explicitly mentioned or selected by the user to resolve an ambiguity.",
                     },
                 },
                 "required": ["server_id", "query"],

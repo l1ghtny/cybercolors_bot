@@ -37,6 +37,11 @@ KNOWLEDGE_JOB_MAX_ATTEMPTS = 3
 READY_SOURCE_STATUSES = {"ready"}
 PUBLIC_ANSWER_VISIBILITIES = {"public_answer"}
 ACTIVE_JOB_STATUSES = {"pending", "running"}
+KNOWLEDGE_SOURCE_SCOPE = """
+    chunk.server_id = :server_id AND source.server_id = :server_id
+    AND source.status IN :ready_statuses AND source.visibility IN :visibility_values
+    AND source.deleted_at IS NULL
+"""
 RETRYABLE_KNOWLEDGE_IMPORT_ERRORS = {
     "youtube_fetch_failed",
     "youtube_audio_download_failed",
@@ -414,6 +419,7 @@ async def search_server_knowledge(
     min_score: float | None = None,
     source_id: str | None = None,
     source_ids: list[str] | None = None,
+    query_vector: str | None = None,
 ) -> list[dict[str, Any]]:
     normalized_query = normalize_knowledge_text(query)
     if not normalized_query:
@@ -421,8 +427,9 @@ async def search_server_knowledge(
 
     visibility_set = PUBLIC_ANSWER_VISIBILITIES if visibility == "public_answer" else {visibility}
     active_embedder = embedder or await get_knowledge_embedder()
-    query_embedding = (await active_embedder.embed_texts([normalized_query]))[0]
-    query_vector = vector_literal(query_embedding)
+    if query_vector is None:
+        query_embedding = (await active_embedder.embed_texts([normalized_query]))[0]
+        query_vector = vector_literal(query_embedding)
     bounded_limit = min(max(int(limit), 1), 20)
     effective_min_score = (
         KNOWLEDGE_MIN_RELEVANCE_SCORE if min_score is None else float(min_score)
@@ -450,11 +457,7 @@ async def search_server_knowledge(
             chunk.embedding OPERATOR(public.<=>) CAST(:query_embedding AS public.vector) AS distance
         FROM ai_knowledge_chunks AS chunk
         JOIN ai_knowledge_sources AS source ON source.id = chunk.source_id
-        WHERE chunk.server_id = :server_id
-          AND source.server_id = :server_id
-          AND source.status IN :ready_statuses
-          AND source.visibility IN :visibility_values
-          AND source.deleted_at IS NULL
+        WHERE {KNOWLEDGE_SOURCE_SCOPE}
           AND chunk.embedding IS NOT NULL
           {source_filter}
         ORDER BY chunk.embedding OPERATOR(public.<=>) CAST(:query_embedding AS public.vector)

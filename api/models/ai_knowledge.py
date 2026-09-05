@@ -168,11 +168,44 @@ class AIKnowledgeSearchRequestModel(BaseModel):
     query: str = Field(min_length=1, max_length=4000)
     visibility: AIKnowledgeVisibility = "public_answer"
     limit: int = Field(default=5, ge=1, le=20)
+    target_user_ids: list[str] = Field(default_factory=list, max_length=8)
+
+    @field_validator("target_user_ids")
+    @classmethod
+    def validate_target_user_ids(cls, values: list[str]) -> list[str]:
+        if any(not value.isascii() or not value.isdecimal() or not 0 < int(value) <= 2**63 - 1 for value in values):
+            raise ValueError("target_user_ids must contain positive Discord IDs")
+        return list(dict.fromkeys(str(int(value)) for value in values))
 
     @field_validator("query")
     @classmethod
     def normalize_query(cls, value: str) -> str:
         return value.strip()
+
+
+class AIKnowledgeIdentityModel(BaseModel):
+    user_id: str
+    username: str | None = None
+    global_name: str | None = None
+    server_nickname: str | None = None
+    is_member: bool = True
+
+
+class AIKnowledgeIdentityEvidenceModel(BaseModel):
+    alias_kind: Literal["username", "global_name", "server_nickname"] | None = None
+    matched_alias: str | None = None
+    match_type: Literal["explicit_target", "explicit_handle", "exact_alias", "alias_phrase"]
+
+
+class AIKnowledgeIdentityMatchModel(BaseModel):
+    identity: AIKnowledgeIdentityModel
+    evidence: list[AIKnowledgeIdentityEvidenceModel] = Field(default_factory=list)
+
+
+class AIKnowledgeAmbiguityModel(BaseModel):
+    matched_alias: str
+    candidates: list[AIKnowledgeIdentityModel] = Field(default_factory=list)
+    overflow: bool = False
 
 
 class AIKnowledgeSearchResultModel(BaseModel):
@@ -185,8 +218,11 @@ class AIKnowledgeSearchResultModel(BaseModel):
     chunk_id: str
     chunk_ordinal: int
     text: str
-    score: float
-    distance: float
+    score: float | None = None
+    distance: float | None = None
+    retrieval_methods: list[Literal["identity", "semantic"]] = Field(default_factory=list)
+    identity: AIKnowledgeIdentityModel | None = None
+    identity_evidence: list[AIKnowledgeIdentityEvidenceModel] = Field(default_factory=list)
     source_url: str | None = None
     indexed_at: str | None = None
     embedding_provider: str | None = None
@@ -195,6 +231,10 @@ class AIKnowledgeSearchResultModel(BaseModel):
 
 class AIKnowledgeSearchResponseModel(BaseModel):
     items: list[AIKnowledgeSearchResultModel] = Field(default_factory=list)
+    identity_matches: list[AIKnowledgeIdentityMatchModel] = Field(default_factory=list)
+    ambiguities: list[AIKnowledgeAmbiguityModel] = Field(default_factory=list)
+    truncated: bool = False
+    degraded_components: list[str] = Field(default_factory=list)
 
 
 class AIKnowledgeProcessOneResponseModel(BaseModel):

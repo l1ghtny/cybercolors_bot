@@ -123,6 +123,7 @@ from src.modules.moderation.bot_rbac import ensure_bot_permission
 from src.modules.nickname_history import (
     record_member_nickname_change,
     record_user_display_name_change,
+    refresh_user_account_names,
 )
 from src.modules.monitoring.activity import (
     handle_member_join_monitoring,
@@ -1019,10 +1020,13 @@ async def on_member_update(before: discord.Member, after: discord.Member):
 
 @client.event
 async def on_user_update(before: discord.User, after: discord.User):
+    owned_guilds = [guild for guild in client.guilds if runtime_owns_guild(guild.id)]
+    if any(guild.get_member(after.id) is not None for guild in owned_guilds):
+        await refresh_user_account_names(before, after)
     await record_user_display_name_change(
         before,
         after,
-        [guild for guild in client.guilds if runtime_owns_guild(guild.id)],
+        owned_guilds,
     )
 
 

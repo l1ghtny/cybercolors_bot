@@ -173,3 +173,29 @@ def test_manual_history_log_does_not_replace_the_current_nickname(monkeypatch) -
     assert record.nickname == "Past nickname"
     assert membership.server_nickname == "Current nickname"
     assert "server_nickname" not in get_membership.await_args.kwargs
+
+
+def test_username_refresh_does_not_depend_on_visible_name_or_nickname_history(monkeypatch):
+    session, _, _ = _install_fake_persistence(monkeypatch)
+    account = SimpleNamespace(username="old_handle", global_name="Unchanged display")
+    session.get = AsyncMock(return_value=account)
+    before = SimpleNamespace(id=456, name="old_handle", global_name="Unchanged display")
+    after = SimpleNamespace(id=456, name="new_handle", global_name="Unchanged display")
+
+    assert asyncio.run(nickname_history.refresh_user_account_names(before, after)) is True
+    assert account.username == "new_handle"
+    assert account.global_name == "Unchanged display"
+    session.commit.assert_awaited_once()
+    session.exec.assert_not_awaited()
+
+
+def test_global_name_refresh_runs_even_when_members_have_server_nicknames(monkeypatch):
+    session, _, _ = _install_fake_persistence(monkeypatch)
+    account = SimpleNamespace(username="same_handle", global_name="Old display")
+    session.get = AsyncMock(return_value=account)
+    before = SimpleNamespace(id=456, name="same_handle", global_name="Old display")
+    after = SimpleNamespace(id=456, name="same_handle", global_name="New display")
+
+    assert asyncio.run(nickname_history.refresh_user_account_names(before, after)) is True
+    assert account.global_name == "New display"
+    session.commit.assert_awaited_once()
