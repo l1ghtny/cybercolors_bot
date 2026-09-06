@@ -16,6 +16,7 @@ from api.models.youtube_channels import (
     YouTubeChannelVideoReadModel,
 )
 from api.services.ai_knowledge import create_knowledge_source, queue_knowledge_source_reindex
+from src.modules.ai.youtube_limits import youtube_duration_error, YOUTUBE_DURATION_ERRORS
 from src.db.models import (
     AIKnowledgeSource,
     GlobalUser,
@@ -234,6 +235,10 @@ async def index_youtube_channel_video(
         subscription_id=subscription_id,
         video_id=video_id,
     )
+    duration_error = youtube_duration_error(video.duration_seconds)
+    if duration_error:
+        raise HTTPException(status_code=422, detail={"code": duration_error, "message": YOUTUBE_DURATION_ERRORS[duration_error]})
+
     if video.availability != "available":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

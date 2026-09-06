@@ -110,27 +110,55 @@ class RemoteKnowledgeEmbedder:
         self.timeout_seconds = timeout_seconds
         self.model = model
         self.dimensions = dimensions
+        self.max_batch_size = _env_int("AI_KNOWLEDGE_EMBEDDING_MAX_BATCH_SIZE", 64)
+        self.max_total_chars = _env_int("AI_KNOWLEDGE_EMBEDDING_MAX_TOTAL_CHARS", 100_000)
+        self.max_text_chars = _env_int("AI_KNOWLEDGE_EMBEDDING_MAX_TEXT_CHARS", 20_000)
+        if min(self.max_batch_size, self.max_total_chars, self.max_text_chars) < 1:
+            raise ValueError("Embedding request limits must be positive")
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
 
+        # Validate all inputs before sending any work, then preserve input order
+        # across requests bounded by both service payload limits.
+        for text in texts:
+            if not text.strip():
+                raise ValueError("Embedding texts must not be blank.")
+            if len(text) > min(self.max_text_chars, self.max_total_chars):
+                raise ValueError("Embedding text exceeds the configured request limits.")
+        batches: list[list[str]] = []
+        batch: list[str] = []
+        chars = 0
+        for text in texts:
+            if batch and (len(batch) >= self.max_batch_size or chars + len(text) > self.max_total_chars):
+                batches.append(batch)
+                batch, chars = [], 0
+            batch.append(text)
+            chars += len(text)
+        if batch:
+            batches.append(batch)
+
         timeout = aiohttp.ClientTimeout(total=self.timeout_seconds)
+        embeddings: list[list[float]] = []
         try:
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(f"{self.service_url}/embed", json={"texts": texts}) as response:
-                    if response.status != 200:
-                        detail = (await response.text())[:500]
-                        raise RuntimeError(
-                            f"Embedding service returned HTTP {response.status}: {detail}"
-                        )
-                    payload = await response.json()
+                for batch in batches:
+                    embeddings.extend(await self._embed_batch(session, batch))
         except TimeoutError as exc:
             raise RuntimeError(
                 f"Embedding service timed out after {self.timeout_seconds} seconds."
             ) from exc
         except aiohttp.ClientError as exc:
             raise RuntimeError(f"Embedding service request failed: {exc}") from exc
+        return embeddings
+
+    async def _embed_batch(self, session: aiohttp.ClientSession, texts: list[str]) -> list[list[float]]:
+        async with session.post(f"{self.service_url}/embed", json={"texts": texts}) as response:
+            if response.status != 200:
+                detail = (await response.text())[:500]
+                raise RuntimeError(f"Embedding service returned HTTP {response.status}: {detail}")
+            payload = await response.json()
 
         response_model = payload.get("model")
         response_dimensions = payload.get("dimensions")

@@ -1,4 +1,5 @@
 import asyncio
+import pytest
 from datetime import timezone
 from uuid import uuid4
 
@@ -155,7 +156,8 @@ def test_channel_sync_persists_safe_retryable_error():
     assert subscription.next_sync_at is not None
 
 
-def test_subsequent_sync_auto_indexes_new_available_video(monkeypatch):
+@pytest.mark.parametrize("duration,allowed", [(60, True), (7200, True), (7201, False), (None, False)])
+def test_subsequent_sync_auto_indexes_new_available_video(monkeypatch, duration, allowed):
     created_source = AIKnowledgeSource(
         id=uuid4(),
         server_id=123,
@@ -192,7 +194,7 @@ def test_subsequent_sync_auto_indexes_new_available_video(monkeypatch):
         title="New upload",
         description="",
         published_at="2026-07-24T10:00:00Z",
-        duration_seconds=60,
+        duration_seconds=duration,
         thumbnail_url=None,
         availability="available",
         captions_available=False,
@@ -212,8 +214,8 @@ def test_subsequent_sync_auto_indexes_new_available_video(monkeypatch):
 
     catalogued = [item for item in session.added if isinstance(item, YouTubeChannelVideo)]
     assert succeeded is True
-    assert created_for == ["new123DEF_0"]
-    assert catalogued[0].knowledge_source_id == created_source.id
+    assert created_for == (["new123DEF_0"] if allowed else [])
+    assert catalogued[0].knowledge_source_id == (created_source.id if allowed else None)
 
 
 async def _database_timezone_scenario() -> None:
@@ -321,6 +323,7 @@ async def _manual_video_index_scenario() -> None:
                 video_id="manual12345",
                 title="Needle manual indexing video",
                 description="Searchable catalogue description",
+                duration_seconds=7200,
                 availability="available",
             )
 

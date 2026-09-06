@@ -1,4 +1,8 @@
+from src.modules.ai.youtube_limits import YOUTUBE_DURATION_ERRORS
+
 PUBLIC_KNOWLEDGE_ERRORS = {
+    **YOUTUBE_DURATION_ERRORS,
+    "indexing_failed": "This knowledge source could not be indexed. Please try again.",
     "empty_file": "The uploaded file is empty.",
     "file_too_large": "The uploaded file is too large.",
     "file_not_found": "The uploaded file could not be found.",

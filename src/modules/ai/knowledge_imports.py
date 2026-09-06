@@ -12,6 +12,7 @@ from importlib import metadata as importlib_metadata
 from pathlib import Path
 from typing import Any
 
+from src.modules.ai.youtube_limits import youtube_duration_error, YOUTUBE_DURATION_ERRORS
 from src.modules.ai.youtube_urls import YouTubeUrlError, normalize_youtube_video_url
 
 
@@ -304,6 +305,11 @@ def extract_text_from_youtube_url(url: str) -> tuple[str, dict[str, Any]]:
                 "youtube_playlist_url",
                 "This is a YouTube playlist link. Enter a link to an individual video.",
             )
+
+        duration_error = ("youtube_duration_unknown" if info.get("is_live") or info.get("live_status") == "is_live"
+                          else youtube_duration_error(info.get("duration")))
+        if duration_error:
+            raise KnowledgeImportError(duration_error, YOUTUBE_DURATION_ERRORS[duration_error])
 
         caption_files = _select_caption_files(Path(temp_dir))
         if not caption_files:

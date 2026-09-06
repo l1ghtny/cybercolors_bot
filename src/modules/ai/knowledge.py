@@ -12,6 +12,7 @@ from sqlalchemy import bindparam, delete, text
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from src.modules.ai.youtube_limits import youtube_duration_error, YOUTUBE_DURATION_ERRORS
 from src.db.models import AIKnowledgeChunk, AIKnowledgeIndexJob, AIKnowledgeSource, utcnow_utc_tz
 from src.modules.ai.knowledge_imports import (
     KnowledgeImportError,
@@ -274,6 +275,10 @@ async def process_knowledge_index_job_with_embedder(
     await session.flush()
 
     try:
+        if job.job_type == "reindex_content" and source.source_type == "youtube":
+            duration = (source.metadata_json or {}).get("import", {}).get("duration")
+            if youtube_duration_error(duration) == "youtube_video_too_long":
+                raise KnowledgeImportError("youtube_video_too_long", YOUTUBE_DURATION_ERRORS["youtube_video_too_long"])
         if job.job_type == "reindex_content":
             index_text = knowledge_source_index_text(source)
         else:
@@ -367,6 +372,13 @@ async def run_knowledge_index_job_once(
             job.id,
         )
         await _mark_job_failed(session, job, str(exc))
+        source = await session.get(AIKnowledgeSource, job.source_id) if job.source_id else None
+        if source is not None and source.server_id == job.server_id:
+            source.status = "queued" if job.status == "pending" else "failed"
+            source.error_code = "indexing_failed"
+            source.error_message = str(exc)
+            source.updated_at = utcnow_utc_tz()
+            await session.flush()
     return True
 
 

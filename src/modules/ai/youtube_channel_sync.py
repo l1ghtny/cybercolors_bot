@@ -7,6 +7,7 @@ from uuid import UUID
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from src.modules.ai.youtube_limits import youtube_duration_error
 from src.db.models import (
     AIKnowledgeSource,
     YouTubeChannelSubscription,
@@ -112,7 +113,7 @@ async def sync_youtube_channel_subscription(
 
     if auto_index_new and subscription.auto_index_new_videos:
         for row in new_rows:
-            if row.knowledge_source_id is not None or row.availability != "available":
+            if row.knowledge_source_id is not None or row.availability != "available" or youtube_duration_error(row.duration_seconds):
                 continue
             source = await _create_video_knowledge_source(session, subscription=subscription, video=row)
             row.knowledge_source_id = source.id
