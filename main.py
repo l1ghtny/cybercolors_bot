@@ -41,7 +41,7 @@ from src.commands.moderation.bot_messages import (
     StaticCommandTranslator,
     reply_context_command_for_profile,
 )
-from src.commands.sync import sync_application_commands, sync_guild_application_commands
+from src.commands.sync import BackgroundCommandSync, sync_application_commands, sync_guild_application_commands
 from src.commands.moderation.actions import (
     action_revert,
     actions_list,
@@ -179,6 +179,7 @@ class Aclient(discord.AutoShardedClient):
         super().__init__(intents=intents, shard_count=2)
         self.added = False
         self.synced = False  # we use this so the bot doesn't sync commands more than once
+        self.command_sync = BackgroundCommandSync(self.sync_commands, self.wait_until_ready)
 
         self.known_global_users = set()
         self.current_server_rules: dict[int, list[dict]] = {}
@@ -285,24 +286,26 @@ class Aclient(discord.AutoShardedClient):
             cache_server_profile(guild_id, item.primary_profile)
         PRIMARY_ASSIGNMENTS_LOADED = True
 
-    # commands local sync
+    async def sync_commands(self):
+        await tree.set_translator(StaticCommandTranslator())
+        synced = await sync_application_commands(
+            tree,
+            guild_ids=tuple(guild.id for guild in self.guilds),
+            test_guild_id=None,
+        )
+        logger.info("Commands synced globally (%s).", synced.global_count)
+        for guild_id, guild_count in synced.guild_counts.items():
+            logger.info("Guild-specific commands synced for guild %s (%s total).", guild_id, guild_count)
+        self.synced = True
+
+    async def close(self):
+        await self.command_sync.close()
+        await super().close()
+
     async def on_ready(self):
         await self.wait_until_ready()
         DISCORD_GATEWAY_STATUS.set(1)
-        if not self.synced:  # check if slash commands have been synced
-            await tree.set_translator(StaticCommandTranslator())
-            synced = await sync_application_commands(
-                tree,
-                guild_ids=tuple(guild.id for guild in self.guilds),
-                test_guild_id=None,
-            )
-            print(f"Commands synced globally ({synced.global_count}).")
-            for guild_id, guild_count in synced.guild_counts.items():
-                print(
-                    f"Guild-specific commands synced for guild {guild_id} "
-                    f"({guild_count} total)."
-                )
-            self.synced = True
+        self.command_sync.start()
         if not self.added:
             self.added = True
         if not self.guild_presence_synced:

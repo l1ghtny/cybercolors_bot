@@ -1,8 +1,61 @@
-from collections.abc import Sequence
+import asyncio
+import logging
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 
+import aiohttp
 import discord
 from discord import app_commands
+
+logger = logging.getLogger("bot")
+
+
+class BackgroundCommandSync:
+    """Run one registration task without blocking the bot's ready handler."""
+
+    def __init__(
+        self,
+        sync: Callable[[], Awaitable[None]],
+        wait_until_ready: Callable[[], Awaitable[None]],
+    ) -> None:
+        self._sync = sync
+        self._wait_until_ready = wait_until_ready
+        self._task: asyncio.Task[None] | None = None
+
+    def start(self) -> None:
+        # READY may fire repeatedly. A completed task also stays completed:
+        # registration succeeds once, or needs an operator fix after a hard error.
+        if self._task is None:
+            self._task = asyncio.create_task(self._run(), name="discord-command-sync")
+
+    async def close(self) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            await asyncio.gather(self._task, return_exceptions=True)
+
+    async def _run(self) -> None:
+        delay = 5
+        while True:
+            await self._wait_until_ready()
+            try:
+                await self._sync()
+            except discord.HTTPException as exc:
+                if exc.status != 429 and not 500 <= exc.status < 600:
+                    logger.exception("Discord command sync failed; registration needs operator attention.")
+                    return
+                logger.warning(
+                    "Discord command sync returned HTTP %s; retrying in %ss.", exc.status, delay
+                )
+            except (OSError, asyncio.TimeoutError, aiohttp.ClientError):
+                logger.warning("Discord command sync connection failed; retrying in %ss.", delay)
+            except Exception:
+                logger.exception("Discord command sync failed; registration needs operator attention.")
+                return
+            else:
+                logger.info("Discord command sync completed.")
+                return
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 300)
 
 
 @dataclass(frozen=True)
