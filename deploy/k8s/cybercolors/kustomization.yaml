@@ -9,5 +9,6 @@ resources:
   - workers.yaml
   - embeddings.yaml
   - servicemonitor.yaml
+  - service-status-alerts.yaml
   - ingress.yaml
   - teamcity-rollout-observer.yaml

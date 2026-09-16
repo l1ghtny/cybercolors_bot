@@ -1,0 +1,43 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cybercolors-service-status
+  namespace: cybercolors
+  labels:
+    release: kube-prom-stack
+spec:
+  groups:
+    - name: cybercolors.service-status
+      rules:
+        - alert: DiscordShardDisconnected
+          expr: cybercolors_discord_shard_connected == 0
+          for: 3m
+          labels:
+            severity: warning
+          annotations:
+            summary: 'Discord shard disconnected for {{ $labels.bot_profile }}'
+            description: 'Shard {{ $labels.shard }} has been disconnected for at least three minutes. Check bot logs and Discord Status; do not assume a vendor outage.'
+        - alert: BotRuntimeComponentUnavailable
+          expr: cybercolors_runtime_component_healthy == 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: 'Bot component unavailable for {{ $labels.bot_profile }}'
+            description: '{{ $labels.component }} has not reported healthy for five minutes. Inspect startup, stopped or overdue loops, and command registration errors.'
+        - alert: BotRuntimeReportStale
+          expr: time() - cybercolors_runtime_last_report_timestamp_seconds > 90
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: 'Runtime report is stale for {{ $labels.bot_profile }}'
+            description: 'The dashboard cannot confirm current bot status. Check PostgreSQL connectivity and runtime reporter logs.'
+        - alert: BotMetricsUnavailable
+          expr: up{namespace="cybercolors", service=~"(cybercolors|modral)-bot-metrics"} == 0
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: 'Bot metrics cannot be scraped for {{ $labels.service }}'
+            description: 'Check the bot pod, event loop health endpoint, and metrics service endpoints.'

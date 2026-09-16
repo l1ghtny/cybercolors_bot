@@ -1,6 +1,6 @@
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.dependencies.current_user import get_current_discord_user_id
@@ -43,8 +43,17 @@ from api.services.server_directory import (
 from api.services.moderation_users_service import build_user_profile_card
 from src.db.database import get_session
 from src.db.models import Server
+from api.models.service_status import ServerServiceStatus
+from api.services.service_status import get_server_service_status
 
 servers = APIRouter(prefix="/servers", tags=["servers"])
+
+
+@servers.get("/{server_id}/service-status", response_model=ServerServiceStatus,
+             dependencies=[Depends(require_server_dashboard_access)])
+async def server_service_status(server_id: int, response: Response, session: AsyncSession = Depends(get_session)):
+    response.headers["Cache-Control"] = "private, no-store"
+    return await get_server_service_status(session, server_id)
 
 
 @servers.get("/")

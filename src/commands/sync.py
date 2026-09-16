@@ -21,11 +21,13 @@ class BackgroundCommandSync:
         self._sync = sync
         self._wait_until_ready = wait_until_ready
         self._task: asyncio.Task[None] | None = None
+        self.state = "unknown"
 
     def start(self) -> None:
         # READY may fire repeatedly. A completed task also stays completed:
         # registration succeeds once, or needs an operator fix after a hard error.
         if self._task is None:
+            self.state = "retrying"
             self._task = asyncio.create_task(self._run(), name="discord-command-sync")
 
     async def close(self) -> None:
@@ -41,6 +43,7 @@ class BackgroundCommandSync:
                 await self._sync()
             except discord.HTTPException as exc:
                 if exc.status != 429 and not 500 <= exc.status < 600:
+                    self.state = "unavailable"
                     logger.exception("Discord command sync failed; registration needs operator attention.")
                     return
                 logger.warning(
@@ -49,9 +52,11 @@ class BackgroundCommandSync:
             except (OSError, asyncio.TimeoutError, aiohttp.ClientError):
                 logger.warning("Discord command sync connection failed; retrying in %ss.", delay)
             except Exception:
+                self.state = "unavailable"
                 logger.exception("Discord command sync failed; registration needs operator attention.")
                 return
             else:
+                self.state = "healthy"
                 logger.info("Discord command sync completed.")
                 return
             await asyncio.sleep(delay)
