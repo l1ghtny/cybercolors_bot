@@ -1,4 +1,5 @@
 import asyncio
+from functools import wraps
 
 import discord
 import discord.ui
@@ -134,6 +135,7 @@ from src.modules.monitoring.activity import (
 from src.modules.observability.sentry import birthday_hourly_monitor, configure_sentry
 from src.modules.observability.bot_metrics import DISCORD_GATEWAY_CONNECTED
 from src.modules.observability.prometheus import start_bot_metrics_server
+from src.modules.observability.runtime_status import RuntimeReporter
 from api.services.moderation_rules_service import sync_rules_from_source_message_edit
 from api.services.discord_profiles import (
     cache_server_profile,
@@ -185,6 +187,11 @@ class Aclient(discord.AutoShardedClient):
         self.current_server_rules: dict[int, list[dict]] = {}
         self.guild_presence_synced = False
         self.security_pause_cache: dict[int, tuple[bool, float]] = {}
+        self.runtime_status = RuntimeReporter(self, BOT_PROFILE, lambda: {
+            "assignments": ([gateway_assignment_refresh], 120),
+            "moderation_expiry": ([auto_unmute_worker], 300),
+            "birthdays": ([birthday, check_users_with_birthdays], 1800),
+        })
 
     async def setup_hook(self):
         """
@@ -192,6 +199,7 @@ class Aclient(discord.AutoShardedClient):
         is logged in, but BEFORE it connects to the WebSocket.
         It is the safe place for async DB calls.
         """
+        await self.runtime_status.start()
         # 2. Call your cache loader
         await self.load_user_cache()
         await self.load_current_server_rules()
@@ -299,6 +307,7 @@ class Aclient(discord.AutoShardedClient):
         self.synced = True
 
     async def close(self):
+        await self.runtime_status.close()
         await self.command_sync.close()
         await super().close()
 
@@ -916,8 +925,17 @@ async def on_raw_message_edit(payload: discord.RawMessageUpdateEvent):
         await client.load_current_server_rules()
 
 
+def report_job_health(function):
+    @wraps(function)
+    async def tracked(*args, **kwargs):
+        with client.runtime_status.track_job(function.__name__):
+            return await function(*args, **kwargs)
+    return tracked
+
+
 # BD MODULE with checking task
 @tasks.loop(time=check_time)
+@report_job_health
 async def birthday():
     with birthday_hourly_monitor():
         await check_birthday_new(client, guild_ids=set(PRIMARY_GUILD_IDS))
@@ -929,17 +947,20 @@ async def birthday():
 
 
 @tasks.loop(time=users_time)
+@report_job_health
 async def check_users_with_birthdays():
     logger.info('validation process started')
     await main_validation_process(client, guild_ids=set(PRIMARY_GUILD_IDS))
 
 
 @tasks.loop(seconds=30)
+@report_job_health
 async def gateway_assignment_refresh():
     await client.refresh_primary_guild_assignments()
 
 
 @tasks.loop(seconds=60)
+@report_job_health
 async def auto_unmute_worker():
     guild_ids = {guild.id for guild in client.guilds if runtime_owns_guild(guild.id)}
     processed, failed = await process_expired_mutes(client, guild_ids=guild_ids)

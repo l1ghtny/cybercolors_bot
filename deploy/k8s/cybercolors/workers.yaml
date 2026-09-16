@@ -6,6 +6,7 @@ metadata:
   labels:
     monitoring.cybercolors.io/scrape: "true"
 spec:
+  publishNotReadyAddresses: true
   selector:
     app: cybercolors-bot
   ports:
@@ -219,6 +220,28 @@ spec:
           ports:
             - name: metrics
               containerPort: 9100
+            - name: health
+              containerPort: 9101
+          startupProbe:
+            httpGet:
+              path: /livez
+              port: health
+            periodSeconds: 10
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: health
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
           envFrom:
             - configMapRef:
                 name: cybercolors-config
@@ -256,6 +279,7 @@ metadata:
   labels:
     monitoring.cybercolors.io/scrape: "true"
 spec:
+  publishNotReadyAddresses: true
   selector:
     app: modral-bot
   ports:
@@ -289,6 +313,28 @@ spec:
           ports:
             - name: metrics
               containerPort: 9100
+            - name: health
+              containerPort: 9101
+          startupProbe:
+            httpGet:
+              path: /livez
+              port: health
+            periodSeconds: 10
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: health
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
           envFrom:
             - configMapRef:
                 name: cybercolors-config

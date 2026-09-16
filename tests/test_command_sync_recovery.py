@@ -24,12 +24,14 @@ def test_temporary_failure_retries_once_and_stops_after_success(monkeypatch, err
         ready = AsyncMock()
         runner = BackgroundCommandSync(sync, ready)
         runner.start()
+        assert runner.state == "retrying"
         task = runner._task
         runner.start()
         assert runner._task is task
         await task
         runner.start()
         assert runner._task is task
+        assert runner.state == "healthy"
         assert sync.await_count == ready.await_count == 2
         sleep.assert_awaited_once_with(5)
         await runner.close()
@@ -61,6 +63,7 @@ def test_permanent_failure_is_reported_without_retry(monkeypatch, error):
         runner.start()
         await runner._task
         runner.start()
+        assert runner.state == "unavailable"
         sync.assert_awaited_once()
         sleep.assert_not_awaited()
         report_error.assert_called_once()

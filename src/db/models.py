@@ -10,6 +10,7 @@ from sqlalchemy.dialects.postgresql import TSQUERY, TSVECTOR
 from sqlmodel import Field, Relationship, SQLModel
 
 from src.modules.ai.tool_access import default_ai_companion_tool_names
+from src.db.service_status import BotRuntimeStatus, ExternalServiceStatus
 
 
 def utcnow_utc_tz() -> datetime:
