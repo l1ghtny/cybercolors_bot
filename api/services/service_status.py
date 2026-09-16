@@ -15,7 +15,7 @@ VALID_STATES = {"healthy", "reconnecting", "retrying", "unavailable", "unknown"}
 
 def summarize_status(server_id: int, runtime: BotRuntimeStatus | None, advisory: ExternalServiceStatus | None, now: datetime) -> ServerServiceStatus:
     components = [ServiceComponent(id=name, state="unknown", reason="stale_report") for name in COMPONENT_IDS]
-    result = ServerServiceStatus(state="unknown", components=components)
+    result = ServerServiceStatus(state="unknown", server_time=now, components=components)
     if advisory and advisory.observed_at and timedelta(0) <= now - advisory.observed_at <= ADVISORY_TTL:
         result.discord_status_observed_at = advisory.observed_at
         if advisory.incidents:

@@ -68,19 +68,22 @@ async def _release_notes_scenario() -> None:
         manifest = await list_published_release_notes(session, limit=100)
         public_manifest = await list_public_product_updates(session, limit=50)
 
-    assert len(manifest.releases) == 61
-    assert manifest.releases[0].id == "2026-09-16-server-service-status"
-    assert manifest.releases[0].change_type == "added"
+    assert len(manifest.releases) == 62
+    assert manifest.releases[0].id == "2026-09-16-service-status-device-clock"
+    assert manifest.releases[0].change_type == "fixed"
     assert manifest.releases[0].surface == "dashboard"
-    assert manifest.releases[1].id == "2026-09-15-discord-command-sync-recovery"
-    assert manifest.releases[1].change_type == "fixed"
-    assert manifest.releases[1].surface == "bot"
-    assert manifest.releases[2].id == "2026-09-06-youtube-duration-and-indexing"
-    assert manifest.releases[3].id == "2026-09-04-youtube-audio-download-compatibility"
+    assert manifest.releases[1].id == "2026-09-16-server-service-status"
+    assert manifest.releases[1].change_type == "added"
+    assert manifest.releases[1].surface == "dashboard"
+    assert manifest.releases[2].id == "2026-09-15-discord-command-sync-recovery"
+    assert manifest.releases[2].change_type == "fixed"
+    assert manifest.releases[2].surface == "bot"
+    assert manifest.releases[3].id == "2026-09-06-youtube-duration-and-indexing"
+    assert manifest.releases[4].id == "2026-09-04-youtube-audio-download-compatibility"
     assert all(release.id != "2026-09-04-knowledge-discord-identities" for release in manifest.releases)
-    assert manifest.releases[4].id == "2026-09-03-readable-member-profile-layout"
-    assert manifest.releases[4].title.en == "Member profiles stay readable in narrower windows"
-    assert manifest.releases[4].title.ru == "Профили участников удобно читать даже в узких окнах"
+    assert manifest.releases[5].id == "2026-09-03-readable-member-profile-layout"
+    assert manifest.releases[5].title.en == "Member profiles stay readable in narrower windows"
+    assert manifest.releases[5].title.ru == "Профили участников удобно читать даже в узких окнах"
     shared_history_release = next(
         release
         for release in manifest.releases

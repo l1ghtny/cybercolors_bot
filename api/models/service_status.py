@@ -21,6 +21,7 @@ class DiscordIncident(BaseModel):
 
 class ServerServiceStatus(BaseModel):
     state: Literal["healthy", "reconnecting", "degraded", "unknown"]
+    server_time: datetime
     observed_at: datetime | None = None
     expires_at: datetime | None = None
     components: list[ServiceComponent]
