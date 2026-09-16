@@ -302,6 +302,20 @@ async def build_server_metadata(session: AsyncSession, server_id: int) -> Server
     except Exception:
         metadata = {}
 
+    birthday_channel_id = server.birthday_channel_id if server else None
+    birthday_channel_name = server.birthday_channel_name if server else None
+    if birthday_channel_id:
+        try:
+            channel = await fetch_channel(server_id, birthday_channel_id)
+            if channel and channel.get("name"):
+                birthday_channel_name = channel["name"]
+        except Exception:
+            logger.warning(
+                "Could not resolve birthday channel %s for server %s",
+                birthday_channel_id,
+                server_id,
+            )
+
     birthday_role_id = server.birthday_role_id if server else None
     birthday_role_name: str | None = None
     if birthday_role_id:
@@ -332,8 +346,8 @@ async def build_server_metadata(session: AsyncSession, server_id: int) -> Server
         member_count=member_count,
         owner_id=str(metadata["owner_id"]) if metadata.get("owner_id") else None,
         features=[str(item) for item in metadata.get("features", [])],
-        birthday_channel_id=str(server.birthday_channel_id) if server and server.birthday_channel_id else None,
-        birthday_channel_name=server.birthday_channel_name if server else None,
+        birthday_channel_id=str(birthday_channel_id) if birthday_channel_id else None,
+        birthday_channel_name=birthday_channel_name,
         birthday_role_id=str(birthday_role_id) if birthday_role_id else None,
         birthday_role_name=birthday_role_name,
     )

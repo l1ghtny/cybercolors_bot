@@ -1,8 +1,8 @@
-"""Add product release note 2026-09-16-service-status-device-clock.
+"""Add product release note 2026-09-16-overview-birthday-channel-name.
 
-Revision ID: 8a8d15d03a5c
-Revises: 5f19aa91db51
-Create Date: 2026-09-16T13:30:20.929073+00:00
+Revision ID: 5f19aa91db51
+Revises: a71c293dd420
+Create Date: 2026-09-16T13:23:37.184006+00:00
 """
 
 from datetime import datetime, timezone
@@ -11,13 +11,13 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = '8a8d15d03a5c'
-down_revision = '5f19aa91db51'
+revision = '5f19aa91db51'
+down_revision = 'a71c293dd420'
 branch_labels = None
 depends_on = None
 
 
-NOTE_ID = '2026-09-16-service-status-device-clock'
+NOTE_ID = '2026-09-16-overview-birthday-channel-name'
 
 
 def _release_notes_table() -> sa.TableClause:
@@ -58,22 +58,22 @@ def upgrade() -> None:
             id=NOTE_ID,
             published_at=datetime(
                 2026, 9, 16,
-                13, 30, 0,
+                13, 23, 36,
                 tzinfo=timezone.utc,
             ),
-            title_en='Service status works with an incorrect device clock',
-            title_ru='Состояние бота не зависит от часов на устройстве',
-            summary_en='A device clock that runs ahead or behind no longer makes a healthy bot appear as “Status unknown”. Stale reports still expire.',
-            summary_ru='Если часы на устройстве спешат или отстают, исправно работающий бот больше не отображается с неизвестным состоянием. Устаревшие данные по-прежнему не считаются актуальными.',
+            title_en='Birthday channel shown by name',
+            title_ru='Название канала поздравлений в обзоре сервера',
+            summary_en='The server overview now looks up the birthday channel name in Discord, so you can recognize it even when its name was never saved or has changed.',
+            summary_ru='В обзоре сервера теперь отображается название канала поздравлений из Discord, даже если оно не было сохранено или канал переименовали.',
             change_type='fixed',
             surface='dashboard',
-            feature_en='Dashboard · Service status',
-            feature_ru='Панель управления · Состояние сервисов',
+            feature_en='Server overview · Birthday channel',
+            feature_ru='Обзор сервера · Канал поздравлений',
             action_label_en=None,
             action_label_ru=None,
             action_path=None,
             changes=sa.cast(
-                op.inline_literal('[{"en": "Returning to the dashboard refreshes the status before showing the bot as healthy.", "ru": "При возвращении на вкладку панель запрашивает свежие данные, прежде чем показать, что бот работает."}]', type_=sa.Text()),
+                op.inline_literal('[{"en": "If Discord is unavailable, the overview keeps showing the saved name or channel ID.", "ru": "Если Discord недоступен, в обзоре остаётся сохранённое название или ID канала."}]', type_=sa.Text()),
                 sa.JSON(),
             ),
             is_published=True,
