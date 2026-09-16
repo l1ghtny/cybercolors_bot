@@ -27,7 +27,10 @@ def report(**changes):
 
 
 def test_only_affected_shard_is_reconnecting():
-    assert summarize_status(GUILD_A, report(), None, NOW).state == "healthy"
+    result = summarize_status(GUILD_A, report(), None, NOW)
+    assert result.state == "healthy"
+    assert result.server_time == NOW
+    assert summarize_status(GUILD_A, None, None, NOW).server_time == NOW
     assert summarize_status(GUILD_B, report(), None, NOW).state == "reconnecting"
 
 
@@ -97,6 +100,7 @@ def test_endpoint_response_excludes_internal_runtime_fields(monkeypatch):
     monkeypatch.setattr(routes, "get_server_service_status", AsyncMock(return_value=summarize_status(GUILD_A, report(), None, NOW)))
     response = TestClient(app).get(f"/servers/{GUILD_A}/service-status")
     assert response.status_code == 200
+    assert response.json()["server_time"] == "2026-09-16T00:00:00Z"
     assert "process_id" not in response.text
     assert "guild_ids" not in response.text
     assert len(response.json()["components"]) == 4

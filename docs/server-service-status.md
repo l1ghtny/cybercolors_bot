@@ -9,6 +9,7 @@ Implemented contract, 16 September 2026. This reports connection and task health
 ```json
 {
   "state": "degraded",
+  "server_time": "2026-09-16T12:00:10Z",
   "observed_at": "2026-09-16T12:00:00Z",
   "expires_at": "2026-09-16T12:01:30Z",
   "components": [
@@ -22,6 +23,7 @@ Implemented contract, 16 September 2026. This reports connection and task health
 }
 ```
 
+- `server_time` is the UTC instant used by the API to evaluate this response, including unknown responses.
 - Overall states: `healthy`, `reconnecting`, `degraded`, `unknown`.
 - Component states: `healthy`, `reconnecting`, `retrying`, `unavailable`, `unknown`.
 - A fresh advisory contains `title`, canonical `url`, and upstream `status`. It never changes this server's operational state.
@@ -40,7 +42,7 @@ Reports expire after 90 seconds. Observations more than 30 seconds in the future
 
 Official Discord incidents are fetched by the bot reporters from the fixed unresolved-incidents endpoint, with a shared PostgreSQL claim limiting attempts to one per minute. Fetches have a five-second timeout and 128 KiB response cap. Errors preserve the last successful observation; advisory data expires after five minutes. Links are constructed from validated incident IDs.
 
-The dashboard polls every 30 seconds while active and checks cached report expiry every second and on focus/visibility changes. A failed request immediately yields unknown, including when React Query retains old successful data. Switching servers uses a separate cache key. The indicator and conditional banner reflect current observations directly; no delayed recovery or historical coverage claim is made.
+The dashboard polls every 30 seconds while active and checks cached report expiry every second. It compares timestamps against `server_time` plus monotonic elapsed time from request start, conservatively counting network time against the remaining report lifetime. An incorrect device clock or timezone does not affect freshness. On focus or returning to a visible tab, cached health is invalidated until a new request succeeds; this covers browsers whose monotonic clock pauses during device sleep. A failed request immediately yields unknown, including when React Query retains old successful data. Switching servers uses a separate cache key. The indicator and conditional banner reflect current observations directly; no delayed recovery or historical coverage claim is made.
 
 ## Operational checks
 
@@ -52,7 +54,7 @@ The dashboard polls every 30 seconds while active and checks cached report expir
 ## Rollout and verification
 
 1. Apply migration `a71c293dd420` before deploying either bot or API. It adds two tables and the bilingual in-product release note.
-2. Deploy backend/API, both bots, and the dashboard through the normal release pipeline; apply the bot probe and PrometheusRule manifests.
+2. Deploy the API with `server_time` before the dashboard clock-offset fix; the new dashboard treats responses without that field as unknown. Deploy backend/API, both bots, and the dashboard through the normal release pipeline; apply the bot probe and PrometheusRule manifests.
 3. Check both profiles publish fresh rows, both bot probes behave as intended, and Prometheus discovers the rules and targets.
 4. Check the authenticated endpoint for a server on each profile. Verify the rendered indicator against the selected shard and worker state.
 5. A local component preview and passing tests do not establish these production checks. Do not claim complete message catch-up from a healthy indicator.
