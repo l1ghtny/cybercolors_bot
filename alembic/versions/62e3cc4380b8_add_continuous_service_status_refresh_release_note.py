@@ -73,7 +73,7 @@ def upgrade() -> None:
             action_label_ru=None,
             action_path=None,
             changes=sa.cast(
-                op.inline_literal('[{"en": "Returning to the dashboard triggers a fresh check; unavailable or expired reports still show an unknown status.", "ru": "При возвращении на вкладку панель запрашивает свежие данные. Если данные недоступны или устарели, состояние по-прежнему отображается как неизвестное."}]', type_=sa.Text()),
+                op.inline_literal('[{"en": "Returning to the dashboard triggers a fresh check; unavailable or expired reports still show an unknown status.", "ru": "При возвращении на вкладку панель запрашивает свежие данные. Если данные недоступны или устарели, состояние по-прежнему отображается как неизвестное."}, {"en": "Tabs open to the same server share status checks, reducing repeated requests.", "ru": "Вкладки с одним и тем же сервером используют общий результат проверки, чтобы не отправлять лишние запросы."}]', type_=sa.Text()),
                 sa.JSON(),
             ),
             is_published=True,
