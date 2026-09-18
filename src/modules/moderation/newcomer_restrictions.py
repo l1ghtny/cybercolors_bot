@@ -80,6 +80,7 @@ async def handle_newcomer_role_granted(
             added_by_user_id=after.id,
             source="newcomer",
             release_due_at=release_due_at,
+            automatic=True,
         )
         await session.commit()
     return True

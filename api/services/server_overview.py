@@ -284,7 +284,7 @@ async def _monitoring_events(session: AsyncSession, server_id: int, limit: int) 
                 entity_id=str(monitored_user.id),
                 occurred_at=status_event.changed_at,
                 title=title,
-                description=monitored_user.reason,
+                description=status_event.reason,
                 actor=await build_optional_actor(session, server_id, status_event.changed_by_user_id),
                 target=await build_optional_actor(session, server_id, monitored_user.user_id),
                 metadata={

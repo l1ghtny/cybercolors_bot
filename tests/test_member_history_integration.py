@@ -14,8 +14,10 @@ from api.services.member_history import (
 from api.services.moderation_actions_service import create_action
 from api.services.moderation_cases_service import add_case_note, create_case
 from api.services.moderation_users_service import build_user_profile_card
+from api.services.server_overview import build_server_timeline
 from api.services.monitoring_service import (
     add_monitored_user_comment,
+    list_monitored_user_status_events,
     update_monitored_user,
     upsert_monitored_user,
 )
@@ -176,6 +178,19 @@ async def _scenario() -> None:
             "No incidents during the review period",
             "New report received",
         }
+
+        timeline = await build_server_timeline(session=session, server_id=server_id, limit=100)
+        timeline_monitoring = [
+            item for item in timeline.events if item.event_type == "monitored_user_status_changed"
+        ]
+        assert {item.description for item in timeline_monitoring} == {
+            item.reason for item in monitoring_events
+        }
+        status_history = await list_monitored_user_status_events(session, server_id, target_id)
+        assert {item.reason for item in status_history} == {
+            item.reason for item in monitoring_events
+        }
+        assert all(item.changed_by.user_id == str(moderator_id) for item in status_history)
 
         removed = await delete_member_note(
             session=session,

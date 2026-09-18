@@ -22,7 +22,7 @@ from api.models.monitoring import (
     ServerMonitoringSettingsReadModel,
     ServerMonitoringSettingsUpdateModel,
 )
-from api.services.moderation_core import build_actor, get_case_or_404, utc_now
+from api.services.moderation_core import build_actor, build_optional_actor, get_case_or_404, utc_now
 from api.services.discord_guilds import TEXT_CHANNEL_TYPES, fetch_channel
 from src.db.models import (
     CaseStatus,
@@ -233,9 +233,14 @@ async def upsert_monitored_user(
     added_by_user_id: int,
     source: str = "manual",
     release_due_at: datetime | None = None,
+    *,
+    automatic: bool = False,
 ) -> MonitoredUserReadModel:
     await build_actor(session, server_id, user_id)
     await build_actor(session, server_id, added_by_user_id, require_membership=True)
+    # The legacy monitoring record requires an owner, but an automatic status
+    # change has no human actor. Do not attribute it to the monitored member.
+    changed_by_user_id = None if automatic else added_by_user_id
 
     existing = (
         await session.exec(
@@ -264,7 +269,7 @@ async def upsert_monitored_user(
             _append_status_event(
                 session=session,
                 monitored_user_id=existing.id,
-                changed_by_user_id=added_by_user_id,
+                changed_by_user_id=changed_by_user_id,
                 from_is_active=previous_active,
                 to_is_active=True,
                 reason=existing.reason,
@@ -287,7 +292,7 @@ async def upsert_monitored_user(
     _append_status_event(
         session=session,
         monitored_user_id=item.id,
-        changed_by_user_id=added_by_user_id,
+        changed_by_user_id=changed_by_user_id,
         from_is_active=None,
         to_is_active=True,
         reason=item.reason,
@@ -989,4 +994,5 @@ async def maybe_auto_monitor_new_member(
         reason=reason[:5000],
         added_by_user_id=int(member.id),
         source="auto",
+        automatic=True,
     )
