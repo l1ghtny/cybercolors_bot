@@ -46,7 +46,7 @@ jobs:
             exit 1
           fi
           cd "$BACKEND_DIR"
-          EXPECTED_REVISION="%build.vcs.number.CyberColors_BackendGit%"
+          EXPECTED_REVISION="%build.vcs.number.CyberColors_HttpsGithubComL1ghtnyCybercolorsBotGitRefsHeadsMaster2%"
           ACTUAL_REVISION="$(git rev-parse HEAD)"
           if [ "$ACTUAL_REVISION" != "$EXPECTED_REVISION" ]; then
             echo "Backend checkout revision differs from the TeamCity snapshot" >&2
@@ -61,7 +61,7 @@ jobs:
     repositories:
       - main:
           enabled: false
-      - CyberColors_BackendGit:
+      - CyberColors_HttpsGithubComL1ghtnyCybercolorsBotGitRefsHeadsMaster2:
           enabled: true
           path: cybercolors_bot
   build_indexer:
@@ -110,7 +110,7 @@ jobs:
             exit 1
           fi
           cd "$BACKEND_DIR"
-          EXPECTED_REVISION="%build.vcs.number.CyberColors_BackendGit%"
+          EXPECTED_REVISION="%build.vcs.number.CyberColors_HttpsGithubComL1ghtnyCybercolorsBotGitRefsHeadsMaster2%"
           ACTUAL_REVISION="$(git rev-parse HEAD)"
           if [ "$ACTUAL_REVISION" != "$EXPECTED_REVISION" ]; then
             echo "Backend checkout revision differs from the TeamCity snapshot" >&2
@@ -150,7 +150,7 @@ jobs:
     repositories:
       - main:
           enabled: false
-      - CyberColors_BackendGit:
+      - CyberColors_HttpsGithubComL1ghtnyCybercolorsBotGitRefsHeadsMaster2:
           enabled: true
           path: cybercolors_bot
   build_embeddings:
@@ -199,7 +199,7 @@ jobs:
             exit 1
           fi
           cd "$BACKEND_DIR"
-          EXPECTED_REVISION="%build.vcs.number.CyberColors_BackendGit%"
+          EXPECTED_REVISION="%build.vcs.number.CyberColors_HttpsGithubComL1ghtnyCybercolorsBotGitRefsHeadsMaster2%"
           ACTUAL_REVISION="$(git rev-parse HEAD)"
           if [ "$ACTUAL_REVISION" != "$EXPECTED_REVISION" ]; then
             echo "Backend checkout revision differs from the TeamCity snapshot" >&2
@@ -238,7 +238,7 @@ jobs:
     repositories:
       - main:
           enabled: false
-      - CyberColors_BackendGit:
+      - CyberColors_HttpsGithubComL1ghtnyCybercolorsBotGitRefsHeadsMaster2:
           enabled: true
           path: cybercolors_bot
   build_frontend:
@@ -349,7 +349,7 @@ jobs:
             exit 1
           fi
           cd "$BACKEND_DIR"
-          EXPECTED_REVISION="%build.vcs.number.CyberColors_BackendGit%"
+          EXPECTED_REVISION="%build.vcs.number.CyberColors_HttpsGithubComL1ghtnyCybercolorsBotGitRefsHeadsMaster2%"
           ACTUAL_REVISION="$(git rev-parse HEAD)"
           if [ "$ACTUAL_REVISION" != "$EXPECTED_REVISION" ]; then
             echo "Backend checkout revision differs from the TeamCity snapshot" >&2
@@ -476,7 +476,7 @@ jobs:
     repositories:
       - main:
           enabled: false
-      - CyberColors_BackendGit:
+      - CyberColors_HttpsGithubComL1ghtnyCybercolorsBotGitRefsHeadsMaster2:
           enabled: true
           path: cybercolors_bot
   deploy:
@@ -520,7 +520,7 @@ jobs:
             exit 1
           fi
           cd "$BACKEND_DIR"
-          EXPECTED_REVISION="%build.vcs.number.CyberColors_BackendGit%"
+          EXPECTED_REVISION="%build.vcs.number.CyberColors_HttpsGithubComL1ghtnyCybercolorsBotGitRefsHeadsMaster2%"
           ACTUAL_REVISION="$(git rev-parse HEAD)"
           if [ "$ACTUAL_REVISION" != "$EXPECTED_REVISION" ]; then
             echo "Backend checkout revision differs from the TeamCity snapshot" >&2
@@ -582,6 +582,6 @@ jobs:
     repositories:
       - main:
           enabled: false
-      - CyberColors_BackendGit:
+      - CyberColors_HttpsGithubComL1ghtnyCybercolorsBotGitRefsHeadsMaster2:
           enabled: true
           path: cybercolors_bot
