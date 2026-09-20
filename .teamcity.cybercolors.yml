@@ -1,5 +1,7 @@
 jobs:
   build_backend:
+    parameters:
+      backend_revision: ""
     name: 1. Build Backend Image
     runs-on: self-hosted
     steps:
@@ -37,17 +39,34 @@ jobs:
             done
           }
 
-          rm -rf cybercolors_bot
-          git clone --depth 1 --branch master https://github.com/l1ghtny/cybercolors_bot.git cybercolors_bot
-          cd cybercolors_bot
-          docker build -f docker/Dockerfile -t "$IMAGE:$TAG" -t "$IMAGE:latest" .
+          CHECKOUT_DIR="%teamcity.build.checkoutDir%"
+          BACKEND_DIR="$CHECKOUT_DIR/cybercolors_bot"
+          if [ ! -f "$BACKEND_DIR/main.py" ]; then
+            echo "TeamCity backend checkout is missing: $BACKEND_DIR" >&2
+            exit 1
+          fi
+          cd "$BACKEND_DIR"
+          EXPECTED_REVISION="%build.vcs.number.CyberColors_BackendGit%"
+          ACTUAL_REVISION="$(git rev-parse HEAD)"
+          if [ "$ACTUAL_REVISION" != "$EXPECTED_REVISION" ]; then
+            echo "Backend checkout revision differs from the TeamCity snapshot" >&2
+            exit 1
+          fi
+          echo "Backend source revision: $ACTUAL_REVISION"
+          echo "##teamcity[setParameter name='backend_revision' value='$ACTUAL_REVISION']"
+          docker build --label "org.opencontainers.image.revision=$ACTUAL_REVISION" -f docker/Dockerfile -t "$IMAGE:$TAG" -t "$IMAGE:latest" .
           push_with_retry "$IMAGE:$TAG"
           push_with_retry "$IMAGE:latest"
+
     repositories:
       - main:
           enabled: false
-
+      - CyberColors_BackendGit:
+          enabled: true
+          path: cybercolors_bot
   build_indexer:
+    parameters:
+      backend_revision: ""
     name: 2. Build Indexer Image
     runs-on: self-hosted
     steps:
@@ -84,9 +103,21 @@ jobs:
             done
           }
 
-          rm -rf cybercolors_bot
-          git clone --depth 1 --branch master https://github.com/l1ghtny/cybercolors_bot.git cybercolors_bot
-          cd cybercolors_bot
+          CHECKOUT_DIR="%teamcity.build.checkoutDir%"
+          BACKEND_DIR="$CHECKOUT_DIR/cybercolors_bot"
+          if [ ! -f "$BACKEND_DIR/main.py" ]; then
+            echo "TeamCity backend checkout is missing: $BACKEND_DIR" >&2
+            exit 1
+          fi
+          cd "$BACKEND_DIR"
+          EXPECTED_REVISION="%build.vcs.number.CyberColors_BackendGit%"
+          ACTUAL_REVISION="$(git rev-parse HEAD)"
+          if [ "$ACTUAL_REVISION" != "$EXPECTED_REVISION" ]; then
+            echo "Backend checkout revision differs from the TeamCity snapshot" >&2
+            exit 1
+          fi
+          echo "Backend source revision: $ACTUAL_REVISION"
+          echo "##teamcity[setParameter name='backend_revision' value='$ACTUAL_REVISION']"
 
           INDEXER_HASH="$(
             git ls-files \
@@ -115,11 +146,16 @@ jobs:
           docker build -f docker/Dockerfile.indexer -t "$IMAGE:$TAG" -t "$IMAGE:latest" .
           push_with_retry "$IMAGE:$TAG"
           push_with_retry "$IMAGE:latest"
+
     repositories:
       - main:
           enabled: false
-
+      - CyberColors_BackendGit:
+          enabled: true
+          path: cybercolors_bot
   build_embeddings:
+    parameters:
+      backend_revision: ""
     name: 3. Build Embeddings Image
     runs-on: self-hosted
     steps:
@@ -156,9 +192,21 @@ jobs:
             done
           }
 
-          rm -rf cybercolors_bot
-          git clone --depth 1 --branch master https://github.com/l1ghtny/cybercolors_bot.git cybercolors_bot
-          cd cybercolors_bot
+          CHECKOUT_DIR="%teamcity.build.checkoutDir%"
+          BACKEND_DIR="$CHECKOUT_DIR/cybercolors_bot"
+          if [ ! -f "$BACKEND_DIR/main.py" ]; then
+            echo "TeamCity backend checkout is missing: $BACKEND_DIR" >&2
+            exit 1
+          fi
+          cd "$BACKEND_DIR"
+          EXPECTED_REVISION="%build.vcs.number.CyberColors_BackendGit%"
+          ACTUAL_REVISION="$(git rev-parse HEAD)"
+          if [ "$ACTUAL_REVISION" != "$EXPECTED_REVISION" ]; then
+            echo "Backend checkout revision differs from the TeamCity snapshot" >&2
+            exit 1
+          fi
+          echo "Backend source revision: $ACTUAL_REVISION"
+          echo "##teamcity[setParameter name='backend_revision' value='$ACTUAL_REVISION']"
 
           EMBEDDINGS_HASH="$(
             git ls-files \
@@ -186,10 +234,13 @@ jobs:
           docker build -f docker/Dockerfile.embeddings -t "$IMAGE:$TAG" -t "$IMAGE:latest" .
           push_with_retry "$IMAGE:$TAG"
           push_with_retry "$IMAGE:latest"
+
     repositories:
       - main:
           enabled: false
-
+      - CyberColors_BackendGit:
+          enabled: true
+          path: cybercolors_bot
   build_frontend:
     name: 4. Build Frontend Image
     runs-on: self-hosted
@@ -279,6 +330,7 @@ jobs:
           enabled: true
 
   run_migrations:
+    allow-reuse: false
     name: 5. Run Alembic Migrations
     runs-on: self-hosted
     dependencies:
@@ -289,6 +341,28 @@ jobs:
         script-content: |-
           #!/bin/bash
           set -euo pipefail
+
+          CHECKOUT_DIR="%teamcity.build.checkoutDir%"
+          BACKEND_DIR="$CHECKOUT_DIR/cybercolors_bot"
+          if [ ! -f "$BACKEND_DIR/main.py" ]; then
+            echo "TeamCity backend checkout is missing: $BACKEND_DIR" >&2
+            exit 1
+          fi
+          cd "$BACKEND_DIR"
+          EXPECTED_REVISION="%build.vcs.number.CyberColors_BackendGit%"
+          ACTUAL_REVISION="$(git rev-parse HEAD)"
+          if [ "$ACTUAL_REVISION" != "$EXPECTED_REVISION" ]; then
+            echo "Backend checkout revision differs from the TeamCity snapshot" >&2
+            exit 1
+          fi
+          echo "Backend source revision: $ACTUAL_REVISION"
+          echo "##teamcity[setParameter name='backend_revision' value='$ACTUAL_REVISION']"
+
+          if [ "%job.build_backend.backend_revision%" != "$ACTUAL_REVISION" ]; then
+            echo "Refusing migration: backend build sources do not match the release snapshot" >&2
+            exit 1
+          fi
+
 
           ensure_kubectl() {
             if command -v kubectl >/dev/null 2>&1; then
@@ -399,8 +473,14 @@ jobs:
           fi
 
           migration_container_logs
-
+    repositories:
+      - main:
+          enabled: false
+      - CyberColors_BackendGit:
+          enabled: true
+          path: cybercolors_bot
   deploy:
+    allow-reuse: false
     name: 6. Deploy with Argo CD
     runs-on: self-hosted
     dependencies:
@@ -433,10 +513,29 @@ jobs:
           BACKEND_TAG="%job.build_backend.build.number%"
           FRONTEND_TAG="%job.build_frontend.build.number%"
 
-          rm -rf cybercolors_bot
-          git clone --depth 1 --branch master https://github.com/l1ghtny/cybercolors_bot.git cybercolors_bot
+          CHECKOUT_DIR="%teamcity.build.checkoutDir%"
+          BACKEND_DIR="$CHECKOUT_DIR/cybercolors_bot"
+          if [ ! -f "$BACKEND_DIR/main.py" ]; then
+            echo "TeamCity backend checkout is missing: $BACKEND_DIR" >&2
+            exit 1
+          fi
+          cd "$BACKEND_DIR"
+          EXPECTED_REVISION="%build.vcs.number.CyberColors_BackendGit%"
+          ACTUAL_REVISION="$(git rev-parse HEAD)"
+          if [ "$ACTUAL_REVISION" != "$EXPECTED_REVISION" ]; then
+            echo "Backend checkout revision differs from the TeamCity snapshot" >&2
+            exit 1
+          fi
+          echo "Backend source revision: $ACTUAL_REVISION"
+          echo "##teamcity[setParameter name='backend_revision' value='$ACTUAL_REVISION']"
 
-          cd cybercolors_bot
+          for BUILT_REVISION in "%job.build_backend.backend_revision%" "%job.build_indexer.backend_revision%" "%job.build_embeddings.backend_revision%"; do
+            if [ "$BUILT_REVISION" != "$ACTUAL_REVISION" ]; then
+              echo "Refusing deployment: image build sources do not match the release snapshot" >&2
+              exit 1
+            fi
+          done
+
           INDEXER_HASH="$(
             git ls-files \
               docker/Dockerfile.indexer \
@@ -480,3 +579,9 @@ jobs:
             --indexer-tag "$INDEXER_TAG" \
             --embeddings-tag "$EMBEDDINGS_TAG"
         format-stderr-as-error: true
+    repositories:
+      - main:
+          enabled: false
+      - CyberColors_BackendGit:
+          enabled: true
+          path: cybercolors_bot
