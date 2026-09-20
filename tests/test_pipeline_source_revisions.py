@@ -14,10 +14,10 @@ SOURCE_JOBS = ("build_backend", "build_indexer", "build_embeddings", "run_migrat
 def test_backend_sources_are_tracked_and_never_cloned_from_moving_master(name):
     job = PIPELINE["jobs"][name]
     repositories = {key: value for entry in job["repositories"] for key, value in entry.items()}
-    assert repositories["CyberColors_BackendGit"] == {"enabled": True, "path": "cybercolors_bot"}
+    assert repositories["CyberColors_HttpsGithubComL1ghtnyCybercolorsBotGitRefsHeadsMaster2"] == {"enabled": True, "path": "cybercolors_bot"}
     script = job["steps"][0]["script-content"]
     assert "git clone" not in script
-    assert "%build.vcs.number.CyberColors_BackendGit%" in script
+    assert "%build.vcs.number.CyberColors_HttpsGithubComL1ghtnyCybercolorsBotGitRefsHeadsMaster2%" in script
     assert subprocess.run(["bash", "-n"], input=script, text=True, capture_output=True).returncode == 0
 
 
@@ -48,7 +48,7 @@ def test_revision_guards_refuse_mixed_source_releases(tmp_path, job, mismatch):
         end = source.index('ensure_kubectl()', start)
     script = "set -euo pipefail\n" + source[start:end]
     script = script.replace("%teamcity.build.checkoutDir%", str(tmp_path))
-    script = script.replace("%build.vcs.number.CyberColors_BackendGit%", "0" * 40 if mismatch == "checkout" else revision)
+    script = script.replace("%build.vcs.number.CyberColors_HttpsGithubComL1ghtnyCybercolorsBotGitRefsHeadsMaster2%", "0" * 40 if mismatch == "checkout" else revision)
     for component in ["backend", "indexer", "embeddings"]:
         script = script.replace(f"%job.build_{component}.backend_revision%", "0" * 40 if mismatch == component else revision)
     result = subprocess.run(["bash"], input=script, text=True, capture_output=True)
