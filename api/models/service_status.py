@@ -4,7 +4,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 ComponentState = Literal["healthy", "reconnecting", "retrying", "unavailable", "unknown"]
-ComponentId = Literal["gateway", "commands", "moderation_expiry", "birthdays"]
+ComponentId = Literal["gateway", "assignments", "commands", "moderation_expiry", "birthdays"]
 
 
 class ServiceComponent(BaseModel):

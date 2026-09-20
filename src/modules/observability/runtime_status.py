@@ -150,6 +150,9 @@ class RuntimeReporter:
             request = await asyncio.wait_for(reader.readline(), 2)
             path = request.split(b" ")[1] if b" " in request else b""
             live = self.task is not None and not self.task.done()
+            supervisor = getattr(self.client, "job_supervisor", None)
+            if supervisor is not None:
+                live = live and supervisor.task is not None and not supervisor.task.done()
             ready = self.client.guild_presence_synced and all(
                 value == "healthy" for name, value in self.snapshot()["components"].items() if name != "commands"
             )

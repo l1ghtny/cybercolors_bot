@@ -103,7 +103,7 @@ def test_endpoint_response_excludes_internal_runtime_fields(monkeypatch):
     assert response.json()["server_time"] == "2026-09-16T00:00:00Z"
     assert "process_id" not in response.text
     assert "guild_ids" not in response.text
-    assert len(response.json()["components"]) == 4
+    assert len(response.json()["components"]) == 5
     assert response.headers["cache-control"] == "private, no-store"
 
 
@@ -166,4 +166,28 @@ def test_liveness_does_not_depend_on_discord_and_readiness_detects_stopped_worke
         assert b"503" in await probe("/readyz")
         runtime.task = SimpleNamespace(done=lambda: True)
         assert b"503" in await probe("/livez")
+    asyncio.run(scenario())
+
+
+def test_assignment_failure_does_not_claim_discord_is_disconnected():
+    runtime = report()
+    runtime.payload["components"]["assignments"] = "unavailable"
+    status = summarize_status(GUILD_A, runtime, None, NOW)
+    assert status.state == "degraded"
+    states = {component.id: component.state for component in status.components}
+    assert states["gateway"] == "healthy"
+    assert states["assignments"] == "unavailable"
+
+
+def test_liveness_detects_stopped_supervisor():
+    async def scenario():
+        from unittest.mock import Mock
+        runtime, _ = reporter()
+        runtime.task = SimpleNamespace(done=lambda: False)
+        runtime.client.job_supervisor = SimpleNamespace(task=SimpleNamespace(done=lambda: True))
+        reader = asyncio.StreamReader()
+        reader.feed_data(b"GET /livez HTTP/1.1\r\n")
+        writer = SimpleNamespace(write=Mock(), drain=AsyncMock(), close=Mock())
+        await runtime._health_request(reader, writer)
+        assert b"503" in writer.write.call_args.args[0]
     asyncio.run(scenario())
