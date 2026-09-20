@@ -25,6 +25,14 @@ spec:
           annotations:
             summary: 'Bot component unavailable for {{ $labels.bot_profile }}'
             description: '{{ $labels.component }} has not reported healthy for five minutes. Inspect startup, stopped or overdue loops, and command registration errors.'
+        - alert: BotBackgroundJobRestarting
+          expr: increase(cybercolors_background_job_restarts_total[15m]) >= 3
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: 'Bot job repeatedly restarting for {{ $labels.bot_profile }}'
+            description: '{{ $labels.job }} restarted at least three times in fifteen minutes. Inspect its exception logs and database availability.'
         - alert: BotRuntimeReportStale
           expr: time() - cybercolors_runtime_last_report_timestamp_seconds > 90
           for: 2m

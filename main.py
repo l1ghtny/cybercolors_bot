@@ -136,6 +136,9 @@ from src.modules.observability.sentry import birthday_hourly_monitor, configure_
 from src.modules.observability.bot_metrics import DISCORD_GATEWAY_CONNECTED
 from src.modules.observability.prometheus import start_bot_metrics_server
 from src.modules.observability.runtime_status import RuntimeReporter
+from src.modules.observability.job_supervisor import (
+    JobSupervisor, RetryableDatabaseError, is_transient_database_error,
+)
 from api.services.moderation_rules_service import sync_rules_from_source_message_edit
 from api.services.discord_profiles import (
     cache_server_profile,
@@ -187,6 +190,11 @@ class Aclient(discord.AutoShardedClient):
         self.current_server_rules: dict[int, list[dict]] = {}
         self.guild_presence_synced = False
         self.security_pause_cache: dict[int, tuple[bool, float]] = {}
+        self.job_supervisor = JobSupervisor(
+            BOT_PROFILE,
+            lambda: [gateway_assignment_refresh, auto_unmute_worker, birthday, check_users_with_birthdays],
+            lambda: self.guild_presence_synced and not self.is_closed(),
+        )
         self.runtime_status = RuntimeReporter(self, BOT_PROFILE, lambda: {
             "assignments": ([gateway_assignment_refresh], 120),
             "moderation_expiry": ([auto_unmute_worker], 300),
@@ -200,6 +208,7 @@ class Aclient(discord.AutoShardedClient):
         It is the safe place for async DB calls.
         """
         await self.runtime_status.start()
+        self.job_supervisor.start()
         # 2. Call your cache loader
         await self.load_user_cache()
         await self.load_current_server_rules()
@@ -307,12 +316,15 @@ class Aclient(discord.AutoShardedClient):
         self.synced = True
 
     async def close(self):
+        await self.job_supervisor.close()
         await self.runtime_status.close()
         await self.command_sync.close()
         await super().close()
 
     async def on_ready(self):
         await self.wait_until_ready()
+        if self.job_supervisor.closing:
+            return
         DISCORD_GATEWAY_STATUS.set(1)
         self.command_sync.start()
         if not self.added:
@@ -324,6 +336,8 @@ class Aclient(discord.AutoShardedClient):
             )
             await self.refresh_primary_guild_assignments()
             self.guild_presence_synced = True
+        for job in (gateway_assignment_refresh, auto_unmute_worker):
+            job.add_exception_type(RetryableDatabaseError)
         if not gateway_assignment_refresh.is_running():
             gateway_assignment_refresh.start()
         if not birthday.is_running():
@@ -929,7 +943,17 @@ def report_job_health(function):
     @wraps(function)
     async def tracked(*args, **kwargs):
         with client.runtime_status.track_job(function.__name__):
-            return await function(*args, **kwargs)
+            try:
+                result = await function(*args, **kwargs)
+            except Exception as error:
+                if (
+                    function.__name__ in {"gateway_assignment_refresh", "auto_unmute_worker"}
+                    and is_transient_database_error(error)
+                ):
+                    raise RetryableDatabaseError("Database temporarily unavailable") from error
+                raise
+            client.job_supervisor.succeeded(function.__name__)
+            return result
     return tracked
 
 

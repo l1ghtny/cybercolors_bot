@@ -34,7 +34,7 @@ Implemented contract, 16 September 2026. This reports connection and task health
 
 Each bot starts an independent reporter in `setup_hook`, before cache initialization and READY. It writes one PostgreSQL row per application profile, nominally every 20 seconds, with a ten-second bound per publication. Both API replicas read the same rows.
 
-The API resolves `Server.bot_profile`, then `(server_id >> 22) % shard_count`. A connected shard requires an open websocket and a finite heartbeat latency. Discord's per-guild unavailable flag overrides a healthy shard. A guild absent from the selected bot's cache is unknown. Failed server-assignment refresh also prevents a healthy message-monitoring result.
+The API resolves `Server.bot_profile`, then `(server_id >> 22) % shard_count`. A connected shard requires an open websocket and a finite heartbeat latency. Discord's per-guild unavailable flag overrides a healthy shard. A guild absent from the selected bot's cache is unknown. Server-assignment refresh is a separate `assignments` component. Its failure degrades overall status without changing the Discord connection state.
 
 Command registration has explicit retrying/success/permanent-failure states. Background loops are checked for running/failed status, uncaught run failures, and execution duration (120 seconds for assignment refresh, five minutes for moderation expiry, 30 minutes for birthday tasks). A scheduled loop waiting until its next run is healthy. A caught per-item delivery failure is not necessarily a failed loop: this endpoint does not claim successful delivery of every scheduled action.
 
@@ -67,3 +67,17 @@ The database change is additive. An application rollback can leave the new table
 - Alembic has one head; the new migration renders offline. Kubernetes manifests render with Kustomize. Prometheus rules are prepared but not yet validated against live scrape targets.
 - Dashboard tests and the normal production build pass. The explicit `tsc --project tsconfig.app.json --noEmit` check still reports existing errors; its output is identical to an untouched baseline at `cbb0ba9`.
 - The real status components were inspected in English and Russian at desktop and mobile widths, including 320 pixels. The development-only `service-status-preview.html` uses sample data and is not a production entry point.
+
+## Background job recovery
+
+A supervisor checks the four tracked loops every five seconds after guild presence is initialized. It restarts stopped loops after 30 seconds, doubling the delay after repeated failures up to five minutes. Running jobs, jobs never started, and cancelled jobs are not restarted. Successful execution resets the restart delay. Shutdown cancels the supervisor and all tracked jobs together. Liveness also checks that the supervisor itself is running.
+
+Assignment refresh and moderation expiry convert transient database errors into a retryable exception handled by discord.py's backoff. Classification follows SQLAlchemy wrappers and exception causes, recognizes connection failures, database startup/shutdown/recovery, read-only failover, and connection exhaustion, and excludes permanent data/credential errors. Failed health remains latched until an invocation completes successfully.
+
+Birthday loops are supervised but are not immediately replayed: an explicit-time loop resumes at its next scheduled occurrence. This is not a durable queue or a missed-job catch-up mechanism. Hung jobs remain unhealthy and alert; the supervisor never starts a second copy over a running invocation.
+
+Moderation expiry continues to reconcile persisted active actions with Discord. Database failure after a Discord side effect can still leave an uncertain result or duplicate moderation log on a later pass; this change does not promise exactly-once delivery. A durable outbound ledger is separate follow-up work.
+
+Existing component alerts cover sustained retry failures. The `BotBackgroundJobRestarting` rule additionally detects at least three restarts in fifteen minutes. Supervisor stop errors and recovery messages identify the profile and job without message content.
+
+The dashboard shows Discord connection and server configuration sync separately. Deploy the API that includes `assignments` before relying on this new detail in the dashboard.

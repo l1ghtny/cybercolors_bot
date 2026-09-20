@@ -7,7 +7,7 @@ from api.models.service_status import DiscordIncident, ServerServiceStatus, Serv
 from src.db.models import Server
 from src.db.service_status import BotRuntimeStatus, ExternalServiceStatus
 
-COMPONENT_IDS = ("gateway", "commands", "moderation_expiry", "birthdays")
+COMPONENT_IDS = ("gateway", "assignments", "commands", "moderation_expiry", "birthdays")
 REPORT_TTL = timedelta(seconds=90)
 ADVISORY_TTL = timedelta(minutes=5)
 VALID_STATES = {"healthy", "reconnecting", "retrying", "unavailable", "unknown"}
@@ -37,9 +37,6 @@ def summarize_status(server_id: int, runtime: BotRuntimeStatus | None, advisory:
     elif str(server_id) in payload.get("unavailable_guild_ids", []):
         gateway = "unavailable"
     states = {**payload.get("components", {}), "gateway": gateway}
-    # A connected shard cannot monitor this server until assignments are loaded.
-    if gateway == "healthy" and states.get("assignments") != "healthy":
-        states["gateway"] = states.get("assignments", "unknown")
     for component in components:
         value = states.get(component.id, "unknown")
         component.state = value if value in VALID_STATES else "unknown"
