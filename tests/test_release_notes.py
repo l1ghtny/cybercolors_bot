@@ -68,7 +68,14 @@ async def _release_notes_scenario() -> None:
         manifest = await list_published_release_notes(session, limit=100)
         public_manifest = await list_public_product_updates(session, limit=50)
 
-    assert len(manifest.releases) == 65
+    assert len(manifest.releases) == 66
+    expiry_release = manifest.releases[0]
+    assert expiry_release.id == "2026-10-01-automatic-ban-expiry"
+    assert expiry_release.change_type == "fixed"
+    assert expiry_release.surface == "both"
+    assert expiry_release.title.en == "Temporary bans expire without stopping moderation tasks"
+    assert expiry_release.title.ru == "Временные баны снимаются без сбоев фоновой модерации"
+    manifest.releases = manifest.releases[1:]
     assert manifest.releases[0].id == "2026-09-20-background-job-recovery"
     assert manifest.releases[0].change_type == "fixed"
     assert manifest.releases[0].surface == "both"

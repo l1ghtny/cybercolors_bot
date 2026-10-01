@@ -68,6 +68,7 @@ async def process_expired_bans(
                     server_id=action.server_id,
                     action_type="ban",
                     action_id=str(action.id),
+                    action_number=action.action_number,
                     action_url=_dashboard_action_url(action.server_id, action.id),
                     target_user_id=action.target_user_id,
                     target_display=target.username if target else None,
